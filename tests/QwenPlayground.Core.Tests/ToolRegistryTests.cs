@@ -135,7 +135,7 @@ public sealed class ToolRegistryTests : IDisposable
         var result = await _registry.ExecuteAsync("read_file",
             new JsonObject { ["path"] = "../../outside.txt" }, _context);
 
-        Assert.Contains("escapes project root", result);
+        Assert.Contains("escapes allowed roots", result);
     }
 
     [Fact]
