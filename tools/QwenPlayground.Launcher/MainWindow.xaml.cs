@@ -67,27 +67,43 @@ public partial class MainWindow : Window
     private void BuildToolsPanel()
     {
         ToolsPanel.Children.Clear();
+        var successBrush = (System.Windows.Media.Brush)FindResource("SuccessBrush");
+        var errorBrush = (System.Windows.Media.Brush)FindResource("ErrorBrush");
+        var dimBrush = (System.Windows.Media.Brush)FindResource("DimBrush");
+
         foreach (var (name, tool) in _config.Tools)
         {
-            var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 3) };
 
+            var installed = ToolManager.IsInstalled(tool);
             var statusText = new TextBlock
             {
-                Text = ToolManager.IsInstalled(tool) ? $"{name}: установлен" : $"{name}: не установлен",
-                Width = 180,
-                Foreground = ToolManager.IsInstalled(tool) ? System.Windows.Media.Brushes.Green : System.Windows.Media.Brushes.Red
+                Text = installed ? $"● {name}" : $"○ {name}",
+                Width = 120,
+                FontSize = 12,
+                Foreground = installed ? successBrush : errorBrush
             };
             panel.Children.Add(statusText);
 
-            if (ToolManager.IsInstalled(tool))
+            var versionText = new TextBlock
             {
-                var uninstallBtn = new Button { Content = "Удалить", Padding = new Thickness(8, 2, 8, 2) };
+                Text = installed ? "установлен" : "не установлен",
+                FontSize = 11,
+                Foreground = dimBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 12, 0)
+            };
+            panel.Children.Add(versionText);
+
+            if (installed)
+            {
+                var uninstallBtn = new Button { Content = "Удалить", Padding = new Thickness(10, 3, 10, 3), FontSize = 11 };
                 uninstallBtn.Click += async (_, _) => await UninstallToolAsync(name, tool);
                 panel.Children.Add(uninstallBtn);
             }
             else
             {
-                var installBtn = new Button { Content = "Установить", Padding = new Thickness(8, 2, 8, 2) };
+                var installBtn = new Button { Content = "Установить", Padding = new Thickness(10, 3, 10, 3), FontSize = 11 };
                 installBtn.Click += async (_, _) => await InstallToolAsync(name, tool);
                 panel.Children.Add(installBtn);
             }
