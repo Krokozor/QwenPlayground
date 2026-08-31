@@ -1,0 +1,105 @@
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using QwenPlayground.Core.SelfBuild;
+
+namespace QwenPlayground.Launcher;
+
+/// <summary>
+/// Конфигурация лаунчера. Файл: launcher.json в корне воркспейса.
+/// Определяет репозиторий, ветку и инструменты для управления.
+/// </summary>
+public sealed class LauncherConfig
+{
+    /// <summary>URL git-репозитория.</summary>
+    public string Repo { get; set; } = "https://github.com/Krokozor/QwenPlayground.git";
+
+    /// <summary>Ветка для синхронизации.</summary>
+    public string Branch { get; set; } = "main";
+
+    /// <summary>Инструменты для управления (ffmpeg и др.).</summary>
+    public Dictionary<string, ToolConfig> Tools { get; set; } = new();
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true
+    };
+
+    /// <summary>Путь к файлу конфига: launcher.json в корне воркспейса.</summary>
+    public static string ConfigPath => Path.Combine(SelfBuildPaths.WorkspaceRoot, "launcher.json");
+
+    /// <summary>Загрузить конфиг. Если файла нет — создать дефолтный.</summary>
+    public static LauncherConfig Load()
+    {
+        if (File.Exists(ConfigPath))
+        {
+            try
+            {
+                var json = File.ReadAllText(ConfigPath);
+                return JsonSerializer.Deserialize<LauncherConfig>(json, JsonOptions) ?? CreateDefault();
+            }
+            catch
+            {
+                // Повреждённый конфиг — создаём дефолтный
+            }
+        }
+        return CreateDefault();
+    }
+
+    /// <summary>Сохранить конфиг в файл.</summary>
+    public void Save()
+    {
+        var json = JsonSerializer.Serialize(this, JsonOptions);
+        File.WriteAllText(ConfigPath, json);
+    }
+
+    /// <summary>Создать дефолтный конфиг и сохранить его.</summary>
+    public static LauncherConfig CreateDefault()
+    {
+        var config = new LauncherConfig
+        {
+            Repo = "https://github.com/Krokozor/QwenPlayground.git",
+            Branch = "main",
+            Tools = new Dictionary<string, ToolConfig>
+            {
+                ["ffmpeg"] = new ToolConfig
+                {
+                    Version = "7.1",
+                    DownloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+                    ExtractTo = "ffmpeg",
+                    BinPath = "ffmpeg/bin/ffmpeg.exe"
+                }
+            }
+        };
+        config.Save();
+        return config;
+    }
+}
+
+/// <summary>
+/// Конфигурация одного инструмента (ffmpeg, ffprobe и т.д.).
+/// </summary>
+public sealed class ToolConfig
+{
+    /// <summary>Текущая версия (для отображения и сравнения).</summary>
+    public string Version { get; set; } = "";
+
+    /// <summary>URL для скачивания (zip-архив).</summary>
+    public string DownloadUrl { get; set; } = "";
+
+    /// <summary>Каталог для экстракции (относительно корня воркспейса).</summary>
+    public string ExtractTo { get; set; } = "";
+
+    /// <summary>Путь к бинарнику (относительно корня воркспейса).</summary>
+    public string BinPath { get; set; } = "";
+
+    /// <summary>Проверить, установлен ли инструмент.</summary>
+    public bool IsInstalled()
+    {
+        var binPath = Path.Combine(SelfBuildPaths.WorkspaceRoot, BinPath.Replace('/', Path.DirectorySeparatorChar));
+        return File.Exists(binPath);
+    }
+}
