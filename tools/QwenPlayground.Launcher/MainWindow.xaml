@@ -127,6 +127,19 @@
             <TabItem Header="Настройки">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
                     <StackPanel>
+                        <!-- Пути -->
+                        <Border Background="{StaticResource PanelBrush}" CornerRadius="4"
+                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                Padding="12,10" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="Пути" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                <TextBlock Text="Корень проекта" FontSize="11" Foreground="{StaticResource DimBrush}" Margin="0,0,0,2" />
+                                <TextBox x:Name="WorkspaceRootBox" FontSize="11" />
+                                <TextBlock Text="Доп. папки (через ;)" FontSize="11" Foreground="{StaticResource DimBrush}" Margin="0,8,0,2" />
+                                <TextBox x:Name="AdditionalWorkspacesBox" FontSize="11" />
+                            </StackPanel>
+                        </Border>
+
                         <!-- Репозиторий -->
                         <Border Background="{StaticResource PanelBrush}" CornerRadius="4"
                                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"

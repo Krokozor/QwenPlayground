@@ -291,6 +291,8 @@ public partial class MainWindow : Window
 
     private void LoadSettingsTab()
     {
+        WorkspaceRootBox.Text = _config.EffectiveWorkspaceRoot;
+        AdditionalWorkspacesBox.Text = string.Join(";", _config.AdditionalWorkspaces);
         RepoUrlBox.Text = _config.Repo;
         BranchBox.Text = _config.Branch;
         ToolsConfigText.Text = string.Join("\n",
@@ -299,6 +301,12 @@ public partial class MainWindow : Window
 
     private void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
     {
+        var ws = WorkspaceRootBox.Text.Trim();
+        _config.WorkspaceRoot = Directory.Exists(ws) ? ws : null;
+        _config.AdditionalWorkspaces = AdditionalWorkspacesBox.Text
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(p => Directory.Exists(p))
+            .ToList();
         _config.Repo = RepoUrlBox.Text.Trim();
         _config.Branch = BranchBox.Text.Trim();
         _config.Save();
