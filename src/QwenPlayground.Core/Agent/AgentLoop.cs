@@ -1,4 +1,4 @@
-﻿using System.Runtime.CompilerServices;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json.Nodes;
 using QwenPlayground.Core.Chat;
@@ -219,7 +219,8 @@ public sealed class AgentLoop
                 sessionDir,
                 conversation,
                 request.OnFactSaved,
-                runtime);
+                runtime,
+                QwenPlayground.Core.Settings.AppSettings.Get().AdditionalWorkspaces);
             foreach (var call in toolCalls)
             {
                 var arguments = call.Arguments as JsonObject ?? new JsonObject();

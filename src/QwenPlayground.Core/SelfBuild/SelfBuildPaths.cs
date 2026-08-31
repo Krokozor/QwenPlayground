@@ -2,16 +2,13 @@ namespace QwenPlayground.Core.SelfBuild;
 
 /// <summary>
 /// Пути развёртывания и самосборки. Корень воркспейса определяется так:
-/// 1) переменная окружения QWENPLAYGROUND_ROOT;
+/// 1) переменная окружения QWENPLAYGROUND_ROOT (ставит лаунчер при запуске);
 /// 2) подъём вверх от AppContext.BaseDirectory до каталога с QwenPlayground.slnx;
-/// 3) дефолт V:\QwenPlayground (исходная машина разработки).
-/// Это позволяет переносить проект без перекомпиляции.
+/// 3) текущий рабочий каталог (fallback для dev-запуска из IDE).
 /// </summary>
 public static class SelfBuildPaths
 {
     public const string SolutionFileName = "QwenPlayground.slnx";
-
-    private const string DefaultWorkspaceRoot = @"V:\QwenPlayground";
 
     private static readonly string? _workspaceRootOverride;
 
@@ -24,7 +21,10 @@ public static class SelfBuildPaths
         }
     }
 
-    public static string WorkspaceRoot => _workspaceRootOverride ?? LocateFromBaseDirectory() ?? DefaultWorkspaceRoot;
+    public static string WorkspaceRoot =>
+        _workspaceRootOverride
+        ?? LocateFromBaseDirectory()
+        ?? Environment.CurrentDirectory;
 
     public static string RunRoot => Path.Combine(WorkspaceRoot, "run");
 

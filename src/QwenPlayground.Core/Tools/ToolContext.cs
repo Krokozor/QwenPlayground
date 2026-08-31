@@ -8,6 +8,9 @@ public sealed class ToolContext
 {
     public string ProjectRoot { get; }
 
+    /// <summary>Дополнительные рабочие папки (агент может читать/писать и там).</summary>
+    public IReadOnlyList<string> AdditionalWorkspaces { get; }
+
     /// <summary>
     /// Живой список сообщений чата, в котором выполняется инструмент (стабильная ссылка
     /// на разговор агента/главного чата). Нужен для связи «чат ⇔ сообщение ⇔ инструмент»:
@@ -59,7 +62,8 @@ public sealed class ToolContext
         string? sessionDir = null,
         IReadOnlyList<ChatMessage>? conversation = null,
         Action<MemoryItem>? onFactSaved = null,
-        AgentRuntime? runtime = null)
+        AgentRuntime? runtime = null,
+        IReadOnlyList<string>? additionalWorkspaces = null)
     {
         ProjectRoot = Path.GetFullPath(projectRoot);
         SessionDir = sessionDir;
@@ -68,18 +72,37 @@ public sealed class ToolContext
         Conversation = conversation;
         OnFactSaved = onFactSaved;
         Runtime = runtime;
+        AdditionalWorkspaces = (additionalWorkspaces ?? Array.Empty<string>())
+            .Select(p => Path.GetFullPath(p))
+            .ToList();
     }
 
     public string ResolvePath(string path)
     {
         var fullPath = Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(ProjectRoot, path));
-        var rootWithSeparator = ProjectRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (!fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(fullPath, ProjectRoot, StringComparison.OrdinalIgnoreCase))
+        if (IsWithinAllowedRoots(fullPath))
         {
-            throw new InvalidOperationException($"path escapes project root: {path}");
+            return fullPath;
         }
-        return fullPath;
+        throw new InvalidOperationException($"path escapes allowed roots: {path}");
+    }
+
+    /// <summary>Проверить, что путь внутри ProjectRoot или одного из AdditionalWorkspaces.</summary>
+    private bool IsWithinAllowedRoots(string fullPath)
+    {
+        if (IsWithin(fullPath, ProjectRoot)) return true;
+        foreach (var ws in AdditionalWorkspaces)
+        {
+            if (IsWithin(fullPath, ws)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsWithin(string path, string root)
+    {
+        var rootWithSep = root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return path.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(path, root, StringComparison.OrdinalIgnoreCase);
     }
 
     public string ToRelative(string fullPath) =>
