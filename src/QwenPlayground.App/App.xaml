@@ -1,0 +1,15 @@
+<Application x:Class="QwenPlayground.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:QwenPlayground.App"
+             StartupUri="MainWindow.xaml">
+    <!-- Вся визуальная тема вынесена в Themes/Dark.xaml (модульность: одна точка
+         входа для переделки/замены визуального слоя при смене UI-фреймворка). -->
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/Dark.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

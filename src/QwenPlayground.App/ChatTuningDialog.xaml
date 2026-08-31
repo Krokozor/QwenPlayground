@@ -1,0 +1,31 @@
+<Window x:Class="QwenPlayground.App.ChatTuningDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Настройка чата" Width="440" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
+    <StackPanel Margin="14">
+        <TextBlock Text="Куски профиля этого чата (config/chat-profiles.json)" FontWeight="Bold" Margin="0,0,0,2" />
+        <TextBlock Text="«default» — вести себя как общие настройки. Назначение действует со следующего хода."
+                   FontSize="11" Foreground="{StaticResource DimBrush}" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+        <TextBlock Text="Семплер и лимиты (что уходит в llama.cpp):" Margin="0,0,0,3" />
+        <ComboBox ItemsSource="{Binding SamplerOptions}" DisplayMemberPath="Label"
+                  SelectedItem="{Binding SelectedSampler}" Margin="0,0,0,8" />
+
+        <TextBlock Text="Системный промпт (промпт, тулы, усилие мыслей):" Margin="0,0,0,3" />
+        <ComboBox ItemsSource="{Binding PromptOptions}" DisplayMemberPath="Label"
+                  SelectedItem="{Binding SelectedPrompt}" Margin="0,0,0,8" />
+
+        <TextBlock Text="State-блок (служебная информация в мысли):" Margin="0,0,0,3" />
+        <ComboBox ItemsSource="{Binding StateBlockOptions}" DisplayMemberPath="Label"
+                  SelectedItem="{Binding SelectedStateBlock}" Margin="0,0,0,12" />
+
+        <Button Content="Пресеты редактируются во вкладке «Настройки» →" Click="Presets_Click" Padding="10,4"
+                HorizontalAlignment="Left" ToolTip="Перейти к единственному месту редактирования профилей" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="Применить" IsDefault="True" Click="Apply_Click" Padding="14,4" />
+            <Button Content="Отмена" IsCancel="True" Padding="14,4" Margin="8,0,0,0" />
+        </StackPanel>
+    </StackPanel>
+</Window>

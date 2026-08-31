@@ -1,0 +1,9 @@
+<UserControl x:Class="QwenPlayground.App.Views.PreviewView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="8">
+        <TextBox IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12"
+                 Text="{Binding PromptPreview}" />
+    </Grid>
+</UserControl>

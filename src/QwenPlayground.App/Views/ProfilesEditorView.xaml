@@ -1,0 +1,131 @@
+<UserControl x:Class="QwenPlayground.App.Views.ProfilesEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Редактор статичных профилей чата: три независимых куска, write-through одним файлом -->
+    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="1" CornerRadius="3" Padding="10">
+        <StackPanel>
+            <TextBlock Text="Ключи после создания не переименовываются — на них ссылаются сессии. Профиль default пуст = «как общие настройки»; удалить его нельзя."
+                       FontSize="11" Foreground="{StaticResource DimBrush}" TextWrapping="Wrap" Margin="0,0,0,8" />
+            <TextBlock Text="{Binding Status}" FontSize="11" Foreground="#e5a158"
+                       TextWrapping="Wrap" Margin="0,0,0,8" />
+            <TabControl>
+                <TabItem Header="Семплеры и лимиты">
+                    <StackPanel Margin="4,8,4,4">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <ComboBox ItemsSource="{Binding Samplers}" DisplayMemberPath="Name"
+                                      SelectedItem="{Binding SelectedSampler}" Width="240" Margin="0,0,4,0" />
+                            <Button Content="+" Command="{Binding AddSamplerCommand}" Padding="10,0" Margin="0,0,4,0"
+                                    ToolTip="Новый семплер (уникальный ключ profile-N)" />
+                            <Button Content="&#215;" Command="{Binding DeleteSamplerCommand}" Padding="10,0"
+                                    ToolTip="Удалить выбранный (default защищён)" />
+                        </StackPanel>
+                        <Grid DataContext="{Binding SelectedSampler}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="150" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Пусто = из общих настроек:" FontSize="11"
+                                       Foreground="{StaticResource DimBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            <WrapPanel Grid.Row="0" Grid.Column="1">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,3">
+                                    <TextBlock Text="MaxTokens " VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource DimBrush}" />
+                                    <TextBox Text="{Binding MaxTokens}" Width="64" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,3">
+                                    <TextBlock Text="Temp " VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource DimBrush}" />
+                                    <TextBox Text="{Binding Temperature}" Width="56" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,3">
+                                    <TextBlock Text="TopP " VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource DimBrush}" />
+                                    <TextBox Text="{Binding TopP}" Width="56" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,3">
+                                    <TextBlock Text="TopK " VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource DimBrush}" />
+                                    <TextBox Text="{Binding TopK}" Width="56" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,3">
+                                    <TextBlock Text="MinP " VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource DimBrush}" />
+                                    <TextBox Text="{Binding MinP}" Width="56" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,3">
+                                    <TextBlock Text="Repeat " VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource DimBrush}" />
+                                    <TextBox Text="{Binding RepeatPenalty}" Width="56" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,3">
+                                    <TextBlock Text="Seed " VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource DimBrush}" />
+                                    <TextBox Text="{Binding Seed}" Width="72" />
+                                </StackPanel>
+                            </WrapPanel>
+                            <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,3">
+                                    <TextBlock Text="Итераций цикла " VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource DimBrush}"
+                                               ToolTip="Потолок итераций агентного цикла за ход" />
+                                    <TextBox Text="{Binding MaxIterations}" Width="64" ToolTip="Потолок итераций агентного цикла за ход" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,3">
+                                    <TextBlock Text="Без самопроверки " VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource DimBrush}"
+                                               ToolTip="Шагов без sanity_check до nag'а" />
+                                    <TextBox Text="{Binding SanityCheckInterval}" Width="64" ToolTip="Шагов без sanity_check до nag'а" />
+                                </StackPanel>
+                            </WrapPanel>
+                        </Grid>
+                    </StackPanel>
+                </TabItem>
+                <TabItem Header="Промпты">
+                    <StackPanel Margin="4,8,4,4">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <ComboBox ItemsSource="{Binding Prompts}" DisplayMemberPath="Name"
+                                      SelectedItem="{Binding SelectedPrompt}" Width="240" Margin="0,0,4,0" />
+                            <Button Content="+" Command="{Binding AddPromptCommand}" Padding="10,0" Margin="0,0,4,0" />
+                            <Button Content="&#215;" Command="{Binding DeletePromptCommand}" Padding="10,0"
+                                    ToolTip="Удалить выбранный (default защищён)" />
+                        </StackPanel>
+                        <StackPanel DataContext="{Binding SelectedPrompt}">
+                            <CheckBox Content="Инструменты доступны" IsChecked="{Binding ToolsEnabled}" Margin="0,0,0,6" />
+                            <WrapPanel Margin="0,0,0,6">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,3">
+                                    <TextBlock Text="Мысли (XHigh/Medium/Low) " VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource DimBrush}"
+                                               ToolTip="Пусто = из общих настроек" />
+                                    <TextBox Text="{Binding ReasoningEffort}" Width="72" ToolTip="Пусто = из общих настроек" />
+                                </StackPanel>
+                            </WrapPanel>
+                            <TextBlock Text="Белый список инструментов (пусто = все; имя на строку или через запятую):" FontSize="11"
+                                       Foreground="{StaticResource DimBrush}" Margin="0,0,0,3" />
+                            <TextBox Text="{Binding AllowedToolsText}" AcceptsReturn="True" MinHeight="34" MaxHeight="90"
+                                     FontFamily="Consolas" FontSize="11" VerticalScrollBarVisibility="Auto" Margin="0,0,0,6" />
+                            <TextBlock Text="Системный промпт:" FontSize="11" Foreground="{StaticResource DimBrush}" Margin="0,0,0,3" />
+                            <TextBox Text="{Binding SystemPrompt}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" MaxHeight="180"
+                                     FontFamily="Consolas" FontSize="11" VerticalScrollBarVisibility="Auto" Margin="0,0,0,6" />
+                            <TextBlock Text="Контракт результата (дополняет промпт; можно пусто):" FontSize="11"
+                                       Foreground="{StaticResource DimBrush}" Margin="0,0,0,3" />
+                            <TextBox Text="{Binding ResultContract}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="34" MaxHeight="100"
+                                     FontFamily="Consolas" FontSize="11" VerticalScrollBarVisibility="Auto" />
+                        </StackPanel>
+                    </StackPanel>
+                </TabItem>
+                <TabItem Header="State-блок">
+                    <StackPanel Margin="4,8,4,4">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <ComboBox ItemsSource="{Binding StateBlocks}" DisplayMemberPath="Name"
+                                      SelectedItem="{Binding SelectedStateBlock}" Width="240" Margin="0,0,4,0" />
+                            <Button Content="+" Command="{Binding AddStateBlockCommand}" Padding="10,0" Margin="0,0,4,0" />
+                            <Button Content="&#215;" Command="{Binding DeleteStateBlockCommand}" Padding="10,0"
+                                    ToolTip="Удалить выбранный (default защищён)" />
+                        </StackPanel>
+                        <StackPanel DataContext="{Binding SelectedStateBlock}">
+                            <CheckBox Content="Вставлять state-блок в ходы этого профиля" IsChecked="{Binding Enabled}"
+                                      ToolTip="Выключено — ходы идут без служебного блока и без nag'а самопроверки. У main-агента блок всегда есть." />
+                        </StackPanel>
+                    </StackPanel>
+                </TabItem>
+            </TabControl>
+            <Button Content="Сохранить профили" Command="{Binding SaveProfilesCommand}" Padding="12,5" Margin="0,10,0,0"
+                    HorizontalAlignment="Left" />
+        </StackPanel>
+    </Border>
+</UserControl>

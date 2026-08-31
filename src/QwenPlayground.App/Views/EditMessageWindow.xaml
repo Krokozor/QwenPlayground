@@ -1,0 +1,31 @@
+<Window x:Class="QwenPlayground.App.Views.EditMessageWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Редактирование сообщения" Height="560" Width="800" WindowStartupLocation="CenterOwner">
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <DockPanel x:Name="ReasoningHeader" Grid.Row="0">
+            <CheckBox x:Name="ThinkingClosedBox" Content="мысль закрыта (&lt;/think&gt;)" VerticalAlignment="Center" />
+            <TextBlock Text="reasoning" FontWeight="Bold" Foreground="#888" Margin="12,0,0,0" VerticalAlignment="Center" />
+        </DockPanel>
+        <TextBox x:Name="ReasoningBox" Grid.Row="1" AcceptsReturn="True" TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto" FontStyle="Italic" Margin="0,4" />
+
+        <TextBlock Grid.Row="2" Text="content" FontWeight="Bold" Margin="0,4,0,0" />
+        <TextBox x:Name="ContentBox" Grid.Row="4" AcceptsReturn="True" TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto" Margin="0,4" />
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="OK" Width="80" Margin="4,0,0,0" Click="OnOk" />
+            <Button Content="Отмена" Width="80" Margin="4,0,0,0" Click="OnCancel" />
+        </StackPanel>
+    </Grid>
+</Window>

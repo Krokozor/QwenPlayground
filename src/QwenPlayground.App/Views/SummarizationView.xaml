@@ -1,0 +1,142 @@
+<UserControl x:Class="QwenPlayground.App.Views.SummarizationView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:QwenPlayground.App.Views">
+    <UserControl.Resources>
+        <views:InverseBoolConverter x:Key="InverseBool" />
+        <views:BoolToVisibilityConverter x:Key="BoolToVisibility" />
+    </UserControl.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Grid Margin="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Левый столбец: сессии + ре-прогоны -->
+            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                <TextBlock Text="Резюме сессии" FontWeight="Bold" FontSize="15" />
+                <TextBlock Text="Блок «[Сжатое резюме ранней части диалога]» в system-сообщении сессии."
+                           FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,2,0,8" />
+
+                <ComboBox ItemsSource="{Binding Sessions}" DisplayMemberPath="Title"
+                          SelectedItem="{Binding SelectedSession}" Margin="0,0,0,6" />
+
+                <TextBlock Text="{Binding SessionNote}" FontSize="11" Foreground="Gray"
+                           TextWrapping="Wrap" Margin="0,0,0,6" />
+
+                <TextBox Text="{Binding SummaryText, UpdateSourceTrigger=LostFocus}"
+                         AcceptsReturn="True" TextWrapping="Wrap" MinHeight="160"
+                         VerticalScrollBarVisibility="Auto" IsEnabled="{Binding SelectedSession.IsMain, Converter={StaticResource InverseBool}}"
+                         Margin="0,4,0,8" FontSize="12" />
+
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Сохранить резюме" Command="{Binding SaveSummaryCommand}"
+                            IsEnabled="{Binding SelectedSession.IsMain, Converter={StaticResource InverseBool}}" Padding="10,4" />
+                    <Button Content="Показать промпт" Command="{Binding RefreshSessionPromptCommand}"
+                            Padding="10,4" Margin="8,0,0,0" />
+                    <Button Content="Обновить список" Command="{Binding RefreshSessionsCommand}"
+                            Padding="10,4" Margin="8,0,0,0" />
+                </StackPanel>
+                <TextBlock Text="{Binding SessionStatus}" FontSize="11" Foreground="Gray"
+                           TextWrapping="Wrap" Margin="0,4,0,0" />
+
+                <TextBlock Text="Промпт резюме этой сессии (как пойдёт в модель):"
+                           FontWeight="Bold" FontSize="12" Margin="0,12,0,4" />
+                <TextBlock Text="{Binding SegmentSummaryCount, StringFormat='сегмент: {0} сообщений в резюме'}"
+                           FontSize="11" Foreground="Gray" />
+                <TextBox Text="{Binding SessionPromptPreview, Mode=OneWay}" IsReadOnly="True"
+                         TextWrapping="NoWrap" AcceptsReturn="True" MinHeight="120" MaxHeight="260"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                         FontFamily="Consolas" FontSize="11" Margin="0,4,0,8" />
+
+                <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1" CornerRadius="3" Padding="8" Margin="0,4,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Ре-прогон" FontWeight="Bold" FontSize="12" />
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <Button Content="Перегенерировать резюме сессии" Command="{Binding RerunSummaryCommand}"
+                                    IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBool}}" Padding="10,4" />
+                            <Button Content="Прогнать конвейер L1/L2/L3" Command="{Binding RerunPipelineCommand}"
+                                    IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBool}}" Padding="10,4" Margin="8,0,0,0" />
+                            <Button Content="Очистить" Command="{Binding ClearRunCommand}"
+                                    Padding="10,4" Margin="8,0,0,0" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <Button Content="Записать резюме в сессию" Command="{Binding ApplyProposedSummaryCommand}"
+                                    Visibility="{Binding HasSessionProposal, Converter={StaticResource BoolToVisibility}}" Padding="10,4" />
+                            <Button Content="Записать слои" Command="{Binding ApplyProposedLayersCommand}"
+                                    Visibility="{Binding HasLayerProposal, Converter={StaticResource BoolToVisibility}}" Padding="10,4" Margin="8,0,0,0" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding RunStatus}" TextWrapping="Wrap" FontSize="11"
+                                   Foreground="Gray" Margin="0,6,0,0" />
+                        <TextBox Text="{Binding RunOutput, Mode=OneWay}" IsReadOnly="True"
+                                 TextWrapping="NoWrap" AcceptsReturn="True" MinHeight="140" MaxHeight="320"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas" FontSize="11" Margin="0,4,0,0" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- Правый столбец: слои L1/L2/L3 + промпты -->
+            <StackPanel Grid.Column="1">
+                <TextBlock Text="Слои памяти main-агента (sessions/main/layers.json)" FontWeight="Bold" FontSize="15" />
+                <TextBlock Text="Долгосрочная память L1/L2/L3: L3 — свежие события, L2 — средний слой, L1 — старый дистиллят."
+                           FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,2,0,8" />
+
+                <TextBlock Text="L1 (самый старый)" FontSize="11" Foreground="Gray" />
+                <TextBox Text="{Binding Layer1, UpdateSourceTrigger=LostFocus}" AcceptsReturn="True"
+                         TextWrapping="Wrap" MinHeight="70" VerticalScrollBarVisibility="Auto" FontSize="11" Margin="0,2,0,6" />
+                <TextBlock Text="L2 (средний)" FontSize="11" Foreground="Gray" />
+                <TextBox Text="{Binding Layer2, UpdateSourceTrigger=LostFocus}" AcceptsReturn="True"
+                         TextWrapping="Wrap" MinHeight="70" VerticalScrollBarVisibility="Auto" FontSize="11" Margin="0,2,0,6" />
+                <TextBlock Text="L3 (свежие события)" FontSize="11" Foreground="Gray" />
+                <TextBox Text="{Binding Layer3, UpdateSourceTrigger=LostFocus}" AcceptsReturn="True"
+                         TextWrapping="Wrap" MinHeight="70" VerticalScrollBarVisibility="Auto" FontSize="11" Margin="0,2,0,6" />
+
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Сбросить из файла" Command="{Binding LoadLayersCommand}" Padding="10,4" />
+                    <Button Content="Сохранить слои (с бэкапом)" Command="{Binding SaveLayersCommand}" Padding="10,4" Margin="8,0,0,0" />
+                </StackPanel>
+                <TextBlock Text="{Binding LayersStatus}" FontSize="11" Foreground="Gray" Margin="0,4,0,0" />
+
+                <TextBlock Text="Блок долгосрочной памяти (как пойдёт в системный промпт):"
+                           FontWeight="Bold" FontSize="12" Margin="0,12,0,4" />
+                <TextBox Text="{Binding LayersPromptBlock, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True"
+                         MinHeight="60" MaxHeight="180" VerticalScrollBarVisibility="Auto"
+                         FontFamily="Consolas" FontSize="11" Margin="0,4,0,8" />
+
+                <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1" CornerRadius="3" Padding="8" Margin="0,16,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Промпты суммаризации (config/prompts.json)" FontWeight="Bold" FontSize="13" />
+                        <TextBlock Text="Правка действует на следующий прогон/компакцию. Шаблон: «{{key}}» заменяется на данные."
+                                   FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,2,0,6" />
+                        <ComboBox ItemsSource="{Binding PromptSteps}" DisplayMemberPath="Name"
+                                  SelectedItem="{Binding SelectedStep}" Margin="0,0,0,4" />
+                        <TextBlock Text="{Binding PromptStatus}" FontSize="11" Foreground="Gray"
+                                   TextWrapping="Wrap" Margin="0,0,0,4" />
+                        <TextBox Text="{Binding SelectedStep.Template, UpdateSourceTrigger=LostFocus}"
+                                 AcceptsReturn="True" TextWrapping="Wrap" MinHeight="120" MaxHeight="220"
+                                 VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="11"
+                                 Margin="0,2,0,6" />
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Сохранить шаблон" Command="{Binding SavePromptTemplateCommand}" Padding="10,4" />
+                            <Button Content="Сбросить к дефолту" Command="{Binding ResetPromptTemplateCommand}" Padding="10,4" Margin="8,0,0,0" />
+                        </StackPanel>
+                        <TextBlock Text="Итоговый промпт этого шага (при текущих входных данных):"
+                                   FontWeight="Bold" FontSize="12" Margin="0,12,0,2" />
+                        <TextBox Text="{Binding StepRenderedPrompt, Mode=OneWay}" IsReadOnly="True"
+                                 TextWrapping="NoWrap" AcceptsReturn="True" MinHeight="100" MaxHeight="300"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas" FontSize="11" Margin="0,2,0,0" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

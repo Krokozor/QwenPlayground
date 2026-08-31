@@ -1,0 +1,52 @@
+# .NET build artifacts
+bin/
+obj/
+*.user
+*.suo
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.swp
+
+# Python cache
+.ruff_cache/
+__pycache__/
+*.pyc
+
+# Build/deploy artifacts
+run/
+launcher/
+
+# Large binaries (download separately)
+ffmpeg/
+
+# User data (sessions, memories, backups)
+sessions/
+memories/
+memory_research/
+backups/
+orchestrator/
+wake/
+
+# Logs and temp
+logs/
+tmp/
+Sandbox/
+screenshots/
+QwenMultimodalTest/
+
+# User settings (created on first run)
+settings.json
+
+# Media files in root
+images/
+UI/
+
+# Misc
+test_output.txt
+16905121796286.jpg
+QwenPlayground.Launcher.exe.lnk
+CodeSanitizerV2.cs
+*.rar
+*.lnk
