@@ -15,6 +15,70 @@ public partial class MainWindow : Window
         _config = LauncherConfig.Load();
         RefreshStatus();
         BuildToolsPanel();
+        BuildEnvPanel();
+        _ = AutoSyncCheckAsync();
+    }
+
+    private void BuildEnvPanel()
+    {
+        EnvPanel.Children.Clear();
+        var successBrush = (System.Windows.Media.Brush)FindResource("SuccessBrush");
+        var errorBrush = (System.Windows.Media.Brush)FindResource("ErrorBrush");
+        var dimBrush = (System.Windows.Media.Brush)FindResource("DimBrush");
+
+        foreach (var check in EnvironmentCheck.CheckAll())
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            row.Children.Add(new TextBlock
+            {
+                Text = check.Installed ? "●" : "○",
+                Foreground = check.Installed ? successBrush : errorBrush,
+                Width = 16,
+                FontSize = 12
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = check.Name,
+                Width = 80,
+                FontSize = 12
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = check.Installed ? (check.Version ?? "") : (check.Hint ?? "не найден"),
+                FontSize = 11,
+                Foreground = dimBrush,
+                TextTrimming = System.Windows.TextTrimming.CharacterEllipsis
+            });
+            EnvPanel.Children.Add(row);
+        }
+
+        // llama.cpp (async)
+        CheckLlamaAsync();
+    }
+
+    /// <summary>
+    /// Автосинхронизация: при старте проверяем, есть ли обновления на remote.
+    /// Если да — показываем уведомление в StatusText.
+    /// </summary>
+    private async Task AutoSyncCheckAsync()
+    {
+        try
+        {
+            if (!GitService.IsGitRepo(SelfBuildPaths.WorkspaceRoot)) return;
+            var hasUpdates = await GitService.HasRemoteUpdatesAsync();
+            if (hasUpdates)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    StatusText.Text = "⬇ Есть обновления на GitHub. Нажми «Pull + Rebuild» для обновления.";
+                    StatusText.Foreground = (System.Windows.Media.Brush)FindResource("AccentBrush");
+                });
+            }
+        }
+        catch
+        {
+            // best-effort, не критично
+        }
     }
 
     private void RefreshStatus()
@@ -229,6 +293,44 @@ public partial class MainWindow : Window
         {
             SetBusy(false);
             RefreshStatus();
+        }
+    }
+
+    private async void CheckLlamaAsync()
+    {
+        try
+        {
+            var llama = await EnvironmentCheck.CheckLlamaServerAsync();
+            var successBrush = (System.Windows.Media.Brush)FindResource("SuccessBrush");
+            var errorBrush = (System.Windows.Media.Brush)FindResource("ErrorBrush");
+            var dimBrush = (System.Windows.Media.Brush)FindResource("DimBrush");
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            row.Children.Add(new TextBlock
+            {
+                Text = llama.Installed ? "●" : "○",
+                Foreground = llama.Installed ? successBrush : errorBrush,
+                Width = 16,
+                FontSize = 12
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = "llama.cpp",
+                Width = 80,
+                FontSize = 12
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = llama.Installed ? (llama.Version ?? "OK") : (llama.Hint ?? "недоступен"),
+                FontSize = 11,
+                Foreground = dimBrush,
+                TextTrimming = System.Windows.TextTrimming.CharacterEllipsis
+            });
+            EnvPanel.Children.Add(row);
+        }
+        catch
+        {
+            // ignore
         }
     }
 
