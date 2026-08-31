@@ -139,8 +139,31 @@ public partial class MainWindow : Window
         var version = await ToolManager.GetInstalledVersionAsync(tool);
         if (version is not null)
         {
-            Dispatcher.Invoke(() => statusText.Text = version);
+            Dispatcher.Invoke(() =>
+            {
+                // Обрезать длинную строку: "ffmpeg version N-126229-gf101fce22d-20260820 Copyright..." → "N-126229"
+                var shortVer = ShortenVersion(version);
+                statusText.Text = shortVer;
+                statusText.ToolTip = version;
+            });
         }
+    }
+
+    /// <summary>Обрезать версию до читаемого фрагмента (первое слово после "version" или первые 20 символов).</summary>
+    private static string ShortenVersion(string full)
+    {
+        // "ffmpeg version N-126229-gf101fce22d-20260820 Copyright (c)..." → "N-126229"
+        var idx = full.IndexOf("version", StringComparison.OrdinalIgnoreCase);
+        if (idx >= 0)
+        {
+            var rest = full[(idx + 7)..].Trim();
+            var parts = rest.Split(' ');
+            if (parts.Length > 0 && parts[0].Length > 0)
+            {
+                return parts[0];
+            }
+        }
+        return full.Length <= 30 ? full : full[..30] + "…";
     }
 
     private async Task InstallToolAsync(string name, ToolConfig tool, Button btn)
