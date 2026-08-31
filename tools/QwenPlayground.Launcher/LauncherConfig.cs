@@ -11,14 +11,43 @@ namespace QwenPlayground.Launcher;
 /// </summary>
 public sealed class LauncherConfig
 {
+    /// <summary>Корень проекта (где .slnx). Если не задан — вычисляется из расположения лаунчера.</summary>
+    public string? WorkspaceRoot { get; set; }
+
     /// <summary>URL git-репозитория.</summary>
     public string Repo { get; set; } = "https://github.com/Krokozor/QwenPlayground.git";
 
     /// <summary>Ветка для синхронизации.</summary>
     public string Branch { get; set; } = "main";
 
+    /// <summary>Дополнительные рабочие папки (агент может работать и с ними).</summary>
+    public List<string> AdditionalWorkspaces { get; set; } = new();
+
     /// <summary>Инструменты для управления (ffmpeg и др.).</summary>
     public Dictionary<string, ToolConfig> Tools { get; set; } = new();
+
+    /// <summary>
+    /// Эффективный корень проекта: из конфига или вычисленный из расположения лаунчера.
+    /// Лаунчер живёт в &lt;workspaceRoot&gt;/launcher/, значит корень = родитель.
+    /// </summary>
+    public string EffectiveWorkspaceRoot
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(WorkspaceRoot) && Directory.Exists(WorkspaceRoot))
+            {
+                return Path.GetFullPath(WorkspaceRoot);
+            }
+            // Вычисляем: лаунчер в &lt;root&gt;/launcher/ → корень = родитель
+            var launcherDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+            var parent = Path.GetDirectoryName(launcherDir);
+            if (parent is not null && File.Exists(Path.Combine(parent, "QwenPlayground.slnx")))
+            {
+                return parent;
+            }
+            return launcherDir;
+        }
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

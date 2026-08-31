@@ -66,14 +66,32 @@ public static class SwapService
         {
             throw new InvalidOperationException("нет активной версии (current.txt / current/)");
         }
+        var workspaceRoot = GetWorkspaceRoot();
         var app = Process.Start(new ProcessStartInfo(Path.Combine(Root, versionId, ExeName))
         {
-            WorkingDirectory = WorkspaceRoot(Root),
-            UseShellExecute = false
+            WorkingDirectory = workspaceRoot,
+            UseShellExecute = false,
+            Environment = { ["QWENPLAYGROUND_ROOT"] = workspaceRoot }
         });
         WriteAppPid(app?.Id);
-        Log($"started current version {versionId} (pid {app?.Id})");
+        Log($"started current version {versionId} (pid {app?.Id}, root={workspaceRoot})");
         return app?.Id ?? -1;
+    }
+
+    /// <summary>
+    /// Корень проекта: из launcher.json или вычисленный (родитель run/ с .slnx).
+    /// </summary>
+    private static string GetWorkspaceRoot()
+    {
+        var config = LauncherConfig.Load();
+        var root = config.EffectiveWorkspaceRoot;
+        // Верификация: там должно быть .slnx
+        if (File.Exists(Path.Combine(root, SelfBuildPaths.SolutionFileName)))
+        {
+            return root;
+        }
+        // Fallback: старый метод
+        return WorkspaceRoot(Root);
     }
 
     /// <summary>Пересобрать из исходников (build + тест-гейт) и перезапустить в новую версию.</summary>
@@ -157,16 +175,18 @@ public static class SwapService
             File.Delete(marker);
         }
 
+        var wsRoot = GetWorkspaceRoot();
         var app = Process.Start(new ProcessStartInfo(Path.Combine(versionDir, ExeName))
         {
-            WorkingDirectory = WorkspaceRoot(Root),
-            UseShellExecute = false
+            WorkingDirectory = wsRoot,
+            UseShellExecute = false,
+            Environment = { ["QWENPLAYGROUND_ROOT"] = wsRoot }
         });
 
         if (WaitHandshake(app, marker))
         {
             WriteAppPid(app?.Id);
-            Log("handshake OK, new version is running");
+            Log($"handshake OK, new version is running (root={wsRoot})");
             BuildJournal.UpdateLast(Root, "success", null);
             GarbageCollectVersions(buildId);
             return 0;
@@ -182,8 +202,9 @@ public static class SwapService
             File.WriteAllText(pointerFile, oldId);
             var rollback = Process.Start(new ProcessStartInfo(Path.Combine(Root, oldId, ExeName))
             {
-                WorkingDirectory = WorkspaceRoot(Root),
-                UseShellExecute = false
+                WorkingDirectory = wsRoot,
+                UseShellExecute = false,
+                Environment = { ["QWENPLAYGROUND_ROOT"] = wsRoot }
             });
             WriteAppPid(rollback?.Id);
             Log($"rolled back to {oldId}");

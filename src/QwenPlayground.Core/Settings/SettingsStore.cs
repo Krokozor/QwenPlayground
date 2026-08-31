@@ -31,6 +31,8 @@ public sealed class AppSettings
     public int MaxTokens { get; set; } = 2048;
     public int ContextSize { get; set; } = 32768;
     public string ProjectRoot { get; set; } = Path.Combine(SelfBuildPaths.WorkspaceRoot, "Sandbox");
+    /// <summary>Дополнительные рабочие папки (агент может работать и с ними, помимо своего корня).</summary>
+    public List<string> AdditionalWorkspaces { get; set; } = new();
     /// <summary>Усилие размышления (эталонные строки из assets/chat_template.jinja): XHigh / Medium / Low.</summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public ReasoningEffort ReasoningEffort { get; set; } = ReasoningEffort.XHigh;
