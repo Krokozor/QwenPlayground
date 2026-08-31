@@ -48,20 +48,27 @@ public static class GitService
 
     /// <summary>
     /// Проверить, есть ли новые коммиты на remote (без pull).
-    /// Возвращает true, если remote ahead of local.
+    /// Best-effort: если fetch не удался (нет сети, нет auth) — возвращает false.
     /// </summary>
     public static async Task<bool> HasRemoteUpdatesAsync()
     {
-        // fetch без merge
-        var (fetchExit, _) = await RunGitAsync("fetch origin");
-        if (fetchExit != 0) return false;
+        try
+        {
+            // fetch без merge (best-effort: может не быть сети или auth)
+            var (fetchExit, _) = await RunGitAsync("fetch origin --quiet");
+            if (fetchExit != 0) return false;
 
-        // сравнить HEAD с origin/HEAD
-        var (exitCode, output) = await RunGitAsync("rev-list HEAD..origin/main --count");
-        if (exitCode != 0) return false;
+            // сравнить HEAD с origin/main
+            var (exitCode, output) = await RunGitAsync("rev-list HEAD..origin/main --count");
+            if (exitCode != 0) return false;
 
-        var count = int.TryParse(output.Trim(), out var n) ? n : 0;
-        return count > 0;
+            var count = int.TryParse(output.Trim(), out var n) ? n : 0;
+            return count > 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -85,7 +92,7 @@ public static class GitService
     }
 
     /// <summary>
-    /// Запустить git-команду в корне воркспейса.
+    /// Запустить git-команду в корне воркспейса. Таймаут: 30 секунд.
     /// </summary>
     private static async Task<(int ExitCode, string Output)> RunGitAsync(string arguments)
     {
@@ -111,7 +118,16 @@ public static class GitService
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
-        await process.WaitForExitAsync();
+
+        try
+        {
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        catch (TimeoutException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            return (-1, "timeout (30s)");
+        }
 
         var fullOutput = output.ToString() + (error.Length > 0 ? "\n" + error.ToString() : "");
         return (process.ExitCode, fullOutput);
