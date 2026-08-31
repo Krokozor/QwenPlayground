@@ -33,7 +33,7 @@ public static class GitService
     /// </summary>
     public static async Task<string?> GetHeadCommitAsync()
     {
-        var (exitCode, output) = await RunGitAsync("log -1 --format=%h %s");
+        var (exitCode, output) = await RunGitAsync("log -1 --oneline");
         return exitCode == 0 ? output.Trim() : null;
     }
 
