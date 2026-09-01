@@ -456,7 +456,8 @@ public partial class MainViewModel : ObservableObject {
         setStatus: status => StatusText = status,
         startTurn: prompt => RunHeartbeatTurnAsync(prompt),
         flushMemory: FlushMemoryVectorsAsync,
-        timer: new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(20) });
+        timer: new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(20) },
+        watchdogGuard: WatchdogLauncher.EnsureAlive);
         _lifecycle.Register(_heartbeat);
 
         // Настройки: закрытие приложения — единственный синхронный flush (дебаунс не гарантирован).

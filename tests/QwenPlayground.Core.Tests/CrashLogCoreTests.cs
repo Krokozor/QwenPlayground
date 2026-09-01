@@ -105,4 +105,59 @@ public sealed class CrashLogCoreTests : IDisposable
         var logsDir = Path.Combine(file, "impossible");
         CrashLogCore.Write(logsDir, CrashLogCore.AppChannel, "entry");
     }
+
+    [Fact]
+    public void SplitEntries_ReturnsSelfContainedEntriesWithHeader()
+    {
+        var text = CrashLogCore.BuildEntry("first", null) + CrashLogCore.BuildEntry("second", null);
+        var entries = CrashLogCore.SplitEntries(text).ToList();
+
+        Assert.Equal(2, entries.Count);
+        Assert.StartsWith(CrashLogCore.EntryHeader, entries[0]);
+        Assert.Contains("Source: first", entries[0]);
+        Assert.DoesNotContain("Source: second", entries[0]);
+        Assert.Contains("Source: second", entries[1]);
+    }
+
+    [Fact]
+    public void SplitEntries_EmptyOrHeaderlessText_ReturnsNothing()
+    {
+        Assert.Empty(CrashLogCore.SplitEntries(""));
+        Assert.Empty(CrashLogCore.SplitEntries("no entries here"));
+    }
+
+    [Fact]
+    public void ReadEntries_DeduplicatesLastFileAgainstDaily()
+    {
+        // last-файл дублирует последнюю запись дневного — в результате она одна.
+        CrashLogCore.Write(_directory, CrashLogCore.AppChannel, CrashLogCore.BuildEntry("first", null));
+        CrashLogCore.Write(_directory, CrashLogCore.AppChannel, CrashLogCore.BuildEntry("second", null));
+
+        var entries = CrashLogCore.ReadEntries(_directory, CrashLogCore.AppChannel);
+
+        Assert.Equal(2, entries.Count);
+        Assert.Contains("Source: first", entries[0]);
+        Assert.Contains("Source: second", entries[1]);
+    }
+
+    [Fact]
+    public void ReadEntries_RespectsMax_ReturnsMostRecent()
+    {
+        for (var i = 1; i <= 5; i++)
+        {
+            CrashLogCore.Write(_directory, CrashLogCore.AppChannel, CrashLogCore.BuildEntry($"crash{i}", null));
+        }
+
+        var entries = CrashLogCore.ReadEntries(_directory, CrashLogCore.AppChannel, max: 2);
+
+        Assert.Equal(2, entries.Count);
+        Assert.Contains("Source: crash4", entries[0]);
+        Assert.Contains("Source: crash5", entries[1]);
+    }
+
+    [Fact]
+    public void ReadEntries_MissingFiles_ReturnsEmptyList()
+    {
+        Assert.Empty(CrashLogCore.ReadEntries(Path.Combine(_directory, "nope"), CrashLogCore.AppChannel));
+    }
 }

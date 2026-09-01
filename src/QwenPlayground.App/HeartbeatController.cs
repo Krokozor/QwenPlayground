@@ -28,6 +28,7 @@ public sealed class HeartbeatController : IAppService
     private readonly DispatcherTimer? _timer;
     private readonly Func<DateTime> _utcNow;
     private readonly BackgroundWork _background;
+    private readonly Action? _watchdogGuard;
 
     /// <summary>MinValue нельзя: первый же тик считался бы «просроченным». Стартуем отсчёт от создания.</summary>
     private DateTime _lastTurnAt;
@@ -42,7 +43,8 @@ public sealed class HeartbeatController : IAppService
         Func<Task> flushMemory,
         DispatcherTimer? timer = null,
         Func<DateTime>? clock = null,
-        BackgroundWork? background = null)
+        BackgroundWork? background = null,
+        Action? watchdogGuard = null)
     {
         _wakeSignals = wakeSignals;
         _isBusy = isBusy;
@@ -54,6 +56,7 @@ public sealed class HeartbeatController : IAppService
         _timer = timer;
         _utcNow = clock ?? new Func<DateTime>(() => DateTime.UtcNow);
         _background = background ?? new BackgroundWork(_ => { });
+        _watchdogGuard = watchdogGuard;
         _lastTurnAt = _utcNow();
     }
 
@@ -83,6 +86,10 @@ public sealed class HeartbeatController : IAppService
     /// <summary>Один тик опроса: busy гасит всё, flush памяти бежит всегда при свободном чате.</summary>
     public void Tick()
     {
+        // Страж процесса: живость watchdog'а проверяем ДО busy-гашения — она не зависит
+        // от занятости чата (иначе долгая генерация = слепое пятно по своему стражу).
+        _watchdogGuard?.Invoke();
+
         // FSM: фоновые задачи только в Idle (не во время Generating/Compacting/AwaitingUser/...).
         if (_isBusy())
         {

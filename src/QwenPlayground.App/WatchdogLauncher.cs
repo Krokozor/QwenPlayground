@@ -75,6 +75,43 @@ public static class WatchdogLauncher
     }
 
     /// <summary>
+    /// «Watchdog на watchdog'а»: приложение периодически проверяет, жив ли его страж
+    /// (раз в 20 с из heartbeat-тика). Страж умер, а приложение живо → это сама по себе
+    /// тихая смерть (страж мог умереть, не успев записать чужой краш): фиксируем в
+    /// crash-лог и перезапускаем.
+    /// </summary>
+    public static void EnsureAlive()
+    {
+        try
+        {
+            var watchdog = _watchdog;
+            if (watchdog is null || !watchdog.HasExited)
+            {
+                return;
+            }
+            int? exitCode = null;
+            try
+            {
+                exitCode = watchdog.ExitCode;
+            }
+            catch
+            {
+                // exit code не критичен
+            }
+            CrashLog.LogCrash("Watchdog: guardian died",
+                $"watchdog (PID {watchdog.Id}) завершился, пока приложение живо (exit code: {exitCode?.ToString() ?? "unknown"}). " +
+                "Пока страж был мёртв, неконтролируемые смерти не фиксировались. Страж перезапущен.");
+            watchdog.Dispose();
+            _watchdog = null;
+            TryStart();
+        }
+        catch
+        {
+            // проверка не должна ломать heartbeat-тик
+        }
+    }
+
+    /// <summary>
     /// Записать маркер чистого завершения (вызывается в App.OnExit, до выхода процесса).
     /// Заодно чистит маркеры старых запусков (старше суток).
     /// </summary>

@@ -61,6 +61,45 @@
                 </ItemsControl>
             </Border>
 
+            <!-- Крахи: картина «что случилось и почему» без ручного копания в logs/ -->
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="Крахи (приложение + лаунчер)" FontWeight="Bold" FontSize="14" VerticalAlignment="Center" />
+                <Button Content="Открыть папку логов" Command="{Binding OpenLogsFolderCommand}"
+                        HorizontalAlignment="Left" Margin="12,0,0,0" Padding="8,2" VerticalAlignment="Center" />
+            </StackPanel>
+            <Border Background="#16181d" BorderBrush="#444" BorderThickness="1" Padding="8" Margin="0,0,0,12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="3*" />
+                        <ColumnDefinition Width="7*" />
+                    </Grid.ColumnDefinitions>
+                    <ListBox Grid.Column="0" ItemsSource="{Binding CrashEntries}"
+                             SelectedItem="{Binding SelectedCrash, Mode=TwoWay}"
+                             Background="Transparent" BorderThickness="0" Foreground="#e0e0e0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="6" Margin="0,2" Background="#1f2733">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Time}" FontWeight="Bold" />
+                                            <TextBlock Text="{Binding Channel}" Margin="8,0,0,0"
+                                                       Foreground="#7aa2f7" FontSize="11" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding Source}" Margin="0,2,0,0" TextWrapping="Wrap" FontSize="11" />
+                                        <TextBlock Text="{Binding Process}" Margin="0,1,0,0" FontSize="10" Foreground="#888" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <TextBox Grid.Column="1" Margin="8,0,0,0" Text="{Binding SelectedCrashText, Mode=OneWay}"
+                             IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                             FontFamily="Consolas" FontSize="11" Background="#0d0f13" Foreground="#c0c0c0"
+                             BorderBrush="#333" BorderThickness="1" />
+                </Grid>
+            </Border>
+
             <!-- Память -->
             <TextBlock Text="{Binding MemoryCount, StringFormat='Память: {0} фактов'}" FontWeight="Bold" FontSize="14" Margin="0,0,0,4" />
             <Border Background="#16181d" BorderBrush="#444" BorderThickness="1" Padding="8">

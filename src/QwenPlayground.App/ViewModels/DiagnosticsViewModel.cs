@@ -1,8 +1,9 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.SelfBuild;
 
@@ -45,6 +46,15 @@ public partial class DiagnosticsViewModel : ObservableObject
 
     [ObservableProperty]
     private ObservableCollection<MemoryInfo> _recentMemories = new();
+
+    [ObservableProperty]
+    private ObservableCollection<CrashEntryInfo> _crashEntries = new();
+
+    [ObservableProperty]
+    private CrashEntryInfo? _selectedCrash;
+
+    [ObservableProperty]
+    private string _selectedCrashText = "Выберите запись, чтобы увидеть детали.";
 
     public DiagnosticsViewModel(
         ChatStateMachine chatState,
@@ -104,9 +114,59 @@ public partial class DiagnosticsViewModel : ObservableObject
         MemoryCount = memories.Count;
         RecentMemories = new ObservableCollection<MemoryInfo>(
             memories.Take(5).Select(m => new MemoryInfo(m.Id, MemoryClassifier.TopName(m.CategoryLayers), m.CreatedAt, m.Content)));
+
+        // Крахи: оба канала (приложение + лаунчер), новые сверху.
+        var logsDir = CrashLog.LogsDir;
+        var entries = new List<CrashEntryInfo>();
+        foreach (var channel in new[] { CrashLogCore.AppChannel, CrashLogCore.LauncherChannel })
+        {
+            foreach (var text in CrashLogCore.ReadEntries(logsDir, channel, max: 20))
+            {
+                entries.Add(ParseCrashEntry(channel, text));
+            }
+        }
+        CrashEntries = new ObservableCollection<CrashEntryInfo>(
+            entries.OrderByDescending(e => e.Time).Take(20));
+        SelectedCrash = CrashEntries.Count > 0 ? CrashEntries[0] : null;
+        SelectedCrashText = SelectedCrash?.FullText ?? "Записей нет — крахов не было (или лог пуст).";
+    }
+
+    private static CrashEntryInfo ParseCrashEntry(string channel, string text)
+    {
+        string time = "?", source = "?", process = "?";
+        foreach (var line in text.Split('\n'))
+        {
+            if (line.StartsWith("Time: ", StringComparison.Ordinal))
+            {
+                time = line["Time: ".Length..].Trim();
+            }
+            else if (line.StartsWith("Source: ", StringComparison.Ordinal))
+            {
+                source = line["Source: ".Length..].Trim();
+            }
+            else if (line.StartsWith("Process: ", StringComparison.Ordinal))
+            {
+                process = line["Process: ".Length..].Trim();
+            }
+        }
+        return new CrashEntryInfo(channel, time, source, process, text);
+    }
+
+    [RelayCommand]
+    private void OpenLogsFolder()
+    {
+        // Папка логов: полный разбор (дневные файлы, watchdog.log, launcher.log).
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "explorer.exe",
+            Arguments = $"\"{CrashLog.LogsDir}\"",
+            UseShellExecute = true
+        });
     }
 }
 
 public sealed record BuildInfo(string Id, DateTime Timestamp, string Status, string? FailureReason, string OutputTail);
 
 public sealed record MemoryInfo(string Id, string Category, DateTime CreatedAt, string Content);
+
+public sealed record CrashEntryInfo(string Channel, string Time, string Source, string Process, string FullText);

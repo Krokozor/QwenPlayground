@@ -149,6 +149,69 @@ public static class CrashLogCore
         Write(logsDir, channel, BuildEntry(source, exception, details, CollectContext(), processName, pid));
     }
 
+    public const string EntryHeader = "================ CRASH ================";
+
+    /// <summary>
+    /// Прочитать записи канала (дневной файл + «последний крах», дубликаты
+    /// последнего удаляются) для вкладки «Диагностика». Хронологический порядок,
+    /// не более <paramref name="max"/>. Никогда не бросает: пустой список при любой ошибке.
+    /// </summary>
+    public static List<string> ReadEntries(string logsDir, string channel, int max = 20)
+    {
+        var result = new List<string>();
+        try
+        {
+            var files = new List<string>();
+            var daily = DailyFile(logsDir, channel);
+            if (File.Exists(daily))
+            {
+                files.Add(daily);
+            }
+            var last = LastFile(logsDir, channel);
+            if (File.Exists(last))
+            {
+                files.Add(last);
+            }
+
+            var seen = new HashSet<string>();
+            foreach (var file in files)
+            {
+                foreach (var entry in SplitEntries(File.ReadAllText(file)))
+                {
+                    // last-файл дублирует последнюю запись дневного файла — не показываем дважды.
+                    if (seen.Add(entry))
+                    {
+                        result.Add(entry);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // чтение для UI не должно падать
+        }
+        return result.TakeLast(max).ToList();
+    }
+
+    /// <summary>Разбить текст лога на самодостаточные записи (каждая — с заголовком).</summary>
+    public static IEnumerable<string> SplitEntries(string text)
+    {
+        // Текст без заголовка — не записи (мусор/пусто): не выдумываем «запись».
+        if (!text.Contains(EntryHeader, StringComparison.Ordinal))
+        {
+            yield break;
+        }
+        var parts = text.Split(EntryHeader, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in parts)
+        {
+            if (string.IsNullOrWhiteSpace(part))
+            {
+                continue;
+            }
+            yield return EntryHeader + part.TrimEnd('\r', '\n');
+        }
+    }
+
     private static string SafeVersion()
     {
         try
