@@ -34,7 +34,17 @@ public static class SwapService
         Environment.CurrentDirectory = Root;
         try
         {
-            Process.GetProcessById(pid).WaitForExit();
+            using var process = Process.GetProcessById(pid);
+            if (!process.WaitForExit(60_000))
+            {
+                // Висящий shutdown (сервис в Shutdown без таймаута) не должен блокировать
+                // обмен вечно: старая версия уже не нужна — убиваем и деплоим новую.
+                // Без этого сценария приложение «умирает посреди ничего»: закрылось,
+                // а новая версия так и не стартовала, и никто об этом не знает.
+                Log($"old process {pid} did not exit within 60s, killing");
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(10_000);
+            }
         }
         catch
         {
@@ -169,48 +179,65 @@ public static class SwapService
         File.WriteAllText(pointerFile, buildId);
         Log($"pointer -> {buildId} (previous: {oldId ?? "none"})");
 
-        var marker = Path.Combine(versionDir, "ok.marker");
-        if (File.Exists(marker))
+        try
         {
-            File.Delete(marker);
-        }
+            var marker = Path.Combine(versionDir, "ok.marker");
+            if (File.Exists(marker))
+            {
+                File.Delete(marker);
+            }
 
-        var wsRoot = GetWorkspaceRoot();
-        var app = Process.Start(new ProcessStartInfo(Path.Combine(versionDir, ExeName))
-        {
-            WorkingDirectory = wsRoot,
-            UseShellExecute = false,
-            Environment = { ["QWENPLAYGROUND_ROOT"] = wsRoot }
-        });
-
-        if (WaitHandshake(app, marker))
-        {
-            WriteAppPid(app?.Id);
-            Log($"handshake OK, new version is running (root={wsRoot})");
-            BuildJournal.UpdateLast(Root, "success", null);
-            GarbageCollectVersions(buildId);
-            return 0;
-        }
-
-        var reason = app is { HasExited: true }
-            ? $"process exited with code {app.ExitCode} before handshake"
-            : "handshake timeout (30s)";
-        Log($"startup failed: {reason}; rolling back");
-        KillQuietly(app);
-        if (!string.IsNullOrEmpty(oldId) && File.Exists(Path.Combine(Root, oldId, ExeName)))
-        {
-            File.WriteAllText(pointerFile, oldId);
-            var rollback = Process.Start(new ProcessStartInfo(Path.Combine(Root, oldId, ExeName))
+            var wsRoot = GetWorkspaceRoot();
+            var app = Process.Start(new ProcessStartInfo(Path.Combine(versionDir, ExeName))
             {
                 WorkingDirectory = wsRoot,
                 UseShellExecute = false,
                 Environment = { ["QWENPLAYGROUND_ROOT"] = wsRoot }
             });
-            WriteAppPid(rollback?.Id);
-            Log($"rolled back to {oldId}");
+
+            if (WaitHandshake(app, marker))
+            {
+                WriteAppPid(app?.Id);
+                Log($"handshake OK, new version is running (root={wsRoot})");
+                BuildJournal.UpdateLast(Root, "success", null);
+                GarbageCollectVersions(buildId);
+                return 0;
+            }
+
+            var reason = app is { HasExited: true }
+                ? $"process exited with code {app.ExitCode} before handshake"
+                : "handshake timeout (30s)";
+            Log($"startup failed: {reason}; rolling back");
+            KillQuietly(app);
+            if (!string.IsNullOrEmpty(oldId) && File.Exists(Path.Combine(Root, oldId, ExeName)))
+            {
+                File.WriteAllText(pointerFile, oldId);
+                var rollback = Process.Start(new ProcessStartInfo(Path.Combine(Root, oldId, ExeName))
+                {
+                    WorkingDirectory = wsRoot,
+                    UseShellExecute = false,
+                    Environment = { ["QWENPLAYGROUND_ROOT"] = wsRoot }
+                });
+                WriteAppPid(rollback?.Id);
+                Log($"rolled back to {oldId}");
+            }
+            BuildJournal.UpdateLast(Root, "failed", reason);
+            return 1;
         }
-        BuildJournal.UpdateLast(Root, "failed", reason);
-        return 1;
+        catch (Exception exception)
+        {
+            // Указатель уже переключён: сбой на этом участке (права на exe, корень
+            // воркспейса, маркер…) оставил бы его на версии, которая так и не стартовала.
+            // Откатываем — иначе StartCurrent запускал бы «призрака».
+            Log($"FATAL: unexpected error after pointer switch: {exception.Message}; rolling back pointer");
+            if (!string.IsNullOrEmpty(oldId) && File.Exists(Path.Combine(Root, oldId, ExeName)))
+            {
+                File.WriteAllText(pointerFile, oldId);
+                Log($"pointer rolled back to {oldId}");
+            }
+            BuildJournal.UpdateLast(Root, "failed", exception.Message);
+            return 1;
+        }
     }
 
     // ---------- legacy-режим: next/ → current/ без удаления каталога ----------

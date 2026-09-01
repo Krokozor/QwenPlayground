@@ -8,24 +8,31 @@ namespace QwenPlayground.App.Browser;
 /// Base class for browser tools that auto-attach screenshots to the tool message.
 /// The screenshot is attached via FinalizeAsync using MessageMetaStore,
 /// so the model sees the image in the next render without extra tool calls.
+/// Supports multiple screenshots (pipe-separated) for series tools.
 /// </summary>
 public abstract class BrowserToolBase : AgentTool
 {
-    private string? _screenshotPath;
+    protected string? _screenshotPath;
 
     protected void SetScreenshot(string path) => _screenshotPath = path;
 
     public override async Task FinalizeAsync(ToolContext context, int messageId, CancellationToken cancellationToken)
     {
-        if (_screenshotPath is null || !File.Exists(_screenshotPath))
-            return;
+        if (_screenshotPath is null) return;
 
         try
         {
             var sessionDir = context.SessionDir
                 ?? Path.Combine(context.ProjectRoot, "sessions", "main");
             var store = new MessageMetaStore(sessionDir);
-            store.AddArtifact(messageId, _screenshotPath);
+
+            // Support pipe-separated paths for screenshot series
+            var paths = _screenshotPath.Split('|');
+            foreach (var p in paths)
+            {
+                if (File.Exists(p))
+                    store.AddArtifact(messageId, p);
+            }
         }
         catch
         {

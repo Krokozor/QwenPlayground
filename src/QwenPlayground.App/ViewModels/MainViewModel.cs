@@ -473,6 +473,44 @@ public partial class MainViewModel : ObservableObject {
         if (lastBuild is not null) {
             StatusText = $"⚡ Сборка {lastBuild.Id} | Режим бога активирован";
         }
+
+        // Контекст краха: каждая запись CrashLog несёт «что делалось в момент смерти»
+        // (активные ходы, сессия, FSM) — картину не придётся собирать по кускам.
+        CrashLog.AddContextProvider(BuildCrashContext);
+
+        // Предыдущий запуск закончился крахом — не даём проскочить незаметно.
+        if (File.Exists(CrashLog.LastCrashFile) &&
+            (DateTime.Now - File.GetLastWriteTime(CrashLog.LastCrashFile)).TotalHours < 24) {
+            StatusText = "⚠ предыдущий запуск закончился крахом — logs/last-crash.log";
+        }
+    }
+
+    /// <summary>Снимок «что происходило» для записей CrashLog (вызывается синхронно, без блокировок).</summary>
+    private string BuildCrashContext() {
+        var sb = new StringBuilder();
+        sb.AppendLine($"session: {_sessions.CurrentId}");
+        sb.AppendLine($"chat FSM: {_chatState.Current}; generating: {IsGenerating}");
+        // QwenPlayground.Core.Runtime.TurnState: вложенный класс TurnState хода затеняет имя.
+        var active = _background.Turns.Turns
+            .Where(t => t.State is QwenPlayground.Core.Runtime.TurnState.Queued
+                or QwenPlayground.Core.Runtime.TurnState.Running)
+            .ToList();
+        if (active.Count == 0) {
+            sb.AppendLine("active turns: none");
+        }
+        else {
+            sb.AppendLine("active turns:");
+            foreach (var turn in active) {
+                sb.AppendLine($"  - {turn.Name}: {turn.State}");
+                foreach (var line in turn.Journal.TakeLast(5)) {
+                    sb.AppendLine($"      {line}");
+                }
+                if (turn.Error is not null) {
+                    sb.AppendLine($"      error: {turn.Error}");
+                }
+            }
+        }
+        return sb.ToString();
     }
 
     /// <summary>Централизованная остановка сервисов при закрытии (LIFO, ошибки собираются).</summary>

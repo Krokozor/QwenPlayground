@@ -7,6 +7,13 @@ public sealed record BuildResult(string Id, int ExitCode, string OutputTail);
 
 public static class SelfBuildService
 {
+    /// <summary>
+    /// Хук перед деплоем инструментов (лаунчер/watchdog в launcher/): приложение
+    /// подставляет остановку своего watchdog'а — тот держит бинари launcher/
+    /// (Windows-лок), и деплой не смог бы обновить их под живым стражем.
+    /// </summary>
+    public static Action? PreDeployTools;
+
     public static async Task<BuildResult> BuildNextAsync(CancellationToken cancellationToken)
     {
         var id = DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -81,10 +88,22 @@ public static class SelfBuildService
             return new BuildResult(id, gate.ExitCode, gateTail);
         }
 
-        // Лаунчер в отдельной папке (launcher/), вне run/. Если бы он деплоился в run/,
-        // повторная сборка Core (общий obj\Release + -o override на весь граф) вычищала бы
-        // Core.dll из только что собранной папки версии.
+        // Лаунчер и watchdog в отдельной папке (launcher/), вне run/: если бы они
+        // деплоились в run/, повторная сборка Core (общий obj\Release + -o override
+        // на весь граф) вычищала бы Core.dll из только что собранной папки версии.
+        // Перед деплоем — хук PreDeployTools: приложение останавливает своего
+        // watchdog'а, освобождающего бинари launcher/.
+        try
+        {
+            PreDeployTools?.Invoke();
+        }
+        catch
+        {
+            // Хук не должен ломать сборку: если watchdog не остановился, деплой
+            // сам упадёт с записью в launcher.log.
+        }
         await DeployLauncherAsync(cancellationToken);
+        await DeployWatchdogAsync(cancellationToken);
 
         BuildJournal.Append(SelfBuildPaths.RunRoot, new BuildJournalEntry
         {
@@ -98,6 +117,34 @@ public static class SelfBuildService
             GateExitCode = 0
         });
         return new BuildResult(id, 0, Tail(build.Output));
+    }
+
+    /// <summary>
+    /// Сборка watchdog'а в launcher/ (сиблинг run/). Watchdog — страж процесса:
+    /// фиксирует смерти, которые обходят managed-обработчики (нативные краши).
+    /// Перед деплоем вызывается <see cref="PreDeployTools"/>: приложение останавливает
+    /// своего watchdog'а, иначе тот держит бинари launcher/ (Windows-лок) и деплой
+    /// не смог бы их обновить.
+    /// </summary>
+    private static async Task DeployWatchdogAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var project = Path.Combine(
+                SelfBuildPaths.WorkspaceRoot, @"tools\QwenPlayground.Watchdog\QwenPlayground.Watchdog.csproj");
+            var build = await RunProcessAsync(
+                "dotnet", $"build \"{project}\" -c Release -o \"{SelfBuildPaths.LauncherDir}\"", cancellationToken);
+            if (build.ExitCode != 0)
+            {
+                File.AppendAllText(Path.Combine(SelfBuildPaths.RunRoot, "launcher.log"),
+                    $"[{DateTime.Now:O}] watchdog deploy failed (exit {build.ExitCode}):\n{Tail(build.Output)}\n");
+            }
+        }
+        catch (Exception exception)
+        {
+            File.AppendAllText(Path.Combine(SelfBuildPaths.RunRoot, "launcher.log"),
+                $"[{DateTime.Now:O}] watchdog deploy skipped: {exception.Message}\n");
+        }
     }
 
     /// <summary>Сборка лаунчера в его собственный каталог launcher/ (вне run/).</summary>

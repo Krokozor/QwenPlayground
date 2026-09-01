@@ -5,12 +5,25 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:QwenPlayground.App.ViewModels"
         xmlns:views="clr-namespace:QwenPlayground.App.Views"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         mc:Ignorable="d"
         Title="QwenPlayground" Height="760" Width="1040">
     <Window.DataContext>
         <vm:MainViewModel />
     </Window.DataContext>
     <DockPanel>
+        <!-- 
+            BrowserHost: 1px strip that hosts the WebView2 control.
+            PURPOSE: provide an HwndSource for CoreWebView2Controller creation.
+            The actual browser renders OFF-SCREEN at (-5000,-5000) via the controller.
+            This 1px strip is NEVER visible to the user. Do NOT remove — 
+            without it, CreateCoreWebView2ControllerAsync has no HWND to bind to.
+            See BrowserService.cs class-level docs for full explanation.
+        -->
+        <Grid DockPanel.Dock="Top" Height="1" x:Name="BrowserHost">
+            <wv2:WebView2 x:Name="AgentBrowser" />
+        </Grid>
+
         <!-- Диспетчер ходов: фоновые работы с личностью (реестр) вместо одной статусной строки -->
         <Expander DockPanel.Dock="Bottom" Header="{Binding TurnsPanel.Summary}" Margin="4,0,4,4"
                   Foreground="{StaticResource DimBrush}">
@@ -72,6 +85,9 @@
             </TabItem>
             <TabItem Header="Диагностика">
                 <views:DiagnosticsView DataContext="{Binding Diagnostics}" />
+            </TabItem>
+            <TabItem Header="Браузер">
+                <views:BrowserView />
             </TabItem>
         </TabControl>
     </DockPanel>

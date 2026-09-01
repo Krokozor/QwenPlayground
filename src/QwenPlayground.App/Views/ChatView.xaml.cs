@@ -4,7 +4,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using QwenPlayground.App.Browser;
 using QwenPlayground.App.ViewModels;
 
 namespace QwenPlayground.App.Views;
@@ -19,22 +18,6 @@ public partial class ChatView : UserControl
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         MessagesScroll.ScrollChanged += OnScrollChanged;
-        Loaded += OnLoaded;
-    }
-
-    private void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        // Start compact — browser works headless, panel is for user debugging
-        BrowserRow.Height = new GridLength(100);
-        BrowserRow.MinHeight = 50;
-        _browserOpen = false;
-
-        AgentBrowser.CoreWebView2InitializationCompleted += (s, e2) =>
-        {
-            System.Diagnostics.Debug.WriteLine($"WebView2 init: success={e2.IsSuccess}");
-        };
-
-        BrowserService.Attach(AgentBrowser);
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -113,23 +96,6 @@ public partial class ChatView : UserControl
         if (_stickToBottom)
         {
             Dispatcher.InvokeAsync(() => MessagesScroll.ScrollToEnd());
-        }
-    }
-
-    private bool _browserOpen;
-
-    private void BrowserToggle_Click(object sender, RoutedEventArgs e)
-    {
-        _browserOpen = !_browserOpen;
-        if (_browserOpen)
-        {
-            BrowserRow.Height = new GridLength(350);
-            BrowserRow.MinHeight = 100;
-        }
-        else
-        {
-            BrowserRow.Height = new GridLength(100);
-            BrowserRow.MinHeight = 50;
         }
     }
 }

@@ -17,6 +17,10 @@
     <PackageReference Include="AngleSharp" Version="1.1.2" />
     <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.10" />
     <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <!-- EventLog не входит в базовый shared framework .NET 10: без пакета запись
+         в Windows Event Log (CrashLog) и выжимка (EventLogExcerpt) падают
+         FileNotFoundException'ом в рантайме. -->
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
   </ItemGroup>
 
 </Project>
