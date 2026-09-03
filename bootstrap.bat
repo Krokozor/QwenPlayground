@@ -1,16 +1,15 @@
 @echo off
 setlocal
-chcp 65001 >nul
 cd /d "%~dp0"
 
 echo === QwenPlayground: bootstrap ===
 echo.
 
-REM ---------- 1. Окружение ----------
+REM ---------- 1. Environment ----------
 where dotnet >nul 2>nul
 if errorlevel 1 (
-    echo [ОШИБКА] dotnet SDK не найден в PATH.
-    echo Установите .NET 10 SDK (10.0.400+): https://dotnet.microsoft.com/download
+    echo [ERROR] dotnet SDK not found in PATH.
+    echo Install .NET 10 SDK (10.0.400+): https://dotnet.microsoft.com/download
     pause
     exit /b 1
 )
@@ -18,56 +17,56 @@ for /f "delims=" %%v in ('dotnet --version') do set "DOTNET_VER=%%v"
 echo dotnet SDK: %DOTNET_VER%
 echo %DOTNET_VER% | findstr /r "^10\." >nul
 if errorlevel 1 (
-    echo [ОШИБКА] Нужен .NET 10 SDK (10.0.400+), найден: %DOTNET_VER%
+    echo [ERROR] .NET 10 SDK (10.0.400+) is required, found: %DOTNET_VER%
     pause
     exit /b 1
 )
 
 where git >nul 2>nul
 if errorlevel 1 (
-    echo [ВНИМАНИЕ] git не найден в PATH — GitHub sync в лаунчере будет недоступен.
+    echo [WARNING] git not found in PATH - GitHub sync in the launcher will be unavailable.
 )
 
-REM ---------- 2. Лаунчер + watchdog ----------
+REM ---------- 2. Launcher + watchdog ----------
 echo.
-echo Сборка лаунчера и watchdog'а в launcher/ ...
+echo Building launcher and watchdog into launcher/ ...
 dotnet build "tools\QwenPlayground.Launcher\QwenPlayground.Launcher.csproj" -c Release -o "launcher"
 if errorlevel 1 (
-    echo [ОШИБКА] Не удалось собрать лаунчер.
+    echo [ERROR] Launcher build failed.
     pause
     exit /b 1
 )
 dotnet build "tools\QwenPlayground.Watchdog\QwenPlayground.Watchdog.csproj" -c Release -o "launcher"
 if errorlevel 1 (
-    echo [ОШИБКА] Не удалось собрать watchdog.
+    echo [ERROR] Watchdog build failed.
     pause
     exit /b 1
 )
 
-REM ---------- 3. Первая версия приложения ----------
+REM ---------- 3. First app version ----------
 if not exist "run\current.txt" (
     echo.
-    echo Сборка первой версии приложения в run\first ...
+    echo Building first app version into run\first ...
     dotnet build "src\QwenPlayground.App\QwenPlayground.App.csproj" -c Release -o "run\first"
     if errorlevel 1 (
-        echo [ОШИБКА] Не удалось собрать приложение.
+        echo [ERROR] App build failed.
         pause
         exit /b 1
     )
     echo first> "run\current.txt"
-    echo Активирована версия: first
+    echo Active version: first
 ) else (
     echo.
-    echo run\current.txt уже существует — активная версия не трогается.
+    echo run\current.txt already exists - active version left untouched.
 )
 
 echo.
-echo === Готово: эстафета передана лаунчеру ===
+echo === Done: baton passed to the launcher ===
 echo.
-echo Дальше:
-echo   1. Запустите launcher\QwenPlayground.Launcher.exe
-echo   2. В лаунчере: «Запустить» — старт приложения
-echo      «Пересобрать» — сборка + тест-гейт + новая версия
-echo      «Скачать» (ffmpeg) — опционально, для мультимодальных задач
+echo Next:
+echo   1. Run launcher\QwenPlayground.Launcher.exe
+echo   2. In the launcher: Start - launch the app
+echo      Rebuild - build + test gate + new version
+echo      Download (ffmpeg) - optional, for multimodal tasks
 echo.
 pause
