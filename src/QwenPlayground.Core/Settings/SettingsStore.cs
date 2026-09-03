@@ -27,6 +27,22 @@ public sealed class AppSettings
     /// </summary>
     public static void Update(Action<AppSettings> mutate) => SettingsStore<AppSettings>.Update(mutate);
 
+    /// <summary>
+    /// Доступна ли компаньон-модель (агент на соседнем компьютере) для проб — единый источник
+    /// правды для опциональности фичи. Нужно И тумблер CompanionEnabled (вкл), И непустой адрес.
+    /// Выкл/пусто = пробы (классификация/дедуп/sanity/rerank) не летят, память работает по тексту.
+    /// </summary>
+    public static bool CompanionConfigured =>
+        Get().CompanionEnabled && !string.IsNullOrWhiteSpace(Get().CompanionEndpoint);
+
+    /// <summary>
+    /// Мастер-переключатель памяти агента (вручную, независимо от корректности остальных настроек).
+    /// Выкл = нет реколла (post-turn/live), всплывших фактов в state-блоке, нага и фоновой
+    /// векторизации; тулы memory_* скрыты из промпта (модель не может их вызвать). Ручная вкладка
+    /// «Память» остаётся доступной для инспекции фактов на диске. Дефолт true — поведение не меняется.
+    /// </summary>
+    public bool MemoryEnabled { get; set; } = true;
+
     public string Endpoint { get; set; } = "http://127.0.0.1:5001";
     public int MaxTokens { get; set; } = 2048;
     public int ContextSize { get; set; } = 32768;
@@ -41,8 +57,20 @@ public sealed class AppSettings
     public int HeartbeatIntervalMinutes { get; set; } = 30;
     /// <summary>Доля недавних сообщений, которую компактация сохраняет дословно (0–1).</summary>
     public string CompactKeepRatio { get; set; } = "0.5";
-    /// <summary>Компаньон-модель для логит-проб (отдельная машина — не трогает наш KV-кеш).</summary>
-    public string CompanionEndpoint { get; set; } = "http://192.168.0.109:8001";
+    /// <summary>
+    /// Компаньон-модель для логит-проб (отдельная машина — не трогает наш KV-кеш). ОПЦИОНАЛЬНО:
+    /// пусто = фича выключена (пробы не летят, память работает по тексту). Дефолт пусто — для
+    /// open-source не зашиваем адрес чужой LAN-машины; владелец задаёт свой в Настройках.
+    /// </summary>
+    public string CompanionEndpoint { get; set; } = string.Empty;
+    /// <summary>
+    /// Использовать ли companion-модель для проб (классификация/дедуп/rerank/sanity) — тумблер
+    /// рядом с адресом в Настройках. Выкл = пробы НЕ летят (память по тексту, sanity без пробы),
+    /// но адрес CompanionEndpoint СОХРАНЯЕТСЯ — вкл обратно в один клик. Отдельно от MemoryEnabled
+    /// (мастер памяти) и от пустого адреса: владелец держит модель настроенной, но временно не
+    /// даёт агенту её грузить (модель нужна самому). Дефолт true — поведение не меняется.
+    /// </summary>
+    public bool CompanionEnabled { get; set; } = true;
     public string Temperature { get; set; } = "0.7";
     public string TopP { get; set; } = "0.8";
     public string TopK { get; set; } = "20";
@@ -53,6 +81,11 @@ public sealed class AppSettings
     public int MaxIterations { get; set; } = 50;
     /// <summary>Шагов без самопроверки до nag'а sanity_check. 0 = отключено.</summary>
     public int SanityCheckInterval { get; set; } = 20;
+    /// <summary>
+    /// Пуш на GitHub при самосборке (rebuild_self): git push уже закоммиченных коммитов после
+    /// успешного билда. По умолчанию ВЫКЛ — коммиты и пуши делает владелец/агент явно.
+    /// </summary>
+    public bool PushOnRebuild { get; set; } = false;
     /// <summary>Последняя открытая сессия — восстанавливается при старте (иначе main-агент).</summary>
     public string? LastSessionId { get; set; }
 

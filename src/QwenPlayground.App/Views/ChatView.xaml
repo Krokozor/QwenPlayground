@@ -40,20 +40,24 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" Margin="0,0,0,8">
+        <!-- LastChildFill=False: иначе последний элемент растягивается на весь остаток ширины. -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="False">
             <TextBlock Text="Сессия:" VerticalAlignment="Center" Margin="0,0,4,0" />
             <ComboBox ItemsSource="{Binding Sessions}" SelectedItem="{Binding SelectedSession}"
                       DisplayMemberPath="Title" Width="220" Margin="0,0,4,0" />
             <Button Content="+" Command="{Binding NewSessionCommand}" Padding="8,0" Margin="0,0,4,0" />
-            <Button Content="&#215;" Command="{Binding DeleteSessionCommand}" Padding="8,0" Margin="0,0,12,0" />
+            <!-- «×» виден только для не-main сессий: main удалить нельзя (подтверждение — в команде). -->
+            <Button Content="&#215;" Command="{Binding DeleteSessionCommand}" Padding="8,0" Margin="0,0,12,0"
+                    ToolTip="Удалить сессию (с подтверждением)"
+                    Visibility="{Binding CanDeleteSelectedSession, Converter={StaticResource BoolToVis}}" />
             <!-- Настройка чата: назначение кусков профиля (семплер / промпт / state-блок) -->
             <Button Content="&#9881;" Command="{Binding OpenChatTuningCommand}" Padding="8,0" Margin="0,0,12,0"
                     ToolTip="Настройка чата: семплер, промпт, state-блок (профили из config/chat-profiles.json). Для main-сессии не действует." />
             <Button Content="&#9200;" Command="{Binding WakeNowCommand}" ToolTip="Разбудить main-агента: wake-сигнал или heartbeat вне расписания"
                     Padding="8,0" Margin="0,0,4,0" />
             <Button Content="Сжать" Command="{Binding CompactCommand}" Padding="12,2" Margin="0,0,4,0" />
-            <Button Content="Очистить" Command="{Binding ClearCommand}" Padding="12,2" Margin="0,0,4,0" />
-            <Button Content="Скопировать чат" Command="{Binding CopyChatCommand}" Padding="12,2" />
+            <!-- DockPanel.Dock: без него последний элемент растягивается на весь остаток ширины. -->
+            <Button Content="Скопировать чат" Command="{Binding CopyChatCommand}" Padding="12,2" DockPanel.Dock="Left" />
         </DockPanel>
 
         <ScrollViewer x:Name="MessagesScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto">
@@ -199,36 +203,32 @@
                       ItemsPanel="{StaticResource AttachPanel}" ItemTemplate="{StaticResource AttachChip}"
                       Margin="0,4,0,0" />
 
-        <!-- Поле ввода: только кнопки вложений + текст. Кнопки действий переехали в нижний тулбар (2026-08-22). -->
-        <Grid Grid.Row="4" Margin="0,8,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <Button Grid.Column="0" Content="+" Command="{Binding AttachFilesCommand}" ToolTip="Прикрепить файлы"
-                    Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Bottom" FontWeight="Bold" />
-            <Button Grid.Column="1" Content="&#128206;" Command="{Binding PasteImageCommand}"
-                    ToolTip="Вставить картинку из буфера (Ctrl+V)" Padding="10,4" Margin="0,0,8,0"
-                    VerticalAlignment="Bottom" FontWeight="Bold" />
-            <TextBox Grid.Column="2" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
-                      AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
-                      MinHeight="48" MaxHeight="160" VerticalContentAlignment="Top" Padding="6"
-                      PreviewKeyDown="OnInputPreviewKeyDown">
-                <TextBox.InputBindings>
-                    <KeyBinding Key="Enter" Command="{Binding SendCommand}" />
-                </TextBox.InputBindings>
-            </TextBox>
-        </Grid>
+        <!-- Поле ввода: только текст. Кнопки вложений переехали в нижний тулбар рядом с «усилие» (2026-09-02). -->
+        <TextBox Grid.Row="4" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
+                 AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                 MinHeight="48" MaxHeight="160" VerticalContentAlignment="Top" Padding="6"
+                 Margin="0,8,0,0"
+                 PreviewKeyDown="OnInputPreviewKeyDown">
+            <TextBox.InputBindings>
+                <KeyBinding Key="Enter" Command="{Binding SendCommand}" />
+            </TextBox.InputBindings>
+        </TextBox>
 
-        <!-- Нижний тулбар: усилие слева, действия справа. Режимы и «Самоподдув» убраны (2026-08-22):
+        <!-- Нижний тулбар: усилие + вложения слева, действия справа. Режимы и «Самоподдув» убраны (2026-08-22):
              всегда агент, nag без tool-вызовов отключён. -->
         <Grid Grid.Row="5" Margin="0,6,0,0">
-            <ComboBox SelectedIndex="{Binding ReasoningEffortIndex}" Width="160" HorizontalAlignment="Left">
-                <ComboBoxItem Content="усилие: xhigh (думать много)" />
-                <ComboBoxItem Content="усилие: medium (в меру)" />
-                <ComboBoxItem Content="усилие: low (думать меньше)" />
-            </ComboBox>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <ComboBox SelectedIndex="{Binding ReasoningEffortIndex}" Width="160">
+                    <ComboBoxItem Content="усилие: xhigh (думать много)" />
+                    <ComboBoxItem Content="усилие: medium (в меру)" />
+                    <ComboBoxItem Content="усилие: low (думать меньше)" />
+                </ComboBox>
+                <Button Content="+" Command="{Binding AttachFilesCommand}" ToolTip="Прикрепить файлы"
+                        Padding="10,4" Margin="8,0,0,0" FontWeight="Bold" />
+                <Button Content="&#128206;" Command="{Binding PasteImageCommand}"
+                        ToolTip="Вставить картинку из буфера (Ctrl+V)" Padding="10,4" Margin="4,0,0,0"
+                        FontWeight="Bold" />
+            </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Отправить" Command="{Binding SendCommand}"
                         Padding="16,4" Margin="0,0,8,0" />

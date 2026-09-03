@@ -11,9 +11,9 @@ public sealed class PromptCatalogTests
 
         var set = PromptCatalog.Load(path);
 
-        Assert.Equal(PromptCatalog.Defaults.SummarizationSystem, set.SummarizationSystem);
         Assert.Equal(PromptCatalog.Defaults.Merge, set.Merge);
-        Assert.Contains("{{transcript}}", set.SummarizationUser);
+        Assert.Equal(PromptCatalog.Defaults.SegmentSummary, set.SegmentSummary);
+        Assert.Contains("{{transcript}}", set.SegmentSummary);
     }
 
     [Fact]
@@ -22,7 +22,7 @@ public sealed class PromptCatalogTests
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "prompts.json");
         var set = new PromptTemplateSet
         {
-            SummarizationSystem = "custom system",
+            Merge = "custom merge",
             SegmentSummary = "custom segment",
             MemoryExtraction = "extract {{max_facts}} from {{transcript}}"
         };
@@ -30,11 +30,11 @@ public sealed class PromptCatalogTests
         PromptCatalog.Save(set, path);
         var loaded = PromptCatalog.Load(path);
 
-        Assert.Equal("custom system", loaded.SummarizationSystem);
+        Assert.Equal("custom merge", loaded.Merge);
         Assert.Equal("custom segment", loaded.SegmentSummary);
         Assert.Equal("extract {{max_facts}} from {{transcript}}", loaded.MemoryExtraction);
         // Неизменённые поля остаются дефолтами.
-        Assert.Equal(PromptCatalog.Defaults.Merge, loaded.Merge);
+        Assert.Equal(PromptCatalog.Defaults.SegmentValidation, loaded.SegmentValidation);
     }
 
     [Fact]

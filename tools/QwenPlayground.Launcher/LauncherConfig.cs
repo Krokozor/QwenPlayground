@@ -26,6 +26,13 @@ public sealed class LauncherConfig
     /// <summary>Инструменты для управления (ffmpeg и др.).</summary>
     public Dictionary<string, ToolConfig> Tools { get; set; } = new();
 
+    /// <summary>Имя каталога внешних инструментов (относительно корня воркспейса).</summary>
+    public string ExternalDir { get; set; } = SelfBuildPaths.ExternalDirName;
+
+    /// <summary>Абсолютный путь к каталогу внешних инструментов.</summary>
+    public string ExternalDirPath =>
+        Path.Combine(SelfBuildPaths.WorkspaceRoot, ExternalDir.Replace('/', Path.DirectorySeparatorChar));
+
     /// <summary>
     /// Эффективный корень проекта: из конфига или вычисленный из расположения лаунчера.
     /// Лаунчер живёт в &lt;workspaceRoot&gt;/launcher/, значит корень = родитель.
@@ -98,8 +105,8 @@ public sealed class LauncherConfig
                 {
                     Version = "7.1",
                     DownloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
-                    ExtractTo = "ffmpeg",
-                    BinPath = "ffmpeg/bin/ffmpeg.exe"
+                    ExtractTo = SelfBuildPaths.ExternalDirName + "/ffmpeg",
+                    BinPath = SelfBuildPaths.ExternalDirName + "/ffmpeg/bin/ffmpeg.exe"
                 }
             }
         };

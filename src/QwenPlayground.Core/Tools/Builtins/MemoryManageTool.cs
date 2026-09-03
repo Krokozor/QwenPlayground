@@ -45,6 +45,10 @@ public sealed class MemoryManageTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
+        if (!AppSettings.Get().MemoryEnabled)
+        {
+            return MemoryToolGate.DisabledMessage;
+        }
         var store = new MemoryStore();
         var pairs = new PairsStore(store.Root);
 
@@ -178,6 +182,12 @@ public sealed class MemoryManageTool : AgentTool
             return "memory_manage probe: this pair is marked as Distinct (not similar). Use 'not_similar' undo or clear to re-evaluate.";
         }
 
+        // Компаньон-модель не настроена — пробу некуда слать (не best-effort, сообщаем явно).
+        if (!AppSettings.CompanionConfigured)
+        {
+            return "memory_manage probe: companion model not configured (CompanionEndpoint empty). Set it in Settings → Memory → Model for probes.";
+        }
+
         // Пробуем.
         var endpoint = AppSettings.Get().CompanionEndpoint;
         var prompt = MemorySimilarity.BuildPairPrompt(itemA.Content, itemB.Content);
@@ -199,6 +209,12 @@ public sealed class MemoryManageTool : AgentTool
     /// <summary>Ручной запуск сканера: один проход с бюджетом 10 проб.</summary>
     private async Task<string> ScanAsync(MemoryStore store, PairsStore pairs, CancellationToken ct)
     {
+        // Компаньон-модель не настроена — сканеру нечего прогонять (не best-effort, сообщаем явно).
+        if (!AppSettings.CompanionConfigured)
+        {
+            return "memory_manage scan: companion model not configured (CompanionEndpoint empty). Set it in Settings → Memory → Model for probes.";
+        }
+
         var endpoint = AppSettings.Get().CompanionEndpoint;
         var report = await MemorySimilarity.ScanPassAsync(
             store, pairs, endpoint, probeBudget: 10,

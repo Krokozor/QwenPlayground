@@ -81,7 +81,7 @@ public static class SwapService
         {
             WorkingDirectory = workspaceRoot,
             UseShellExecute = false,
-            Environment = { ["QWENPLAYGROUND_ROOT"] = workspaceRoot }
+            Environment = { ["QWENPLAYGROUND_ROOT"] = workspaceRoot, ["QWENPLAYGROUND_EXTERNAL_DIR"] = Path.Combine(workspaceRoot, SelfBuildPaths.ExternalDirName) }
         });
         WriteAppPid(app?.Id);
         Log($"started current version {versionId} (pid {app?.Id}, root={workspaceRoot})");
@@ -192,7 +192,7 @@ public static class SwapService
             {
                 WorkingDirectory = wsRoot,
                 UseShellExecute = false,
-                Environment = { ["QWENPLAYGROUND_ROOT"] = wsRoot }
+                Environment = { ["QWENPLAYGROUND_ROOT"] = wsRoot, ["QWENPLAYGROUND_EXTERNAL_DIR"] = Path.Combine(wsRoot, SelfBuildPaths.ExternalDirName) }
             });
 
             if (WaitHandshake(app, marker))
@@ -216,7 +216,7 @@ public static class SwapService
                 {
                     WorkingDirectory = wsRoot,
                     UseShellExecute = false,
-                    Environment = { ["QWENPLAYGROUND_ROOT"] = wsRoot }
+                    Environment = { ["QWENPLAYGROUND_ROOT"] = wsRoot, ["QWENPLAYGROUND_EXTERNAL_DIR"] = Path.Combine(wsRoot, SelfBuildPaths.ExternalDirName) }
                 });
                 WriteAppPid(rollback?.Id);
                 Log($"rolled back to {oldId}");

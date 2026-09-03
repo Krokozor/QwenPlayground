@@ -58,6 +58,10 @@ public sealed class ToolRegistry
 
     public IReadOnlyList<ToolDefinition> Definitions => _definitions;
 
+    /// <summary>Определения одной группы (полки): Core — базовый набор, Browser/CSharp — активируемые.</summary>
+    public IReadOnlyList<ToolDefinition> DefinitionsByGroup(ToolGroup group) =>
+        _definitions.Where(d => d.Group == group).ToList();
+
     public async Task<string> ExecuteAsync(string name, JsonObject arguments, ToolContext context, CancellationToken cancellationToken = default)
     {
         var result = await ExecuteDetailedAsync(name, arguments, context, cancellationToken);

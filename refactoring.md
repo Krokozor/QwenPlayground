@@ -99,6 +99,98 @@
 
 ## Changelog
 
+### 2026-09-02 (45) — rebuild_self: честный git-статус + пуш по настройке (PushOnRebuild)
+Владелец заметил «(pushed: NO — internet may be down)» и не поверил: ручной `git push` прошёл.
+Причина: rebuild_self НИКОГДА не пушил — GetGitStatus только сравнивал HEAD с @{u} и при
+неравенстве (т.е. просто при наличии незапушенных коммитов) выводил вводящую в заблуждение
+приписку про интернет.
+- **AppSettings.PushOnRebuild** (bool, default false) + чекбокс «пуш в GitHub» в секции
+  «Самосборка (rebuild_self)» в настройках. Включён — после успешного билда `git push`
+  (только уже закоммиченное; инструмент не коммитит).
+- **RebuildSelfTool**: статус теперь честный — «(N unpushed commit(s))» / «(up-to-date with
+  origin)» / «(no upstream)»; RunGit возвращает exit code + stderr (git пишет результат в
+  stderr), у пуша таймаут 60 с.
+- Сборка 20260902-122919 success.
+
+### 2026-09-02 (44) — Shelf-индекс как таблица + ответы activate/deactivate + чистка чат-UI
+Продолжение задачи D (по замечаниям владельца): старый сегмент «- browser: … / - csharp: …»
+непонятен агенту; ответы shelf-тулов не показывали, что изменилось в промпте; UI-кнопки чата —
+мелкие дефекты.
+- **ToolGroupIndex** — markdown-таблица `| group | status | description |`: неактивная группа —
+  «полный промпт» (что это, что делает, когда активировать), активная — список тулов из
+  ToolRegistry + подсказка deactivate. Перед таблицей инструкция: после оценки задачи, если она
+  требует возможностей группы, — activate_shelf; когда перестала — deactivate_shelf.
+- **ShelfTools** — ответы activate_shelf/deactivate_shelf (и «уже активна») содержат список тулов
+  группы: рефлексия по [Tool] (Core+App сборки) без сборки реестра — `ActivateShelfTool.GroupToolNames`.
+- **Чат-UI** (по скриншоту-пометкам): «×» скрыт у main-сессии (`CanDeleteSelectedSession`) и
+  удаление теперь с подтверждением (ConfirmWindow); «Очистить» убран (кнопка бесполезна — сценарий
+  покрывает «откат»; метод `MainViewModel.Clear()` остался программным для Harness);
+  «Скопировать чат» перестал растягиваться (DockPanel: LastChildFill=False); «+»/«📎» (вложения)
+  переехали из строки ввода в нижний тулбар рядом с ComboBox «усилие».
+- Тест-gate пройден, сборка 20260902-121205 success.
+
+### 2026-09-02 (43) — Вкладка «Суммаризация»: session-centric + коллапс (UI)
+Переразбивка вкладки: было «main справа / не-main слева, всё в кучу». После C оба типа сессий
+используют слои, так что layout построен вокруг ВЫБРАННОЙ сессии (единый поток, MaxWidth 1100).
+- **ViewModel** `SummarizationViewModel`: слои per-session (`StoreForSelected()` = sessions/<id>/
+  layers.json, следует за SelectedSession через OnSelectedSessionChanged); SaveLayers/
+  ApplyProposedLayers/RerunPipeline бэкапят и пишут в выбранную сессию (не захардкоженный main).
+- **XAML** `SummarizationView`: одна колонка по секциям, каждое объёмное поле — `Expander`
+  (L1/L2/L3, legacy-резюме, промпты, вывод прогона). Главный вид — «Слои сессии» (L3 развёрнут);
+  legacy-резюме и промпты — свёрнуты.
+- Тест-gate пройден, сборка 20260902-000240 success.
+
+### 2026-09-01 (42) — Миграция не-main сессий: плоское резюме → L3 (one-off скрипт)
+Скрипт `migrate_sessions.py` (dry-run + --apply): у 5 не-main сессий с SummaryMarker в
+system-сообщении резюме перенесено в L3 (sessions/<id>/layers.json), System-сообщение удалено
+(base было пусто). 5 несжатых сессий и main — нетронуты. Старые/бэкап-файлы не удалялись
+(ручной бэкап владельца). После миграции rebuild_self — ротация мигрированных сессий корректна.
+
+### 2026-09-02 (42) — Ratchet-домены тулов / «shelf» (задача D): доделано и собрано
+Тулы сгруппированы по доменам (Core — всегда, Browser/CSharp — по требованию). Индекс полок в промпте
+динамический: неактивная группа — расширенное описание (зачем активировать), активная — короткое
+упоминание со списком тулов группы (из рефлексии [Tool] через ToolRegistry, не хардкод). Активация/
+деактивация — activate_shelf/deactivate_shelf (per-session sessions/<id>/shelves.json), меняют промпт →
+KV-кеш ребилд (трекер [shelf-cache]). Реальный запрос и превью используют одни тулзы: Core + активные
+полки (ShelfFilteredTools / PromptPipeline.AdvertisedTools). Неактивные полки экономят ~2k токенов.
+- **Core**: ToolGroup (enum), ShelfState (per-session), ToolGroupIndex (динамический), ToolDefinition.Group,
+  ToolRegistry.DefinitionsByGroup.
+- **App**: ShelfTools (activate/deactivate_shelf), MainViewModel (ActiveShelves, ShelfFilteredTools, wiring
+  в PromptPipeline + запрос), PromptPipeline (AdvertisedTools = Core + активные полки).
+- Тест-gate пройден, сборка 20260902-072236 success.
+
+### 2026-09-01 (41) — L1/L2/L3 для не-main сессий (задача C): lite-слои, per-session
+Демократизация главного механизма (медленная деградация контекста) на специализированные сессии.
+Не-main теперь ротация слоёв вместо плоского резюме; main-надстройка (2 валидации → факты в
+memories/ + diary) остаётся только main'у — горизонт задач не-main короче, лёгкие потери допустимы.
+- **Core** `MemoryLayerPipeline.RunAsync`: параметр `validate` (по умолчанию true = main как раньше);
+  false — ядро ротации (merge + сегмент→L3 + сдвиг) без 2 валидаций и без фактов.
+- **App** `ContextMaintenance`: плоское резюме не-main заменено на `CompactLayersAsync(boundary,
+  isMain)` (единый метод для обеих веток); per-session store слоёв (`StoreFor`: main — общий, не-main —
+  `sessions/<id>/layers.json` через `layerStoreFactory`, шов для тестов). Убрано мёртвое
+  `ExtractMemoriesFromSegmentAsync`.
+- **App** `MainViewModel.ResolveSystemPrompt`: не-main — профиль + `SessionLayersBlock()` (слои
+  per-session инжектятся как у main → дистиллированная история всегда в контексте).
+- Тесты: `ContextMaintenanceTests` — не-main на lite-слоях (1 вызов = сегмент→L3), per-session store
+  на temp-каталог. Тест-gate пройден, сборка 20260901-220024 success.
+
+### 2026-09-01 (40) — Внешние инструменты в системном промпте (задача B) + папка external/
+Решение владельца: секция «внешние игрушки» в системном промпте ВСЕХ интерактивных сессий
+(узкие сервисные вызовы — нет). Каталог внешних бинарников вынесен в `external/`; launcher —
+источник правды пути (env), а бинарники в git не попадают.
+- **Core** `SelfBuildPaths`: `ExternalDirName="external"` + `ExternalDir` (env
+  `QWENPLAYGROUND_EXTERNAL_DIR`, фолбэк `<root>/external` — работает и без launcher'а).
+- **Launcher**: `LauncherConfig.ExternalDir`/`ExternalDirPath`; ffmpeg вложен в `external/ffmpeg`
+  (ExtractTo/BinPath); `SwapService` ставит `QWENPLAYGROUND_EXTERNAL_DIR` в 3 launch-точках;
+  `ToolManager` санитизирует имя temp-zip (ExtractTo теперь несёт `/`).
+- **App** `ExternalToolsNote` (новый): читает `external/README.md` через `FileDependentCache`
+  (кэш по mtime — правка md инвалидирует без ребилда); `MainViewModel.ResolveSystemPrompt`
+  доливает секцию всем интерактивным сессиям (main + не-main), сервисным вызовам не идёт.
+- **Данные**: `ffmpeg/` → `external/ffmpeg/` (shutil.move); `external/.gitignore` (в git только
+  `.gitignore` + `README.md`, бинарники нет — проверено `git add -n`); `external/README.md` —
+  шпаргалка по ffmpeg (зум/кроп изображений, кадры видео «вскользь → детально»).
+- Тест-gate пройден, сборка 20260901-201712 success.
+
 ### 2026-08-25 (39) — Одно меню профилей: вкладка «Настройки»; инцидент с кодировкой
 Решение владельца: пресеты редактируются в ОДНОМ месте — вкладке «Настройки», никаких
 отдельных окон/вкладок для настроек. Инкремент 38 откатывается:

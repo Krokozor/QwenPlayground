@@ -1,13 +1,14 @@
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
+using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.Core.Roslyn;
 
 [Tool("csharp_callers",
     "Find all callers of a C# method (call hierarchy) by method name in the QwenPlayground solution. " +
-    "Returns each caller with its signature and file:line. Use for impact analysis before refactoring.")]
+    "Returns each caller with its signature and file:line. Use for impact analysis before refactoring.", ToolGroup.CSharp)]
 public sealed class CSharpCallersTool : AgentTool
 {
     private static readonly RoslynService Service = RoslynService.Shared;

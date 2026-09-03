@@ -3,13 +3,14 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
+using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.Core.Roslyn;
 
 [Tool("csharp_class_map",
     "Show the blueprint of a C# type by name: where it is declared and all its members with line numbers. " +
-    "Use to get a map of a class without reading the whole file (query by name, no need to know the file path).")]
+    "Use to get a map of a class without reading the whole file (query by name, no need to know the file path).", ToolGroup.CSharp)]
 public sealed class CSharpClassMapTool : AgentTool
 {
     private static readonly RoslynService Service = RoslynService.Shared;

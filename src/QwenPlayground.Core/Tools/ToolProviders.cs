@@ -234,7 +234,8 @@ public sealed class ReflectionToolProvider : IToolProvider
         {
             Name = attribute.Name,
             Description = attribute.Description,
-            Parameters = parameters
+            Parameters = parameters,
+            Group = attribute.Group
         };
     }
 

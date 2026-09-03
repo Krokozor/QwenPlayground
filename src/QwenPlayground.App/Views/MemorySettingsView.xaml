@@ -1,0 +1,278 @@
+<UserControl x:Class="QwenPlayground.App.Views.MemorySettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:QwenPlayground.App.Views">
+    <!--
+    Секция настроек памяти — отдельный UserControl (инкапсуляция из монолита SettingsView).
+    DataContext наследуется от родителя (MainViewModel) — биндинги те же, что были инлайном.
+    Общие стили полей (FieldLabel/TextField/NumFieldStyle/FieldGrid) — из app-wide
+    Themes/SettingsStyles.xaml. Поля сгруппированы по логике пайплайна памяти:
+    тумблер → компаньон → реколл → вектор диалога → классификация → rerank → фон → дедуп → дневник.
+    -->
+    <Expander Header="Память (продвинутое)" IsExpanded="False" Margin="0,0,0,4">
+        <StackPanel Margin="0,4,0,2">
+
+            <!-- Мастер-переключатель памяти -->
+            <Grid Style="{StaticResource FieldGrid}" Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="190" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="память агента"
+                           ToolTip="Мастер-переключатель. Выкл = агент не сохраняет/всплывает/напоминает память, тулы memory_* скрыты из промпта. Ручная вкладка «Память» остаётся для инспекции." />
+                <CheckBox Grid.Row="0" Grid.Column="1" IsChecked="{Binding MemoryEnabled}" Margin="0,3"
+                          VerticalAlignment="Center"
+                          ToolTip="Выкл = нет реколла, всплывших фактов в state-блоке, нага и фоновой векторизации; тулы memory_* не рекламируются. Факты на диске не удаляются." />
+                <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Margin="0,4,0,0"
+                           Foreground="{StaticResource DimBrush}" FontSize="11" TextWrapping="Wrap"
+                           Text="Выкл — память агента отключена вручную (независимо от остальных настроек): нет реколла, фактов в state-блоке, нага и фоновой векторизации; тулы memory_* не рекламируются. Факты на диске (memories/) не удаляются, вкладка «Память» остаётся для инспекции." />
+            </Grid>
+
+            <!-- 1. Модель для проб (companion) — ОПЦИОНАЛЬНО -->
+            <Expander Header="Модель для проб (companion, опционально)" IsExpanded="True" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="endpoint проб"
+                               ToolTip="Адрес компаньон-модели для логит-проб: классификатор памяти, sanity-проба, дедуп-сканер, rerank. Отдельная машина — не трогает KV-кеш основного чата. ОПЦИОНАЛЬНО: пусто = фича выключена." />
+                    <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Margin="0,3" VerticalAlignment="Center">
+                        <TextBox Width="240" Style="{StaticResource TextField}"
+                                 Text="{Binding CompanionEndpoint, UpdateSourceTrigger=PropertyChanged}" />
+                        <CheckBox Content="использовать" IsChecked="{Binding CompanionEnabled}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                  ToolTip="Использовать модель для проб (классификация, дедуп, rerank, sanity). Выкл — пробы не летят, память работает по тексту; адрес сохранён, вкл обратно в один клик. Удобно, когда модель нужна самому." />
+                    </StackPanel>
+                    <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Margin="0,4,0,0"
+                               Foreground="{StaticResource DimBrush}" FontSize="11" TextWrapping="Wrap"
+                               Text="Опционально: пустое поле = компаньон не настроен; чекбокс «использовать» выключает пробы (адрес остаётся). Память без проб работает по текстовому совпадению." />
+                </Grid>
+            </Expander>
+
+            <!-- 2. Реколл: как факты всплывают в контекст -->
+            <Expander Header="Реколл (всплытие фактов)" IsExpanded="True" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="сколько всплывает (Top-X)"
+                               ToolTip="Сколько самых релевантных фактов реколл возвращает (до rerank'а)." />
+                    <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding RecallTopX, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="мин. релевантность"
+                               ToolTip="Порог релевантности (0..1): факты ниже не всплывают." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.Max="1"
+                             Text="{Binding RecallMinScore, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="порог стабильности"
+                               ToolTip="Сколько раз факт должен всплыть (подтвердиться), прежде чем попасть в state-блок. 1 — сразу." />
+                    <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemorySurfacingThreshold, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="live: мин. токенов"
+                               ToolTip="Live-реколл во время генерации: минимум натекшего ответа (в токенах) между пробами." />
+                    <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryLiveRecallMinTokens, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="live: пауза, сек"
+                               ToolTip="Live-реколл: минимальная пауза (в секундах) между пробами." />
+                    <TextBox Grid.Row="4" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryLiveRecallIntervalSec, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="5" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="наг дедупа: рендеров"
+                               ToolTip="Сколько рендеров подряд без memory_*-инструмента, прежде чем напомнить агенту про дедуп." />
+                    <TextBox Grid.Row="5" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryNagIntervalRenders, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </Expander>
+
+            <!-- 3. Вектор диалога: окно, из которого строится запрос реколла -->
+            <Expander Header="Вектор диалога (запрос)" IsExpanded="False" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="бюджет токенов"
+                               ToolTip="Максимум токенов в векторе диалога для классификации." />
+                    <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryDialogueBudgetTokens, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="макс. сообщений"
+                               ToolTip="Сколько последних сообщений берётся в окно диалога." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryDialogueMaxMessages, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </Expander>
+
+            <!-- 4. Классификация: семантические слои фактов -->
+            <Expander Header="Классификация (слои)" IsExpanded="False" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="окно логитов (nProbs)"
+                               ToolTip="Сколько позиций логитов (топ-N) читается на пробу классификации." />
+                    <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryClassifyNProbs, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="длина ответа (nPredict)"
+                               ToolTip="Сколько токенов модель генерирует на пробу классификации." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryClassifyNPredict, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="вес категорий / эмодзи"
+                               ToolTip="Веса в semantic overlap (сумма = 1): категории главный сигнал, эмодзи-вайб редкий, но сильный." />
+                    <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Margin="0,3" VerticalAlignment="Center">
+                        <TextBox Width="50" local:NumField.Min="0" local:NumField.Max="1"
+                                 Text="{Binding MemoryCategoryWeight, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                        <TextBox Width="50" local:NumField.Min="0" local:NumField.Max="1"
+                                 Text="{Binding MemoryEmojiWeight, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                </Grid>
+            </Expander>
+
+            <!-- 5. Rerank (SecondPass): добор релевантности -->
+            <Expander Header="Rerank (SecondPass)" IsExpanded="False" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="окно логитов / длина"
+                               ToolTip="nProbs / nPredict для rerank-пробы (позиции логитов / токены генерации)." />
+                    <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Margin="0,3" VerticalAlignment="Center">
+                        <TextBox Width="50" local:NumField.Min="0" local:NumField.IsInteger="True"
+                                 Text="{Binding MemoryRerankNProbs, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                        <TextBox Width="50" local:NumField.Min="0" local:NumField.IsInteger="True"
+                                 Text="{Binding MemoryRerankNPredict, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="макс. кандидатов"
+                               ToolTip="Лимит кандидатов в SecondPass (multichoice-проба)." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryRerankMaxCandidates, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="длина примера"
+                               ToolTip="Символов контента факта в промпте rerank (длинное режется)." />
+                    <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryRerankCandidateContentLength, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </Expander>
+
+            <!-- 6. Фоновая работа: векторизация, скан, извлечение -->
+            <Expander Header="Фоновая работа" IsExpanded="False" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="flush: фактов за проход"
+                               ToolTip="Сколько фактов без слоёв обогащается за один heartbeat-проход." />
+                    <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryFlushBudget, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="сканер: проб за проход"
+                               ToolTip="Сколько пар пробует дедуп-сканер за один проход." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryScanProbeBudget, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="извлечение: фактов за компакцию"
+                               ToolTip="Максимум фактов, извлекаемых из одного сжатого сегмента." />
+                    <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryMaxFactsPerCompaction, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </Expander>
+
+            <!-- 7. Дедуп: пороги уверенности классификатора -->
+            <Expander Header="Дедуп (пороги уверенности)" IsExpanded="False" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="similar: мин. балл"
+                               ToolTip="Балл цифры, выше которого пара уверенно «похожа»." />
+                    <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0"
+                             Text="{Binding SimilaritySimilarMin, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="distinct: макс. балл"
+                               ToolTip="Балл, ниже которого пара уверенно «не похожа»." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0"
+                             Text="{Binding SimilarityDistinctMax, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="макс. энтропия"
+                               ToolTip="Энтропия выше этой границы → классификатор не уверен, пара идёт в очередь." />
+                    <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0"
+                             Text="{Binding SimilarityConfidentMaxEntropy, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </Expander>
+
+            <!-- 8. Дневник -->
+            <Expander Header="Дневник" IsExpanded="False" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="макс. длина записи"
+                               ToolTip="Максимальная длина эпизода в diary.md." />
+                    <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MemoryDiaryMaxEntryLength, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </Expander>
+
+        </StackPanel>
+    </Expander>
+</UserControl>

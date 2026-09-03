@@ -1,12 +1,13 @@
 using System.IO;
 using Microsoft.Web.WebView2.Core;
+using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.App.Browser;
 
 [Tool("browser_diagnose", "Diagnose the built-in browser (WebView2) status. " +
                           "Checks runtime installation, environment creation, control state, and user data folder. " +
-                          "Use when browser tools are failing or to check browser health.")]
+                          "Use when browser tools are failing or to check browser health.", ToolGroup.Browser)]
 public sealed class BrowserDiagnoseTool : AgentTool
 {
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)

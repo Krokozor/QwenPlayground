@@ -2,13 +2,14 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.Text;
+using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.Core.Roslyn;
 
 [Tool("csharp_references",
     "Find all references (usages) of a C# symbol by name in the QwenPlayground solution. " +
-    "Returns file:line and a code snippet for each usage. Semantic search — no false positives from text grep.")]
+    "Returns file:line and a code snippet for each usage. Semantic search — no false positives from text grep.", ToolGroup.CSharp)]
 public sealed class CSharpReferencesTool : AgentTool
 {
     private static readonly RoslynService Service = RoslynService.Shared;

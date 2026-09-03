@@ -22,6 +22,7 @@ public sealed class PromptPipeline
     private readonly Func<IReadOnlyList<ChatMessage>> _conversation;
     private readonly Func<string?> _systemPrompt;
     private readonly ToolRegistry _tools;
+    private readonly Func<IReadOnlyList<ToolGroup>> _activeShelves;
     private readonly ServerProps _serverProps;
     private readonly Func<IReadOnlyList<ChatMessage>, StateBlock?> _stateBlock;
     private readonly Func<CancellationToken, Task<MultimodalContext?>> _multimodal;
@@ -34,7 +35,8 @@ public sealed class PromptPipeline
         ServerProps serverProps,
         Func<IReadOnlyList<ChatMessage>, StateBlock?> stateBlock,
         Func<CancellationToken, Task<MultimodalContext?>> multimodal,
-        Func<string, ICompletionSource>? createSource = null)
+        Func<string, ICompletionSource>? createSource = null,
+        Func<IReadOnlyList<ToolGroup>>? activeShelves = null)
     {
         _conversation = conversation;
         // Единый с ходом резолвер системного промпта: идентичность main или цель сессии.
@@ -45,6 +47,7 @@ public sealed class PromptPipeline
         _multimodal = multimodal;
         // Фабрика источников: по умолчанию llama.cpp-клиент; тесты подставляют заглушку.
         _createSource = createSource ?? (endpoint => new LlmCompletionClient(endpoint));
+        _activeShelves = activeShelves ?? (() => Array.Empty<ToolGroup>());
     }
 
     /// <summary>История + системный промпт (инъекция той же семантики, что SystemPromptInjection в цикле).</summary>
@@ -65,9 +68,29 @@ public sealed class PromptPipeline
     /// </summary>
     public int LastActualPromptTokens() => _serverProps.LastActualPromptTokens(_conversation());
 
-    /// <summary>Инструменты рекламируются только в агентном режиме (задан корень проекта).</summary>
-    private IReadOnlyList<ToolDefinition>? AdvertisedTools =>
-        AppSettings.Get().ProjectRoot.Trim().Length > 0 ? _tools.Definitions : null;
+    /// <summary>
+    /// Инструменты рекламируются только в агентном режиме (задан корень проекта). Core — всегда;
+    /// активные полки докидываются в конец (стабильный порядок: core по имени, затем полки по
+    /// enum, внутри полки по имени). Активация полки докидывает хвост — префикс (core) не
+    /// сдвигается, его KV-кеш сохраняется; меняется только диалог (неизбежно при смене промпта).
+    /// </summary>
+    private IReadOnlyList<ToolDefinition>? AdvertisedTools
+    {
+        get
+        {
+            if (AppSettings.Get().ProjectRoot.Trim().Length == 0)
+            {
+                return null;
+            }
+            var tools = new List<ToolDefinition>(_tools.DefinitionsByGroup(ToolGroup.Core));
+            foreach (var group in _activeShelves().OrderBy(g => g))
+            {
+                tools.AddRange(_tools.DefinitionsByGroup(group));
+            }
+            // Память выключена — memory_*-тулы не рекламируем (совпадает с реальным запросом).
+            return tools.Where(d => MemoryToolGate.ShouldAdvertise(d.Name)).ToList();
+        }
+    }
 
     /// <summary>Лёгкий рендер для превью в UI: без state-блока и мультимодальности.</summary>
     public string RenderForPreview()

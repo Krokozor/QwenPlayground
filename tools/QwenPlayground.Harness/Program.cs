@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using QwenPlayground.Core.Agent;
@@ -166,7 +166,6 @@ internal static class Scenarios
         Console.WriteLine($"EditMessage(msg): {viewModel.EditMessageCommand.CanExecute(message)}");
         Console.WriteLine($"Rollback(msg): {viewModel.RollbackCommand.CanExecute(message)}");
         Console.WriteLine($"InspectPrompt(msg): {viewModel.InspectPromptCommand.CanExecute(message)}");
-        Console.WriteLine($"Clear(null): {viewModel.ClearCommand.CanExecute(null)}");
         Console.WriteLine($"CopyChat(null): {viewModel.CopyChatCommand.CanExecute(null)}");
         Console.WriteLine($"Continue(null): {viewModel.ContinueCommand.CanExecute(null)}");
         return 0;
@@ -344,7 +343,7 @@ internal static class Scenarios
         var target = vm.Messages[^1];
         Console.WriteLine($"last message role={target.Role}, CanExecute(Rollback)={vm.RollbackCommand.CanExecute(target)}");
         var canSendAfter = vm.SendCommand.CanExecute(null);
-        Console.WriteLine($"CanExecute(Send)={canSendAfter}, CanExecute(Clear)={vm.ClearCommand.CanExecute(null)}");
+        Console.WriteLine($"CanExecute(Send)={canSendAfter}");
         Console.WriteLine($"IsGenerating={vm.IsGenerating}, IsBusy={vm.IsBusy}");
 
         if (vm.RollbackCommand.CanExecute(target))
@@ -541,7 +540,7 @@ internal static class Scenarios
         vm.Endpoint = prefix.TrimEnd('/');
         vm.MaxTokens = 512;
         vm.ContextSize = 32768;
-        vm.ClearCommand.Execute(null);
+        vm.Clear();
         vm.InputText = "test";
 
         vm.SendCommand.Execute(null);

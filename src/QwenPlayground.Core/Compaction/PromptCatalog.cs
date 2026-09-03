@@ -13,8 +13,6 @@ namespace QwenPlayground.Core.Compaction;
 /// </summary>
 public sealed class PromptTemplateSet
 {
-    public string SummarizationSystem { get; set; } = PromptCatalog.Defaults.SummarizationSystem;
-    public string SummarizationUser { get; set; } = PromptCatalog.Defaults.SummarizationUser;
     public string Merge { get; set; } = PromptCatalog.Defaults.Merge;
     public string MergeValidation { get; set; } = PromptCatalog.Defaults.MergeValidation;
     public string SegmentSummary { get; set; } = PromptCatalog.Defaults.SegmentSummary;
@@ -41,31 +39,6 @@ public static class PromptCatalog
 {
     public static class Defaults
     {
-        public const string SummarizationSystem =
-            "You are a context compaction assistant. You write dense structured summaries of conversations.";
-
-        // Осторожно: дефолтные шаблоны частично завязаны на тесты (суммар.: verbatim / Open threads /
-        // Current state / summary; extraction: правила). Правка дефолтов меняет контракт тестов.
-        public const string SummarizationUser =
-            "Below is the earlier part of the conversation (it may contain an earlier summary).\n" +
-            "Compress it into a dense, structured summary in Russian.\n\n" +
-            "Principles:\n" +
-            "- Rather keep an extra detail than lose an important one. Exact file paths, type and method names,\n" +
-            "  setting values, build and session ids, URLs — verbatim, without paraphrasing.\n" +
-            "- If the transcript contains a previous summary — merge it with the new events: refresh what is stale,\n" +
-            "  do not repeat what is already described, keep everything still relevant.\n" +
-            "- Quote short important user phrasings (rules, agreements) verbatim.\n\n" +
-            "Structure:\n" +
-            "- The user's goals, preferences and tone\n" +
-            "- Decisions made and agreements\n" +
-            "- Files created/changed: path — what is inside (briefly)\n" +
-            "- Key code and configuration fragments without which work cannot continue\n" +
-            "- Errors, incidents and how they were fixed (including workarounds)\n" +
-            "- Open threads: questions, TODOs, promises, what is left to do\n" +
-            "- Current state: where you stopped, what the next step is\n\n" +
-            "Output only the summary, no commentary.\n\n" +
-            "{{transcript}}";
-
         public const string Merge =
             "You are the memory layer merge module of an agent. Below are two layers of long-term memory: " +
             "L1 (oldest) and L2 (middle).\n" +
@@ -152,8 +125,6 @@ public static class PromptCatalog
             {
                 return set;
             }
-            Read(root, "SummarizationSystem", v => set.SummarizationSystem = v);
-            Read(root, "SummarizationUser", v => set.SummarizationUser = v);
             Read(root, "Merge", v => set.Merge = v);
             Read(root, "MergeValidation", v => set.MergeValidation = v);
             Read(root, "SegmentSummary", v => set.SegmentSummary = v);
@@ -186,8 +157,6 @@ public static class PromptCatalog
     /// <summary>Встроенный дефолт шаблона по ключу (см. PromptStepItem.Key во вкладке «Суммаризация»).</summary>
     public static string DefaultsOf(string key) => key switch
     {
-        "SummarizationSystem" => Defaults.SummarizationSystem,
-        "SummarizationUser" => Defaults.SummarizationUser,
         "Merge" => Defaults.Merge,
         "MergeValidation" => Defaults.MergeValidation,
         "SegmentSummary" => Defaults.SegmentSummary,

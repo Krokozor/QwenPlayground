@@ -14,34 +14,35 @@ obj/
 __pycache__/
 *.pyc
 
-# Build/deploy artifacts
-run/
-launcher/
+# Build/deploy artifacts (root only)
+/run/
+/launcher/
 
-# Large binaries (download separately)
+# Large binaries (download separately, managed by launcher)
 ffmpeg/
 
-# User data (sessions, memories, backups)
-sessions/
-memories/
-memory_research/
-backups/
-orchestrator/
-wake/
+# User data (root only! — patterns without leading / would also match
+# source folders like src/QwenPlayground.Core/Sessions/)
+/sessions/
+/memories/
+/memory_research/
+/backups/
+/orchestrator/
+/wake/
 
-# Logs and temp
-logs/
-tmp/
-Sandbox/
-screenshots/
-QwenMultimodalTest/
+# Logs and temp (root only)
+/logs/
+/tmp/
+/Sandbox/
+/screenshots/
+/QwenMultimodalTest/
 
 # User settings (created on first run)
 settings.json
 
 # Media files in root
-images/
-UI/
+/images/
+/UI/
 
 # Misc
 test_output.txt

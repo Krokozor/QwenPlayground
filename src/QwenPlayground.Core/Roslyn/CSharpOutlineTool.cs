@@ -1,11 +1,12 @@
 using System.Text;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.Core.Roslyn;
 
-[Tool("csharp_outline", "List types and members of a C# file in the QwenPlayground solution, like a document outline.")]
+[Tool("csharp_outline", "List types and members of a C# file in the QwenPlayground solution, like a document outline.", ToolGroup.CSharp)]
 public sealed class CSharpOutlineTool : AgentTool
 {
     private static readonly RoslynService Service = RoslynService.Shared;

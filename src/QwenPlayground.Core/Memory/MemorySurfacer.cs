@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Settings;
 
@@ -40,15 +40,20 @@ public sealed class MemorySurfacer
     private static int TopX => AppSettings.Get().RecallTopX;
     private static double MinScore => AppSettings.Get().RecallMinScore;
 
-    /// <summary>Наг для state-блока (null, пока не наступил интервал).</summary>
-    public string? MemoryNag => _iterationsSinceMemoryMgmt >= MemoryMgmtNagInterval
+    /// <summary>Наг для state-блока (null, пока не наступил интервал; память выключена — всегда null).</summary>
+    public string? MemoryNag => AppSettings.Get().MemoryEnabled
+        && _iterationsSinceMemoryMgmt >= MemoryMgmtNagInterval
         ? "If you finished the current stage, do memory management: call memory_list to spot duplicates " +
           "and memory_merge / memory_delete to consolidate. Otherwise ignore this."
         : null;
 
-    /// <summary>Всплывшие факты для state-блока (правило стабильности применено).</summary>
+    /// <summary>Всплывшие факты для state-блока (правило стабильности применено; память выключена — пусто).</summary>
     public IReadOnlyList<SurfacedMemory> GetSurfacedForStateBlock()
     {
+        if (!AppSettings.Get().MemoryEnabled)
+        {
+            return [];
+        }
         lock (_surfaced)
         {
             return _surfaced.Where(m => m.Sightings >= SurfacingThreshold).ToList();
@@ -135,7 +140,8 @@ public sealed class MemorySurfacer
     private async Task RecallCoreAsync(string context, bool isMainSession, string endpoint,
         CancellationToken cancellationToken, bool startsConfirmed)
     {
-        if (context.Length == 0 || _recallInFlight || !isMainSession)
+        // Память выключена вручную — реколл (post-turn и live) не запускаем вообще.
+        if (!AppSettings.Get().MemoryEnabled || context.Length == 0 || _recallInFlight || !isMainSession)
         {
             return;
         }

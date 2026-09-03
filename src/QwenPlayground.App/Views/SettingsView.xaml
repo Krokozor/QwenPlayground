@@ -1,260 +1,202 @@
 <UserControl x:Class="QwenPlayground.App.Views.SettingsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:views="clr-namespace:QwenPlayground.App.Views">
+             xmlns:views="clr-namespace:QwenPlayground.App.Views"
+             xmlns:local="clr-namespace:QwenPlayground.App.Views">
+    <UserControl.Resources>
+        <!-- Единая метка поля: прижата по вертикали, тусклая, с тултипом у себя. -->
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource DimBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+        </Style>
+        <!-- Единое текстовое поле (длинное: endpoint, путь, адрес).
+             BasedOn на имплицитный тёмный стиль TextBox из Dark.xaml: именованный стиль
+             в противном случае ВЫТЕСНЯЕТ имплицитный и TextBox откатывается на системную
+             светлую тему (белый фон). -->
+        <Style x:Key="TextField" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Width" Value="320" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="Margin" Value="0,3" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <!-- Единое числовое поле (короткое). -->
+        <Style x:Key="NumFieldStyle" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Width" Value="120" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="Margin" Value="0,3" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <!-- Сетка «лейбл | значение» — единая геометрия всех секций. -->
+        <Style x:Key="FieldGrid" TargetType="Grid">
+            <Setter Property="Margin" Value="0,2" />
+        </Style>
+    </UserControl.Resources>
+
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="16">
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="140" />
-                <ColumnDefinition Width="320" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="endpoint" VerticalAlignment="Center" />
-            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Endpoint, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="max tokens" VerticalAlignment="Center" />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MaxTokens, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="2" Grid.Column="0" Text="контекст" VerticalAlignment="Center" />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ContextSize, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="3" Grid.Column="0" Text="проект" VerticalAlignment="Center" />
-            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding ProjectRoot, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="4" Grid.Column="0" Text="сжатие: доля хвоста" VerticalAlignment="Center"
-                       ToolTip="Какую долю недавних сообщений компактация сохраняет дословно (0–1). Больше — меньше потерь при сжатии." />
-            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding CompactKeepRatio, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-        </Grid>
 
-        <Separator Margin="0,12" />
-        <TextBlock Text="Семплер" FontWeight="Bold" Margin="0,0,0,4" />
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="140" />
-                <ColumnDefinition Width="200" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="temperature" VerticalAlignment="Center" />
-            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Temperature, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="top_p" VerticalAlignment="Center" />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TopP, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="2" Grid.Column="0" Text="top_k" VerticalAlignment="Center" />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding TopK, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="3" Grid.Column="0" Text="min_p" VerticalAlignment="Center" />
-            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MinP, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="4" Grid.Column="0" Text="repeat_penalty" VerticalAlignment="Center" />
-            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding RepeatPenalty, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="5" Grid.Column="0" Text="seed" VerticalAlignment="Center" />
-            <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding Seed, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-        </Grid>
+            <!-- ── Общее ─────────────────────────────────────────────────────────── -->
+            <Expander Header="Общее" IsExpanded="True" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="endpoint"
+                               ToolTip="Адрес основного LLM-эндпоинта (OpenAI-совместимый). Сюда идут запросы чата и агентного цикла." />
+                    <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource TextField}"
+                             Text="{Binding Endpoint, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="max tokens"
+                               ToolTip="Максимум токенов генерации за один ответ." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource TextField}"
+                             local:NumField.Min="1" local:NumField.IsInteger="True"
+                             Text="{Binding MaxTokens, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="контекст"
+                               ToolTip="Размер контекста модели (токенов). Определяет бюджет окна диалога." />
+                    <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource TextField}"
+                             local:NumField.Min="1" local:NumField.IsInteger="True"
+                             Text="{Binding ContextSize, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="проект"
+                               ToolTip="Корневая папка проекта (workspace). Агент работает с ней по умолчанию." />
+                    <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource TextField}"
+                             Text="{Binding ProjectRoot, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="сжатие: доля хвоста"
+                               ToolTip="Какую долю недавних сообщений компактация сохраняет дословно (0–1). Больше — меньше потерь при сжатии." />
+                    <TextBox Grid.Row="4" Grid.Column="1" Style="{StaticResource TextField}"
+                             local:NumField.Min="0" local:NumField.Max="1"
+                             Text="{Binding CompactKeepRatio, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </Expander>
 
-        <Separator Margin="0,12" />
-        <TextBlock Text="Heartbeat (автономные пробуждения main-агента)" FontWeight="Bold" Margin="0,0,0,4" />
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="140" />
-                <ColumnDefinition Width="320" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="включено" VerticalAlignment="Center" />
-            <CheckBox Grid.Row="0" Grid.Column="1" IsChecked="{Binding HeartbeatEnabled}" Margin="0,3"
-                      ToolTip="По расписанию агент сам просыпается и проверяет, чем заняться. Сигналы из wake/ обрабатываются вне расписания." />
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="интервал, мин" VerticalAlignment="Center" />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding HeartbeatIntervalMinutes, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-        </Grid>
+            <!-- ── Семплер ───────────────────────────────────────────────────────── -->
+            <Expander Header="Семплер" IsExpanded="True" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="temperature"
+                               ToolTip="Температура семплирования. 0 — детерминированно, выше — разнообразнее." />
+                    <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0"
+                             Text="{Binding Temperature, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="top_p"
+                               ToolTip="Ядерное семплирование: кумулятивная вероятность (0–1). Ниже — жёстче обрезка." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.Max="1"
+                             Text="{Binding TopP, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="top_k"
+                               ToolTip="Рассматривать только топ-K токенов по вероятности. 0/пусто — без обрезки." />
+                    <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding TopK, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="min_p"
+                               ToolTip="Минимальная относительная вероятность токена (0–1) к самому вероятному." />
+                    <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.Max="1"
+                             Text="{Binding MinP, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="repeat_penalty"
+                               ToolTip="Штраф за повторение токенов. 1.0 — без штрафа, больше — сильнее подавляет повторы." />
+                    <TextBox Grid.Row="4" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0"
+                             Text="{Binding RepeatPenalty, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="5" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="seed"
+                               ToolTip="Фиксация seed для воспроизводимости. Пусто — случайный." />
+                    <TextBox Grid.Row="5" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding Seed, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </Expander>
 
-        <Separator Margin="0,12" />
-        <TextBlock Text="Агент: лимиты цикла" FontWeight="Bold" Margin="0,0,0,4" />
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="140" />
-                <ColumnDefinition Width="320" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="лимит итераций" VerticalAlignment="Center"
-                       ToolTip="Жёсткий потолок шагов агентного цикла (инструмент → повтор). 0 = без лимита (бесконечно)." />
-            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MaxIterations, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="sanity: шаг nag" VerticalAlignment="Center"
-                       ToolTip="Сколько итераций без самопроверки (sanity_check) до напоминания. 0 = отключено." />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SanityCheckInterval, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-        </Grid>
+            <!-- ── Агент: лимиты цикла ───────────────────────────────────────────── -->
+            <Expander Header="Агент: лимиты цикла" IsExpanded="True" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="лимит итераций"
+                               ToolTip="Жёсткий потолок шагов агентного цикла (инструмент → повтор). 0 = без лимита (бесконечно)." />
+                    <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding MaxIterations, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="sanity: шаг nag"
+                               ToolTip="Сколько итераций без самопроверки (sanity_check) до напоминания. 0 = отключено." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding SanityCheckInterval, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </Expander>
 
-        <Separator Margin="0,12" />
-        <TextBlock Text="Память: реколл и стабильность" FontWeight="Bold" Margin="0,0,0,4" />
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="200" />
-                <ColumnDefinition Width="120" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="Top-X реколла" VerticalAlignment="Center"
-                       ToolTip="Сколько фактов возвращает реколл до rerank'а." />
-            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding RecallTopX, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="мин. порог релевантности" VerticalAlignment="Center"
-                       ToolTip="Порог scores (0..1) — ниже не показываем." />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding RecallMinScore, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="2" Grid.Column="0" Text="порог стабильности" VerticalAlignment="Center"
-                       ToolTip="Сколько повторных попаданий нужно, чтобы факт вышел в state-блок." />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MemorySurfacingThreshold, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="3" Grid.Column="0" Text="live-реколл: мин. токенов" VerticalAlignment="Center"
-                       ToolTip="Минимум натекшего стрима (chars/4) между live-реколлами." />
-            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MemoryLiveRecallMinTokens, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="4" Grid.Column="0" Text="live-реколл: пауза, сек" VerticalAlignment="Center"
-                       ToolTip="Пауза между live-реколлами." />
-            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding MemoryLiveRecallIntervalSec, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="5" Grid.Column="0" Text="nag: рендеров без memory_*" VerticalAlignment="Center"
-                       ToolTip="Сколько рендеров без memory_*-инструмента до напоминания про дедуп." />
-            <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding MemoryNagIntervalRenders, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-        </Grid>
+            <!-- ── Heartbeat ─────────────────────────────────────────────────────── -->
+            <Expander Header="Heartbeat (автономные пробуждения)" IsExpanded="True" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="включено"
+                               ToolTip="По расписанию агент сам просыпается и проверяет, чем заняться. Сигналы из wake/ обрабатываются вне расписания." />
+                    <CheckBox Grid.Row="0" Grid.Column="1" IsChecked="{Binding HeartbeatEnabled}" Margin="0,3"
+                              VerticalAlignment="Center"
+                              ToolTip="По расписанию агент сам просыпается и проверяет, чем заняться. Сигналы из wake/ обрабатываются вне расписания." />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="интервал, мин"
+                               ToolTip="Как часто (в минутах) main-агент сам просыпается и проверяет, чем заняться." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="1" local:NumField.IsInteger="True"
+                             Text="{Binding HeartbeatIntervalMinutes, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </Expander>
 
-        <Separator Margin="0,12" />
-        <TextBlock Text="Память: вектор диалога" FontWeight="Bold" Margin="0,0,0,4" />
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="200" />
-                <ColumnDefinition Width="120" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="бюджет токенов" VerticalAlignment="Center"
-                       ToolTip="Максимум токенов в векторе диалога для классификации." />
-            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MemoryDialogueBudgetTokens, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="макс. сообщений" VerticalAlignment="Center"
-                       ToolTip="Сколько последних сообщений берётся в окно." />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MemoryDialogueMaxMessages, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-        </Grid>
+            <!-- ── Самосборка ────────────────────────────────────────────────────── -->
+            <Expander Header="Самосборка (rebuild_self)" IsExpanded="True" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="пуш в GitHub"
+                               ToolTip="После успешного rebuild — git push уже закоммиченных коммитов. По умолчанию выкл: коммиты и пуши делает владелец/агент явно." />
+                    <CheckBox Grid.Row="0" Grid.Column="1" IsChecked="{Binding PushOnRebuild}" Margin="0,3"
+                              VerticalAlignment="Center"
+                              ToolTip="После успешного rebuild — git push уже закоммиченных коммитов. По умолчанию выкл: коммиты и пуши делает владелец/агент явно." />
+                </Grid>
+            </Expander>
 
-        <Separator Margin="0,12" />
-        <TextBlock Text="Память: классификатор (пробы)" FontWeight="Bold" Margin="0,0,0,4" />
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="200" />
-                <ColumnDefinition Width="120" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="классификация: nProbs" VerticalAlignment="Center"
-                       ToolTip="Позиций логитов на пробу классификации." />
-            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MemoryClassifyNProbs, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="классификация: nPredict" VerticalAlignment="Center"
-                       ToolTip="Токенов генерации на пробу классификации." />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MemoryClassifyNPredict, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="2" Grid.Column="0" Text="rerank: nProbs / nPredict" VerticalAlignment="Center"
-                       ToolTip="Позиции логитов / токены генерации для rerank-пробы." />
-            <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Margin="0,3">
-                <TextBox Width="50" Text="{Binding MemoryRerankNProbs, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
-                <TextBox Width="50" Text="{Binding MemoryRerankNPredict, UpdateSourceTrigger=PropertyChanged}" />
-            </StackPanel>
-            <TextBlock Grid.Row="3" Grid.Column="0" Text="flush: бюджет на heartbeat" VerticalAlignment="Center"
-                       ToolTip="Фактов без слоёв, обогащаемых за один проход." />
-            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MemoryFlushBudget, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-        </Grid>
+            <views:MemorySettingsView />
 
-        <Separator Margin="0,12" />
-        <TextBlock Text="Память: скоринг и rerank" FontWeight="Bold" Margin="0,0,0,4" />
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="200" />
-                <ColumnDefinition Width="120" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="вес категорий / эмодзи" VerticalAlignment="Center"
-                       ToolTip="Веса в semantic overlap (сумма = 1)." />
-            <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Margin="0,3">
-                <TextBox Width="50" Text="{Binding MemoryCategoryWeight, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
-                <TextBox Width="50" Text="{Binding MemoryEmojiWeight, UpdateSourceTrigger=PropertyChanged}" />
-            </StackPanel>
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="rerank: макс. кандидатов" VerticalAlignment="Center"
-                       ToolTip="Лимит кандидатов в SecondPass (multichoice)." />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MemoryRerankMaxCandidates, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="2" Grid.Column="0" Text="rerank: длина примера" VerticalAlignment="Center"
-                       ToolTip="Символов контента факта в промпте rerank." />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MemoryRerankCandidateContentLength, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="3" Grid.Column="0" Text="фактов за компакцию" VerticalAlignment="Center"
-                       ToolTip="Максимум фактов, извлекаемых из сжатого сегмента." />
-            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MemoryMaxFactsPerCompaction, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-        </Grid>
+            <!-- ── Профили чатов: ЕДИНСТВЕННОЕ место редактирования пресетов ─────── -->
+            <Expander Header="Профили чатов (config/chat-profiles.json)" IsExpanded="True" Margin="0,4,0,0">
+                <views:ProfilesEditorView DataContext="{Binding Profiles}" Margin="0,4,0,2" />
+            </Expander>
 
-        <Separator Margin="0,12" />
-        <TextBlock Text="Память: сканер дубликатов" FontWeight="Bold" Margin="0,0,0,4" />
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="200" />
-                <ColumnDefinition Width="120" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="бюджет проб за проход" VerticalAlignment="Center"
-                       ToolTip="Проб пар за один проход сканера." />
-            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MemoryScanProbeBudget, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="similar: мин. балл" VerticalAlignment="Center"
-                       ToolTip="Балл цифры, выше которого пара уверенно «похожа»." />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SimilaritySimilarMin, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="2" Grid.Column="0" Text="distinct: макс. балл" VerticalAlignment="Center"
-                       ToolTip="Балл, ниже которого пара уверенно «не похожа»." />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding SimilarityDistinctMax, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-            <TextBlock Grid.Row="3" Grid.Column="0" Text="макс. энтропия уверенности" VerticalAlignment="Center"
-                       ToolTip="Энтропия выше этой границы → классификатор не уверен." />
-            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding SimilarityConfidentMaxEntropy, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-        </Grid>
-
-        <Separator Margin="0,12" />
-        <TextBlock Text="Память: прочее" FontWeight="Bold" Margin="0,0,0,4" />
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="200" />
-                <ColumnDefinition Width="120" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="дневник: макс. длина записи" VerticalAlignment="Center"
-                       ToolTip="Максимальная длина эпизода в diary.md." />
-            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MemoryDiaryMaxEntryLength, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
-        </Grid>
-
-        <!-- ── Профили чатов: ЕДИНСТВЕННОЕ место редактирования пресетов ─────────────── -->
-        <Separator Margin="0,16" />
-        <TextBlock Text="Профили чатов (config/chat-profiles.json)" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
-        <views:ProfilesEditorView DataContext="{Binding Profiles}" />
-    </StackPanel>
+        </StackPanel>
     </ScrollViewer>
 </UserControl>

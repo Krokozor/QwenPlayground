@@ -68,44 +68,6 @@ public static class ContextCompactor
 
     // Транскрипт суммаризации не должен переполнять окно модели.
     private const int DefaultCap = 2000;
-    private const int MinCap = 1500;
-
-    public static (string System, string User) BuildSummarizationRequest(IReadOnlyList<ChatMessage> messages, int endExclusive, int windowSize = 0)
-    {
-        // Без windowSize (тесты/старые вызовы) — фиксированный Cap.
-        // С окном: сегмент влезает в 60% окна — без обрезки; иначе общий бюджет на все сообщения.
-        var cap = DefaultCap;
-        if (windowSize > 0)
-        {
-            var segmentChars = 0;
-            for (var i = 0; i < endExclusive && i < messages.Count; i++)
-            {
-                segmentChars += EstimateChars(messages[i]);
-            }
-            var budgetChars = windowSize * 4 * 6 / 10;
-            cap = segmentChars <= budgetChars
-                ? int.MaxValue
-                : Math.Max(MinCap, budgetChars / Math.Max(1, endExclusive));
-        }
-
-        var transcript = BuildTranscript(messages, endExclusive, cap);
-
-        // Тексты вынесены в config/prompts.json (см. PromptCatalog) — их можно править не пересобирая.
-        var templates = PromptCatalog.Load();
-        var system = templates.SummarizationSystem;
-        var user = WithTranscript(templates.SummarizationUser, transcript);
-        return (system, user);
-    }
-
-    /// <summary>Класс сообщения-транскрипта: плейсхолдер заменяется, иначе транскрипт дописывается в конец.</summary>
-    private static string WithTranscript(string template, string transcript)
-    {
-        if (template.Contains("{{transcript}}", StringComparison.Ordinal))
-        {
-            return PromptTemplateSet.Render(template, new Dictionary<string, string> { ["transcript"] = transcript });
-        }
-        return (template.TrimEnd() + "\n\n" + transcript).Trim();
-    }
 
     /// <summary>Текстовый транскрипт сегмента: ### роль, [thoughts], [call name(args)] — для суммаризации и извлечения памяти.</summary>
     public static string BuildTranscript(IReadOnlyList<ChatMessage> messages, int endExclusive, int cap = DefaultCap)
@@ -133,34 +95,6 @@ public static class ContextCompactor
             transcript.Append('\n');
         }
         return transcript.ToString();
-    }
-
-    public const string SummaryMarker = "[Сжатое резюме ранней части диалога]";
-
-    public static List<ChatMessage> ApplyCompaction(IReadOnlyList<ChatMessage> messages, int boundary, string summary)
-    {
-        var result = new List<ChatMessage>();
-        var start = 0;
-        if (messages.Count > 0 && messages[0].Role == ChatRole.System)
-        {
-            var baseContent = messages[0].Content;
-            var markerIndex = baseContent.IndexOf(SummaryMarker, StringComparison.Ordinal);
-            if (markerIndex >= 0)
-            {
-                baseContent = baseContent[..markerIndex].TrimEnd();
-            }
-            result.Add(ChatMessage.System(baseContent + "\n\n" + SummaryMarker + "\n" + summary));
-            start = 1;
-        }
-        else
-        {
-            result.Add(ChatMessage.System(SummaryMarker + "\n" + summary));
-        }
-        for (var i = Math.Max(boundary, start); i < messages.Count; i++)
-        {
-            result.Add(messages[i]);
-        }
-        return result;
     }
 
     private static int EstimateChars(ChatMessage message)

@@ -13,11 +13,17 @@ namespace QwenPlayground.App.Tools;
 /// Делает скриншот собственного окна (или всего экрана) и прикрепляет его к СВОЕМУ tool-ответу
 /// (FinalizeAsync + артефакты — как в load_image): в следующем рендере модель видит экран.
 /// Замыкает цикл самотестирования UI: правка → rebuild → screenshot → вижу → оцениваю → итерация.
+///
+/// Регион 'app' снимается через PrintWindow (PW_RENDERFULLCONTENT): окно само рендерит себя в
+/// наш DC, поэтому захват работает даже когда монитор выключен (владелица отошёл, винда убрала
+/// картинку) — в отличие от CopyFromScreen, который берёт физический экран и возвращает пустой
+/// кадр. Регион 'screen' — по-прежнему CopyFromScreen (весь экран без монитора не снять).
 /// </summary>
 [Tool("screenshot",
     "Take a screenshot of your own app window (or the whole screen) and attach it to this tool " +
     "response so you can SEE it in the next render. Use for UI self-testing: after changing the " +
-    "UI, rebuild, take a screenshot, inspect it, and iterate. Call remove_attachments when done " +
+    "UI, rebuild, take a screenshot, inspect it, and iterate. The 'app' region is captured via " +
+    "PrintWindow, so it works even if the monitor is off. Call remove_attachments when done " +
     "looking to free context.")]
 public sealed class ScreenshotTool : AgentTool
 {
@@ -28,12 +34,20 @@ public sealed class ScreenshotTool : AgentTool
     public string? OutputPath { get; set; }
 
     private string? _savedPath;
+    private IntPtr _appWindowHandle; // non-zero → регион 'app', снимается через PrintWindow
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    // PW_RENDERFULLCONTENT: окно рендерит себя целиком (включая HW-ускоренный WPF/DirectX-контент)
+    // в переданный DC — независимо от того, видно ли окно и включён ли монитор.
+    [DllImport("user32.dll")]
+    private static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
+
+    private const uint PW_RENDERFULLCONTENT = 0x2;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT
@@ -64,11 +78,12 @@ public sealed class ScreenshotTool : AgentTool
                 return "Error: the app's main window was not found (is the UI running?).";
             }
             SetForegroundWindow(handle);
-            // SetForegroundWindow асинхронный: даём оконному менеджеру время поднять окно наверх,
-            // иначе снимем чужое окно, стоящее поверх нашего. Task.Delay, а не Sleep: инструмент
-            // выполняется на потоке UI — Sleep замораживал окно на четверть секунды.
+            // SetForegroundWindow асинхронный: даём оконному менеджеру время поднять окно наверх.
+            // Task.Delay, а не Sleep: инструмент выполняется на потоке UI — Sleep замораживал окно.
             await Task.Delay(250, cancellationToken);
-            bounds = new Rectangle(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+            _appWindowHandle = handle;
+            // PrintWindow рендерит окно в DC от (0,0) — локация экрана не важна, важен размер.
+            bounds = new Rectangle(0, 0, rect.Right - rect.Left, rect.Bottom - rect.Top);
         }
 
         var path = string.IsNullOrWhiteSpace(OutputPath)
@@ -87,7 +102,23 @@ public sealed class ScreenshotTool : AgentTool
             using var bitmap = new Bitmap(bounds.Width, bounds.Height);
             using (var graphics = Graphics.FromImage(bitmap))
             {
-                graphics.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+                if (_appWindowHandle != IntPtr.Zero)
+                {
+                    // Окно само рендерит себя в наш DC — работает даже при выключенном мониторе.
+                    var hdc = graphics.GetHdc();
+                    try
+                    {
+                        PrintWindow(_appWindowHandle, hdc, PW_RENDERFULLCONTENT);
+                    }
+                    finally
+                    {
+                        graphics.ReleaseHdc(hdc);
+                    }
+                }
+                else
+                {
+                    graphics.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+                }
             }
             bitmap.Save(path, ImageFormat.Png);
         }, cancellationToken);

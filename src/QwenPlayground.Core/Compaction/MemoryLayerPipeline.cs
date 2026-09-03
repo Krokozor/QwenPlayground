@@ -39,7 +39,8 @@ public static class MemoryLayerPipeline
         string transcript,
         Func<string, CancellationToken, Task<string>> complete,
         Action<string>? onStage = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool validate = true)
     {
         // Дизайн владельца: слияние L1+L2 нужно ТОЛЬКО когда L1 заполнен (все три слоя на месте).
         // Тёплый ап-фейз (L1 пуст) — каскадный сдвиг вверх БЕЗ модели: L2→L1, L3→L2.
@@ -58,9 +59,9 @@ public static class MemoryLayerPipeline
             onStage?.Invoke("слияние L1+L2");
             mergedTemp = await TryCompleteAsync(BuildMergePrompt(current.L1, current.L2), complete, cancellationToken);
             mergeSucceeded = !string.IsNullOrWhiteSpace(mergedTemp);
-            if (mergeSucceeded)
+            if (mergeSucceeded && validate)
             {
-                // 2. валидация мерджа: не потеряли ли важное между L1+L2 и Temp.
+                // 2. валидация мерджа (только в полном режиме main): не потеряли ли важное между L1+L2 и Temp.
                 onStage?.Invoke("сверка слияния L1+L2");
                 var validation = await TryCompleteAsync(
                     BuildMergeValidationPrompt(current.L1, current.L2, mergedTemp!), complete, cancellationToken);
@@ -72,9 +73,9 @@ public static class MemoryLayerPipeline
         onStage?.Invoke("суммаризация сегмента");
         var segmentSummary = await TryCompleteAsync(BuildSegmentSummaryPrompt(transcript), complete, cancellationToken);
         var segmentSucceeded = !string.IsNullOrWhiteSpace(segmentSummary);
-        if (segmentSucceeded)
+        if (segmentSucceeded && validate)
         {
-            // 5. сверка сегмента и L3: не потеряли ли важное.
+            // 5. сверка сегмента и L3 (только в полном режиме main): не потеряли ли важное.
             onStage?.Invoke("сверка сегмента с резюме");
             var validation = await TryCompleteAsync(
                 BuildSegmentValidationPrompt(transcript, segmentSummary!), complete, cancellationToken);

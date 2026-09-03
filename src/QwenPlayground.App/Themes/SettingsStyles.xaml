@@ -1,0 +1,42 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+    Общие стили полей настроек (FieldLabel/TextField/NumFieldStyle/FieldGrid). Вынесены из
+    SettingsView в app-wide словарь, чтобы их видели и отдельные UserControl-секции
+    (MemorySettingsView и др.).
+    Мержим Dark.xaml как РОДИТЕЛЬСКИЙ словарь: BasedOn принимает ТОЛЬКО StaticResource
+    (DynamicResource в BasedOn — XamlParseException), а StaticResource между sibling-merge
+    не резолвится. Родительский merge Dark.xaml даёт и DimBrush, и имплицитный стиль TextBox
+    в этом же дереве. App.xaml мержит Dark.xaml и напрямую (тема гарантированно работает).
+    -->
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Dark.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+
+    <!-- Единая метка поля: прижата по вертикали, тусклая, с тултипом у себя. -->
+    <Style x:Key="FieldLabel" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource DimBrush}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Margin" Value="0,0,8,0" />
+    </Style>
+    <!-- Единое текстовое поле (длинное: endpoint, путь, адрес). BasedOn на имплицитный тёмный
+         стиль TextBox из Dark.xaml: именованный стиль в противном случае ВЫТЕСНЯЕТ имплицитный
+         и TextBox откатывается на системную светлую тему (белый фон). -->
+    <Style x:Key="TextField" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+        <Setter Property="Width" Value="320" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="Margin" Value="0,3" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- Единое числовое поле (короткое). -->
+    <Style x:Key="NumFieldStyle" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+        <Setter Property="Width" Value="120" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="Margin" Value="0,3" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- Сетка «лейбл | значение» — единая геометрия всех секций. -->
+    <Style x:Key="FieldGrid" TargetType="Grid">
+        <Setter Property="Margin" Value="0,2" />
+    </Style>
+</ResourceDictionary>

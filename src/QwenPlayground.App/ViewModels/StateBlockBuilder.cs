@@ -1,9 +1,10 @@
-﻿using System.IO;
+using System.IO;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.MetaInfo;
 using QwenPlayground.Core.SelfBuild;
+using QwenPlayground.Core.Settings;
 
 namespace QwenPlayground.App.ViewModels;
 
@@ -75,27 +76,32 @@ public sealed class StateBlockBuilder
             BuildStatus = LastBuild()?.Status
         };
 
-        // Всплывшие воспоминания: живут до компакции (там пул чистится), дубликаты не повторяются.
-        foreach (var memory in _surfaced())
+        // Память: всплывшие факты, пары-кандидаты на слияние и наг менеджмента — только если
+        // память включена (мастер-переключатель). Выкл — блок памяти в state-блоке отсутствует.
+        if (AppSettings.Get().MemoryEnabled)
         {
-            state.Memories.Add(new StateBlock.MemoryRef
+            // Всплывшие воспоминания: живут до компакции (там пул чистится), дубликаты не повторяются.
+            foreach (var memory in _surfaced())
             {
-                Id = memory.Id,
-                Relevance = memory.Score,
-                Content = ToSingleLine(memory.Content, 200)
-            });
-        }
+                state.Memories.Add(new StateBlock.MemoryRef
+                {
+                    Id = memory.Id,
+                    Relevance = memory.Score,
+                    Content = ToSingleLine(memory.Content, 200)
+                });
+            }
 
-        // Пары-кандидаты на слияние: бюджет за рендер, чтобы очередь не съедала контекст.
-        foreach (var pair in _pendingPairs().Take(3))
-        {
-            state.SimilarPairs.Add(new StateBlock.MemoryPair(pair.A, pair.B));
-        }
+            // Пары-кандидаты на слияние: бюджет за рендер, чтобы очередь не съедала контекст.
+            foreach (var pair in _pendingPairs().Take(3))
+            {
+                state.SimilarPairs.Add(new StateBlock.MemoryPair(pair.A, pair.B));
+            }
 
-        // Наг менеджмента памяти: модель в обсессии не займётся дедупом сама — периодически дёргаем.
-        if (_memoryNag() is { } nag)
-        {
-            state.MemoryNag = nag;
+            // Наг менеджмента памяти: модель в обсессии не займётся дедупом сама — периодически дёргаем.
+            if (_memoryNag() is { } nag)
+            {
+                state.MemoryNag = nag;
+            }
         }
 
         return state;

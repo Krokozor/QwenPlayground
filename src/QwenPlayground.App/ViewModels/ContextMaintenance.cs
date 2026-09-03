@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
 using QwenPlayground.Core.Memory;
@@ -28,6 +28,7 @@ public sealed class ContextMaintenance
     private readonly CompactionPreview _preview;
     private readonly Func<string, string?, Action<string>?, CancellationToken, Task<string?>> _completeStructured;
     private readonly MemoryLayerStore _layers;
+    private readonly Func<string, MemoryLayerStore> _layerStoreFactory;
     private readonly MemorySurfacer _surfacer;
     private readonly Func<CancellationToken, Task<int>> _countNextTokens;
     private readonly Func<Task<int>> _effectiveSize;
@@ -35,6 +36,9 @@ public sealed class ContextMaintenance
     private readonly ContextBackupStore _backups;
     private readonly Func<MemoryStore> _storeFactory;
     private readonly Ui _ui;
+    // Служебный хук после успешной компакции: MainViewModel снимает неиспользуемые полки
+    // (бесплатно — компакция и так пересобирает промпт). null в тестах.
+    private readonly Action? _onCompacted;
 
     private bool _requested; // ручная компакция, запрошенная во время Generating
 
@@ -50,7 +54,9 @@ public sealed class ContextMaintenance
         Func<string> currentSessionId,
         ContextBackupStore backups,
         Ui ui,
-        Func<MemoryStore>? storeFactory = null)
+        Func<MemoryStore>? storeFactory = null,
+        Func<string, MemoryLayerStore>? layerStoreFactory = null,
+        Action? onCompacted = null)
     {
         _conversation = conversation;
         _chat = chat;
@@ -65,6 +71,10 @@ public sealed class ContextMaintenance
         _ui = ui;
         // Шов для тестов: в приложении — реальное хранилище memories/.
         _storeFactory = storeFactory ?? (() => new MemoryStore());
+        // Per-session store слоёв: main — общий (разделён с InjectedIdentity), не-main — sessions/<id>/.
+        _layerStoreFactory = layerStoreFactory ??
+            (id => new MemoryLayerStore(Path.Combine(SelfBuildPaths.WorkspaceRoot, "sessions", id)));
+        _onCompacted = onCompacted;
     }
 
     /// <summary>
@@ -126,36 +136,10 @@ public sealed class ContextMaintenance
             _ui.SetStatus($"бэкап: {Path.GetFileName(backup)}; сжатие...");
             _preview.Begin();
 
-            if (_currentSessionId() == MainAgent.SessionId)
-            {
-                // main-агент: слоистая память L1/L2/L3 (изолированные конвейерные шаги).
-                await CompactMainAsync(boundary);
-            }
-            else
-            {
-                var (system, user) = ContextCompactor.BuildSummarizationRequest(_conversation, boundary, effective);
-
-                BeginStage("резюме ранней части диалога");
-                var summary = await _completeStructured(user, system, chunk => _preview.Append(chunk), CancellationToken.None)
-                              ?? throw new InvalidOperationException(
-                                  "сводка: модель не вызвала submit_result (улетела в размышления или оборвалась). " +
-                                  "Бэкап снят — можно восстановить или повторить сжатие.");
-                _preview.Flush();
-
-                // Сжатый сегмент (без ведущего system) — снимаем ДО замены разговора.
-                var segmentStart = _conversation.Count > 0 && _conversation[0].Role == ChatRole.System ? 1 : 0;
-                var segment = _conversation.CopyRange(segmentStart, Math.Max(0, boundary - segmentStart));
-
-                var compacted = ContextCompactor.ApplyCompaction(_conversation, boundary, summary);
-                _conversation.ReplaceAll(compacted);
-                _ui.Save();
-
-                // Долговременные факты из сжатого сегмента → memories/ (best-effort: не роняет компакцию).
-                var memoriesSaved = await ExtractMemoriesFromSegmentAsync(segment);
-                _ui.SetStatus(memoriesSaved > 0
-                    ? $"контекст сжат: {boundary} сообщ. → резюме, +{memoriesSaved} в память"
-                    : $"контекст сжат: {boundary} сообщ. → резюме");
-            }
+            // Обе ветки — конвейер слоёв L1/L2/L3 (per-session, sessions/<id>/layers.json).
+            // main — полный режим (валидации → факты в memories/ + diary); не-main — lite (ядро
+            // ротации, без валидаций: горизонт задач короче, лёгкие потери допустимы).
+            await CompactLayersAsync(boundary, isMain: _currentSessionId() == MainAgent.SessionId);
         }
         catch (Exception exception)
         {
@@ -176,18 +160,21 @@ public sealed class ContextMaintenance
     }
 
     /// <summary>
-    /// Компакция main-агента через конвейер слоёв L1/L2/L3: сжатый сегмент становится новым L3,
-    /// старый L3 сдвигается в L2, L1+L2 сливаются в новый L1; утерянные факты валидаций — в memories/.
+    /// Компакция через конвейер слоёв L1/L2/L3 (per-session, sessions/<id>/layers.json): сжатый сегмент
+    /// → новый L3, старый L3 → L2, L1+L2 → новый L1. main — полный режим (валидации → факты в memories/
+    /// + diary); не-main — lite (без валидаций/фактов/diary: горизонт задач короче, лёгкие потери
+    /// допустимы). Слои инжектятся в системный промпт сессии (см. MainViewModel.ResolveSystemPrompt).
     /// </summary>
-    private async Task CompactMainAsync(int boundary)
+    private async Task CompactLayersAsync(int boundary, bool isMain)
     {
         _surfacer.Clear(); // всплывшие воспоминания выпадают из контекста на суммаризации
         var segmentStart = _conversation.Count > 0 && _conversation[0].Role == ChatRole.System ? 1 : 0;
         var segment = _conversation.CopyRange(segmentStart, Math.Max(0, boundary - segmentStart));
         var transcript = ContextCompactor.BuildTranscript(segment, segment.Count);
 
-        var result = await MemoryLayerPipeline.RunAsync(_layers.Load(), transcript, CompleteForPipelineAsync,
-            onStage: BeginStage);
+        var store = StoreFor(_currentSessionId());
+        var result = await MemoryLayerPipeline.RunAsync(store.Load(), transcript, CompleteForPipelineAsync,
+            onStage: BeginStage, validate: isMain);
 
         // Без критичных шагов ротация потеряла бы содержимое — компакция прерывается (бэкап уже снят).
         if (!result.MergeSucceeded || !result.SegmentSucceeded)
@@ -197,19 +184,42 @@ public sealed class ContextMaintenance
                 ", сегмент=" + (result.SegmentSucceeded ? "ok" : "fail"));
         }
 
-        _layers.Save(result.Next);
-        foreach (var fact in result.Facts.Take(MemoryExtractor.MaxFacts))
+        store.Save(result.Next);
+        if (isMain)
         {
-            await SaveMemoryClassifiedAsync(fact, source: "compaction");
+            // Утерянные факты валидаций → memories/ + diary (main-надстройка, не для lite).
+            foreach (var fact in result.Facts.Take(MemoryExtractor.MaxFacts))
+            {
+                await SaveMemoryClassifiedAsync(fact, source: "compaction");
+            }
+            new DiaryStore().Append(result.Next.L3);
         }
-        new DiaryStore().Append(result.Next.L3);
 
-        // Оставляем хвост после границы (ID старших сообщений не переиспользуются — счётчик в логе).
-        _conversation.TruncateKeep(boundary);
+        // Ранняя часть (до границы) ушла в слои — удаляем её, оставляя system + хвост после
+        // границы. ID удалённых сообщений не переиспользуются — счётчик в логе.
+        _conversation.TrimCompactedPrefix(boundary);
         _ui.Save();
 
-        _ui.SetStatus($"контекст сжат: {boundary} сообщ. → L3, +{result.Facts.Count} в память");
+        // Авто-выключение неиспользуемых полок: в оставшемся контексте (после сжатия) ни одного
+        // ToolCall из инструментов группы → снимаем. Бесплатно: компакция и так пересобирает
+        // промпт, деактивация батчится с неизбежным rebuild'ом.
+        try
+        {
+            _onCompacted?.Invoke();
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine($"[shelf] авто-выключение после компакции: {exception.Message}");
+        }
+
+        _ui.SetStatus(isMain
+            ? $"контекст сжат: {boundary} сообщ. → L3, +{result.Facts.Count} в память"
+            : $"контекст сжат: {boundary} сообщ. → слои (L3)");
     }
+
+    /// <summary>Store слоёв сессии: main — общий (разделён с InjectedIdentity), не-main — per-session.</summary>
+    private MemoryLayerStore StoreFor(string sessionId) =>
+        sessionId == MainAgent.SessionId ? _layers : _layerStoreFactory(sessionId);
 
     /// <summary>Один изолированный LLM-вызов конвейера: результат возвращается через submit_result.</summary>
     private async Task<string> CompleteForPipelineAsync(string userContent, CancellationToken cancellationToken)
@@ -221,49 +231,6 @@ public sealed class ContextMaintenance
         // Тихий FallbackContent не используем: модель должна вызвать submit_result; если не вызвала —
         // бросаем, TryCompleteAsync поймает и пометит шаг проваленным (без молчаливого мусора).
         return result ?? throw new InvalidOperationException("модель не вызвала submit_result");
-    }
-
-    /// <summary>Извлечение долговременных фактов из сжатого сегмента в memories/ (best-effort).</summary>
-    private async Task<int> ExtractMemoriesFromSegmentAsync(IReadOnlyList<ChatMessage> segment)
-    {
-        if (segment.Count == 0)
-        {
-            return 0;
-        }
-        try
-        {
-            var transcript = ContextCompactor.BuildTranscript(segment, segment.Count);
-            var promptText = MemoryExtractor.BuildExtractionPrompt(transcript);
-            // System-промпт цели «извлечение фактов» — из каталога (правится во вкладке «Суммаризация»).
-            var system = PromptCatalog.Load().MemoryExtractionSystem;
-
-            var result = await _completeStructured(promptText, system, null, CancellationToken.None);
-
-            // Best-effort, но не через FallbackContent: без submit_result фактов нет — просто 0.
-            if (result is null)
-            {
-                return 0;
-            }
-            var facts = MemoryExtractor.ParseFacts(result);
-            if (facts.Count == 0)
-            {
-                return 0;
-            }
-            foreach (var fact in facts.Take(MemoryExtractor.MaxFacts))
-            {
-                await SaveMemoryClassifiedAsync(fact, source: "compaction");
-            }
-            return facts.Count;
-        }
-        catch (OperationCanceledException)
-        {
-            // Отмена — не «фактов нет»: пусть внешний catch компакции покажет честный статус.
-            throw;
-        }
-        catch
-        {
-            return 0; // извлечение — не критичный путь компакции
-        }
     }
 
     /// <summary>

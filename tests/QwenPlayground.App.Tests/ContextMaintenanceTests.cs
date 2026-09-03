@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using QwenPlayground.App.ViewModels;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
@@ -40,7 +40,8 @@ public sealed class ContextMaintenanceTests : IDisposable
             new ContextMaintenance.Ui(
                 s => _statuses.Add(s),
                 g => _generating = g,
-                SaveCurrent));
+                SaveCurrent),
+            layerStoreFactory: id => new MemoryLayerStore(_root));
     }
 
     private void SaveCurrent()
@@ -74,7 +75,7 @@ public sealed class ContextMaintenanceTests : IDisposable
     }
 
     [Fact]
-    public async Task ManualFromIdle_BranchSummary_RunsAndReturnsToIdle()
+    public async Task ManualFromIdle_BranchLayers_RunsAndReturnsToIdle()
     {
         Fill(12);
         Persist();
@@ -82,14 +83,16 @@ public sealed class ContextMaintenanceTests : IDisposable
         var maintenance = Create(complete: (user, system, onChunk, ct) =>
         {
             calls++;
-            // 1-й вызов — суммаризация (отдаём результат), 2-й — извлечение фактов (пусто).
+            // Не-main — lite-слои: 1 вызов = суммаризация сегмента → L3 (без валидаций/экстракции).
             return Task.FromResult<string?>(calls == 1 ? "итоговое резюме" : null);
         });
 
         await maintenance.CompactFromUiAsync();
 
         Assert.Contains("контекст сжат", _statuses.Last());
-        Assert.True(_log.Count < 12);           // ранняя часть заменена резюме
+        Assert.True(_log.Count < 12);                          // что-то срезано
+        Assert.Contains("номер 11", _log[^1].Content);          // самое свежее (хвост) сохранено
+        Assert.DoesNotContain(_log, m => m.Content.Contains("номер 0")); // самое старое (голова) срезано
         Assert.Equal(ChatState.Idle, _chat.Current);
         Assert.False(_generating);
     }

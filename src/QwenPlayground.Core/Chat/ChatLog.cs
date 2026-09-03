@@ -89,6 +89,23 @@ public sealed class ChatLog : IReadOnlyList<ChatMessage>
         Changed?.Invoke();
     }
 
+    /// <summary>
+    /// Компакция: ранняя часть (после ведущего system-сообщения и до <paramref name="boundary"/>)
+    /// уже дистиллирована в слои — удаляем её, оставляя system (если есть) и хвост с границы.
+    /// <paramref name="boundary"/> — индекс, с которого начинается сохраняемый хвост.
+    /// ID удалённых сообщений не переиспользуются (счётчик только вперёд).
+    /// </summary>
+    public void TrimCompactedPrefix(int boundary)
+    {
+        var systemEnd = _messages.Count > 0 && _messages[0].Role == ChatRole.System ? 1 : 0;
+        if (boundary <= systemEnd || boundary >= _messages.Count)
+        {
+            return;
+        }
+        _messages.RemoveRange(systemEnd, boundary - systemEnd);
+        Changed?.Invoke();
+    }
+
     /// <summary>Удалить хвост начиная с index включительно (откат к сообщению).</summary>
     public void RemoveFrom(int index)
     {

@@ -29,49 +29,86 @@ public sealed class RebuildSelfTool : AgentTool
             return $"Error: build failed (exit code {result.ExitCode}). Fix the errors and call rebuild_self again.\n{result.OutputTail}";
         }
 
-        // Git status: где мы, что запушено
+        // Git status: где мы, что запушено. Пуш — только если включён в настройках.
         var gitInfo = GetGitStatus();
+        var pushInfo = MaybePush();
 
         SelfBuildService.RequestRestart(result.Id);
         return $"Build {result.Id} succeeded. The application will now restart into the new version.\n" +
-               $"Git: {gitInfo}";
+               $"Git: {gitInfo}" + (pushInfo is null ? string.Empty : $"\n{pushInfo}");
     }
 
-    /// <summary>Краткий git-статус для логирования в результат rebuild.</summary>
+    /// <summary>
+    /// Краткий git-статус для логирования в результат rebuild: где HEAD и сколько коммитов
+    /// не запушено (только КОНСТАТАЦИЯ — пуш не делает; пуш — MaybePush по настройке).
+    /// </summary>
     private static string GetGitStatus()
+    {
+        var root = SelfBuildPaths.WorkspaceRoot;
+        var (_, head) = RunGit(root, "log -1 --oneline");
+        if (string.IsNullOrEmpty(head))
+        {
+            return "not a git repo";
+        }
+        var (_, upstream) = RunGit(root, "rev-parse --verify -q @{u}");
+        if (string.IsNullOrEmpty(upstream))
+        {
+            return $"{head} (no upstream)";
+        }
+        var (_, unpushed) = RunGit(root, "rev-list --count @{u}..HEAD");
+        return unpushed == "0"
+            ? $"{head} (up-to-date with origin)"
+            : $"{head} ({unpushed} unpushed commit(s))";
+    }
+
+    /// <summary>
+    /// Пуш после успешного билда, только если включён в настройках (PushOnRebuild, по умолчанию
+    /// выкл): git push уже закоммиченных коммитов. Инструмент НЕ коммитит — коммиты делает
+    /// владелец/агент явно. null — пуш выключен.
+    /// </summary>
+    private static string? MaybePush()
+    {
+        if (!Settings.AppSettings.Get().PushOnRebuild)
+        {
+            return null;
+        }
+        var root = SelfBuildPaths.WorkspaceRoot;
+        var (_, upstream) = RunGit(root, "rev-parse --verify -q @{u}");
+        if (string.IsNullOrEmpty(upstream))
+        {
+            return "push: no upstream — skipped";
+        }
+        var (code, output) = RunGit(root, "push", timeoutMs: 60000);
+        return code == 0
+            ? $"push: ok ({(output.Length > 0 ? output : "nothing to push")})"
+            : $"push: FAILED (exit {code}) — {output}";
+    }
+
+    private static (int ExitCode, string Output) RunGit(string workingDir, string args, int timeoutMs = 10000)
     {
         try
         {
-            var root = SelfBuildPaths.WorkspaceRoot;
-            var head = RunGit(root, "log -1 --oneline");
-            var remote = RunGit(root, "rev-parse @{u}");
-            var local = RunGit(root, "rev-parse HEAD");
-            var pushed = string.Equals(remote, local, StringComparison.OrdinalIgnoreCase);
-            return string.IsNullOrEmpty(head)
-                ? "not a git repo"
-                : $"{head} (pushed: {(pushed ? "yes" : "NO — internet may be down")})";
+            var startInfo = new System.Diagnostics.ProcessStartInfo("git", args)
+            {
+                WorkingDirectory = workingDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var process = System.Diagnostics.Process.Start(startInfo);
+            if (process is null) return (-1, "");
+            // git пишет результат в stderr (push: "To https://…") — читаем оба потока.
+            var stdout = process.StandardOutput.ReadToEnd().Trim();
+            var stderr = process.StandardError.ReadToEnd().Trim();
+            process.WaitForExit(timeoutMs);
+            var output = (stdout + (stderr.Length > 0 ? (stdout.Length > 0 ? " " : "") + stderr : "")).Trim();
+            return (process.ExitCode, output);
         }
         catch
         {
-            return "git unavailable";
+            return (-1, "");
         }
-    }
-
-    private static string RunGit(string workingDir, string args)
-    {
-        var startInfo = new System.Diagnostics.ProcessStartInfo("git", args)
-        {
-            WorkingDirectory = workingDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        using var process = System.Diagnostics.Process.Start(startInfo);
-        if (process is null) return "";
-        var output = process.StandardOutput.ReadToEnd().Trim();
-        process.WaitForExit(10000);
-        return output;
     }
 
     private static async Task<List<string>> CollectRoslynErrors(CancellationToken cancellationToken)

@@ -1,4 +1,4 @@
-﻿using QwenPlayground.Core.Probes;
+using QwenPlayground.Core.Probes;
 using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Settings;
 
@@ -38,6 +38,10 @@ public sealed class SanityCheckTool : AgentTool
 
         // 2. Ординальная проба на компаньон-модели (отдельная машина — не трогает наш KV-кеш).
         var settings = AppSettings.Get();
+        if (!settings.CompanionEnabled)
+        {
+            return "Самопроверка записана (logs/sanity.md). Проба не выполняется: компаньон-модель выключена (чекбокс в Настройках → Память → Модель для проб).";
+        }
         if (string.IsNullOrWhiteSpace(settings.CompanionEndpoint))
         {
             return "Самопроверка записана (logs/sanity.md). Проба недоступна: CompanionEndpoint не задан.";

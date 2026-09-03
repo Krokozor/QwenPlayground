@@ -1,12 +1,13 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
+using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.Core.Roslyn;
 
 [Tool("csharp_definition",
     "Go to definition: given a file, a 1-based line number and the identifier name on that line, " +
-    "find where the symbol is declared (kind, signature and file:line).")]
+    "find where the symbol is declared (kind, signature and file:line).", ToolGroup.CSharp)]
 public sealed class CSharpDefinitionTool : AgentTool
 {
     private static readonly RoslynService Service = RoslynService.Shared;

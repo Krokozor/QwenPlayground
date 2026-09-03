@@ -1,11 +1,12 @@
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
+using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.Core.Roslyn;
 
-[Tool("csharp_symbol", "Find C# symbol declarations by name in the QwenPlayground solution. Returns kind, signature and file:line.")]
+[Tool("csharp_symbol", "Find C# symbol declarations by name in the QwenPlayground solution. Returns kind, signature and file:line.", ToolGroup.CSharp)]
 public sealed class CSharpSymbolTool : AgentTool
 {
     private static readonly RoslynService Service = RoslynService.Shared;

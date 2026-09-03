@@ -27,6 +27,7 @@ public partial class MainViewModel : ObservableObject {
     private readonly ChatSessions _sessions = new();
     // Динамический системный промпт main-агента (identity+layers+trajectory), кэш по mtime.
     private readonly InjectedIdentity _identity = new();
+    private readonly ExternalToolsNote _externalTools = new();
     private readonly ChatLog _log = new();
     // Структурные изменения разговора (компакция/загрузка/откат) сами перестраивают вид.
     private void OnLogChanged() => RebuildMessageViews();
@@ -126,7 +127,6 @@ public partial class MainViewModel : ObservableObject {
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SendCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ClearCommand))]
     [NotifyCanExecuteChangedFor(nameof(RollbackCommand))]
     [NotifyCanExecuteChangedFor(nameof(RerollCommand))]
     [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
@@ -189,10 +189,26 @@ public partial class MainViewModel : ObservableObject {
         set => Set(S.SanityCheckInterval, value, (s, v) => s.SanityCheckInterval = v);
     }
 
+    /// <summary>Пуш на GitHub при самосборке (rebuild_self). По умолчанию выкл.</summary>
+    public bool PushOnRebuild {
+        get => S.PushOnRebuild;
+        set => Set(S.PushOnRebuild, value, (s, v) => s.PushOnRebuild = v);
+    }
+
     /// <summary>Компаньон-модель (логит-пробы, векторизация памяти) — отдельная машина.</summary>
     public string CompanionEndpoint {
         get => S.CompanionEndpoint;
         set => Set(S.CompanionEndpoint, value, (s, v) => s.CompanionEndpoint = v);
+    }
+    /// <summary>Использовать ли companion-модель для проб (тумблер рядом с адресом). Выкл — пробы не летят, память по тексту; адрес сохранён.</summary>
+    public bool CompanionEnabled {
+        get => S.CompanionEnabled;
+        set => Set(S.CompanionEnabled, value, (s, v) => s.CompanionEnabled = v);
+    }
+    /// <summary>Мастер-переключатель памяти агента (вручную). Выкл — реколл/state-блок/наг/flush и тулы memory_* выключены.</summary>
+    public bool MemoryEnabled {
+        get => S.MemoryEnabled;
+        set => Set(S.MemoryEnabled, value, (s, v) => s.MemoryEnabled = v);
     }
     public string CompactKeepRatio {
         get => S.CompactKeepRatio;
@@ -337,6 +353,13 @@ public partial class MainViewModel : ObservableObject {
     [ObservableProperty]
     private SessionInfo? _selectedSession;
 
+    /// <summary>
+    /// Кнопка «×» (удаление сессии) видна только для не-main сессий: main удалить нельзя,
+    /// поэтому нажимать на кнопку у main незачем.
+    /// </summary>
+    public bool CanDeleteSelectedSession =>
+        SelectedSession is not null && SelectedSession.Id != MainAgent.SessionId;
+
     public ObservableCollection<MessageViewModel> Messages { get; } = new();
     public ObservableCollection<SessionInfo> Sessions { get; } = new();
 
@@ -397,7 +420,8 @@ public partial class MainViewModel : ObservableObject {
         _toolRegistry,
         _serverProps,
         messages => _stateBlocks.Build(),
-        ct => MultimodalContext.BuildAsync(SessionDir(), Endpoint, _serverProps, ct));
+        ct => MultimodalContext.BuildAsync(SessionDir(), Endpoint, _serverProps, ct),
+        activeShelves: EffectiveShelves);
 
         _maintenance = new ContextMaintenance(
         _log,
@@ -413,7 +437,8 @@ public partial class MainViewModel : ObservableObject {
         new ContextMaintenance.Ui(
         status => StatusText = status,
         generating => IsGenerating = generating,
-        SaveCurrent));
+        SaveCurrent),
+        onCompacted: DeactivateUnusedShelves);
 
         // Интерактив инструментов (ask_user, подтверждение shell) — pull-модель: оконные
         // провайдеры живут в ChatInteraction, Core не знает про окна и FSM.
@@ -599,7 +624,7 @@ public partial class MainViewModel : ObservableObject {
     /// Ошибки глотаются — не критичный путь; следующее сердцебиение повторит попытку.
     /// </summary>
     private async Task FlushMemoryVectorsAsync() {
-        if (_memoryFlushInFlight || _chatState.IsBusy) 
+        if (!S.MemoryEnabled || _memoryFlushInFlight || _chatState.IsBusy) 
             return;
         
         if (DateTime.UtcNow - _lastMemoryFlushAt < MemoryFlushInterval) 
@@ -664,6 +689,7 @@ public partial class MainViewModel : ObservableObject {
     }
 
     partial void OnSelectedSessionChanged(SessionInfo? value) {
+        OnPropertyChanged(nameof(CanDeleteSelectedSession));
         if (value is null || value.Id == _sessions.CurrentId || IsGenerating) 
             return;
         
@@ -746,6 +772,14 @@ public partial class MainViewModel : ObservableObject {
             return;
         }
 
+        // Удаление необратимо (chat.json + artifacts сессии) — подтверждаем.
+        var confirm = new Views.ConfirmWindow($"Удалить сессию «{SelectedSession.Title}»?")
+        {
+            Owner = System.Windows.Application.Current.MainWindow
+        };
+        if (confirm.ShowDialog() != true)
+            return;
+
         if (_sessions.Delete(SelectedSession.Id)) {
             // Удалили текущую: ChatSessions уже переключился на свежую пустую.
             _log.Clear();
@@ -778,25 +812,137 @@ public partial class MainViewModel : ObservableObject {
     /// Единый с превью и ходом источник системного промпта: main-сессия — динамическая
     /// идентичность, специализированная — кусок-промпт из статичного хранилища профилей.
     /// </summary>
+    private string? _cachedSystemPrompt;
+    // Base-промпт (без индекса полок) — для детекта ЕСТЕСТВЕННОЙ смены промпта: именно она
+    // меняется при компакции/смене сессии/слоях. С её сменой батчим staged-деактивации.
+    private string? _cachedBasePrompt;
+
     private string? ResolveSystemPrompt() {
-        if (_sessions.CurrentId == MainAgent.SessionId) {
-            return _identity.GetFor(true);
+        var isMain = _sessions.CurrentId == MainAgent.SessionId;
+        string? basePrompt;
+        if (isMain)
+        {
+            basePrompt = _identity.GetFor(true);
         }
-        return ChatProfiles.Get().ResolvePrompt(_promptKey).RenderSystemPrompt();
+        else
+        {
+            // Не-main: профиль + слои L1/L2/L3 сессии (per-session) — дистиллированная история,
+            // инжектится как у main (медленная деградация контекста).
+            var profile = ChatProfiles.Get().ResolvePrompt(_promptKey).RenderSystemPrompt();
+            basePrompt = profile is null ? null : profile + SessionLayersBlock();
+        }
+        // Секция «внешние инструменты» (external/README.md) — всем интерактивным сессиям.
+        var note = _externalTools.Get();
+        basePrompt = basePrompt is null
+            ? (note is null ? null : note)
+            : (note is null ? basePrompt : basePrompt + "\n\n" + note);
+
+        // Staged-деактивации: снимаем помеченные группы ТОЛЬКО когда base-промпт и так меняется
+        // (компакция/смена сессии/слои) — деактивация батчится с неизбежным rebuild'ом, а не
+        // создаёт собственный. Пока base не менялась — pending-группы остаются в промпте.
+        var shelf = new ShelfState(SessionDir());
+        var pending = shelf.LoadPending();
+        if (pending.Count > 0 && !string.Equals(basePrompt, _cachedBasePrompt, StringComparison.Ordinal))
+        {
+            var removed = shelf.FlushPending().ToList();
+            if (removed.Count > 0)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[shelf-cache] staged-деактивация при смене промпта: {string.Join(", ", removed)}");
+            }
+        }
+        _cachedBasePrompt = basePrompt;
+
+        // Индекс полок: pending-группы рисуются как активные (их тулзы реально ещё в промпте).
+        var index = ToolGroupIndex.Render(EffectiveShelves(), _toolRegistry);
+
+        var final = basePrompt is null
+            ? (index.Length > 0 ? index : null)
+            : (index.Length > 0 ? basePrompt + "\n\n" + index : basePrompt);
+        // Трекер кешированного промпта: изменился → KV-кеш пересоберётся (диагностика).
+        if (!string.Equals(_cachedSystemPrompt, final, StringComparison.Ordinal))
+        {
+            _cachedSystemPrompt = final;
+            System.Diagnostics.Debug.WriteLine(
+                $"[shelf-cache] системный промпт изменился (KV-кеш rebuild), длина={final?.Length ?? 0}");
+        }
+        return final;
     }
 
     /// <summary>
-    /// Белый список инструментов куска-промпта; пусто — полный реестр. Неизвестные имена
-    /// в списке молча не находятся — это конфиг, а не ошибка хода.
+    /// Слои L1/L2/L3 текущей не-main сессии (per-session, sessions/<id>/layers.json) — дистиллированная
+    /// история. Пустые слои — пусто. Main слои уже несёт InjectedIdentity (не дублируем).
     /// </summary>
-    private IReadOnlyList<ToolDefinition>? RestrictedTools(IReadOnlyList<string> allowed)
+    private string SessionLayersBlock()
     {
+        var layers = new MemoryLayerStore(
+            Path.Combine(SelfBuildPaths.WorkspaceRoot, "sessions", _sessions.CurrentId)).Load();
+        return layers.IsEmpty ? string.Empty : "\n\n" + layers.ToPromptBlock();
+    }
+
+    /// <summary>
+    /// Тулзы для запроса: базовый набор (Core + активные полки) ∩ whitelist профиля (если задан).
+    /// То же множество даёт превью (PromptPipeline.AdvertisedTools) — превью и запрос совпадают.
+    /// </summary>
+    private IReadOnlyList<ToolDefinition> ShelfFilteredTools(IReadOnlyList<string> allowed)
+    {
+        var tools = new List<ToolDefinition>(_toolRegistry.DefinitionsByGroup(ToolGroup.Core));
+        foreach (var group in EffectiveShelves())
+        {
+            tools.AddRange(_toolRegistry.DefinitionsByGroup(group));
+        }
+        // Память выключена — memory_*-тулы не рекламируем (модель не может их вызвать).
+        tools = tools.Where(d => MemoryToolGate.ShouldAdvertise(d.Name)).ToList();
         if (allowed.Count == 0)
         {
-            return null;
+            return tools;
         }
         var allow = allowed.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return _toolRegistry.Definitions.Where(d => allow.Contains(d.Name)).ToList();
+        return tools.Where(d => allow.Contains(d.Name)).ToList();
+    }
+
+    /// <summary>
+    /// Полки, тулзы которых реально в промпте: активные + pending-деактивации. Pending-группы
+    /// ещё не сняты (ждут естественной смены промпта), их тулзы по-прежнему доступны — индекс
+    /// и реклама тулов должны совпадать, иначе модель увидит «active» без инструментов.
+    /// </summary>
+    private IReadOnlyList<ToolGroup> EffectiveShelves()
+    {
+        var shelf = new ShelfState(SessionDir());
+        var active = shelf.Load();
+        foreach (var g in shelf.LoadPending())
+        {
+            active.Add(g);
+        }
+        return active.OrderBy(g => g).ToList();
+    }
+
+    /// <summary>
+    /// Авто-выключение неиспользуемых полок после компакции: в оставшемся контексте ни одного
+    /// ToolCall из инструментов группы → снимаем. Бесплатно: компакция и так пересобирает
+    /// системный промпт, деактивация батчится с неизбежным rebuild'ом (не создаёт собственный).
+    /// </summary>
+    private void DeactivateUnusedShelves()
+    {
+        var shelf = new ShelfState(SessionDir());
+        var active = shelf.Load();
+        if (active.Count == 0)
+        {
+            return;
+        }
+        var unused = ShelfState.FindUnused(active, _log, _toolRegistry).ToList();
+        if (unused.Count == 0)
+        {
+            return;
+        }
+        foreach (var g in unused)
+        {
+            active.Remove(g);
+            shelf.UnmarkPending(g); // если была помечена — решение уже исполнено, пометка не нужна
+        }
+        shelf.Save(active);
+        System.Diagnostics.Debug.WriteLine(
+            $"[shelf-cache] авто-выключение после компакции: {string.Join(", ", unused)}");
     }
 
     /// <summary>Усилие размышления из профиля («XHigh»/«Medium»/«Low»); пустое/мусорное — из настроек.</summary>
@@ -914,8 +1060,11 @@ public partial class MainViewModel : ObservableObject {
     [RelayCommand(CanExecute = nameof(IsGenerating))]
     private void Cancel() => _cancellation?.Cancel();
 
-    [RelayCommand(CanExecute = nameof(CanInteract))]
-    private void Clear() {
+    /// <summary>
+    /// Очистка текущего разговора — программный доступ (Harness). UI-кнопка «Очистить»
+    /// убрана (2026-09-02): сценарий покрывает «откат» первого сообщения.
+    /// </summary>
+    public void Clear() {
         _log.Clear();
         StatusText = string.Empty;
         SaveCurrent();
@@ -1237,7 +1386,7 @@ public partial class MainViewModel : ObservableObject {
                 OnFactSaved = item => _memorySurfacer.SurfaceOwnWrite(item.Id, item.Content),
                 ContinueLastAssistant = continued is not null,
                 AllowToolExecution = toolsAllowed,
-                ToolDefinitions = toolsAllowed ? RestrictedTools(prompt.AllowedTools) : Array.Empty<ToolDefinition>(),
+                ToolDefinitions = toolsAllowed ? ShelfFilteredTools(prompt.AllowedTools) : Array.Empty<ToolDefinition>(),
                 Generation = S.ToGenerationOptions(sampler),
                 MaxIterations = S.ResolveMaxIterations(sampler),
                 // Nag самопроверки живёт ВНУТРИ state-блока — без блока nag'ать некуда.

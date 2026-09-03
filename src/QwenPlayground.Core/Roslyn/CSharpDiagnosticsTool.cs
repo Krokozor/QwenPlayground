@@ -1,11 +1,12 @@
 using System.Text;
 using Microsoft.CodeAnalysis;
+using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.Core.Roslyn;
 
 [Tool("csharp_diagnostics",
-    "Get Roslyn compilation diagnostics (errors/warnings) for the QwenPlayground solution without building it.")]
+    "Get Roslyn compilation diagnostics (errors/warnings) for the QwenPlayground solution without building it.", ToolGroup.CSharp)]
 public sealed class CSharpDiagnosticsTool : AgentTool
 {
     private static readonly RoslynService Service = RoslynService.Shared;

@@ -1,12 +1,13 @@
 {
   "repo": "https://github.com/Krokozor/QwenPlayground.git",
   "branch": "main",
+  "externalDir": "external",
   "tools": {
     "ffmpeg": {
       "version": "7.1",
       "downloadUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
-      "extractTo": "ffmpeg",
-      "binPath": "ffmpeg/bin/ffmpeg.exe"
+      "extractTo": "external/ffmpeg",
+      "binPath": "external/ffmpeg/bin/ffmpeg.exe"
     }
   }
 }

@@ -1,5 +1,6 @@
 using System.Text;
 using QwenPlayground.Core.Memory;
+using QwenPlayground.Core.Settings;
 
 namespace QwenPlayground.Core.Tools.Builtins;
 
@@ -12,6 +13,10 @@ public sealed class MemoryGetTool : AgentTool
 
     public override Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
+        if (!AppSettings.Get().MemoryEnabled)
+        {
+            return Task.FromResult(MemoryToolGate.DisabledMessage);
+        }
         var id = Id.Trim();
         if (id.Length == 0)
         {

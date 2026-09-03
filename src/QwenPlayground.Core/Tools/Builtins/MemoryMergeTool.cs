@@ -1,4 +1,4 @@
-﻿using QwenPlayground.Core.Memory;
+using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.Settings;
 
 namespace QwenPlayground.Core.Tools.Builtins;
@@ -18,6 +18,10 @@ public sealed class MemoryMergeTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
+        if (!AppSettings.Get().MemoryEnabled)
+        {
+            return MemoryToolGate.DisabledMessage;
+        }
         var idA = IdA.Trim();
         var idB = IdB.Trim();
         if (idA.Length == 0 || idB.Length == 0 || idA == idB)

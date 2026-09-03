@@ -304,4 +304,31 @@
         </Style.Triggers>
     </Style>
 
+    <!-- ============ Тёмный ToolTip (дефолтный — светлый, системный) ============ -->
+    <!-- Рендерится в отдельном окне: implicit-стиль находится через Application.Resources
+         (тема мерджится там), так что стилизует ВСЕ тултипы приложения сразу.
+         Текст — ЯВНЫЙ TextBlock, привязанный к Content: scoped-implicit-стиль в
+         Border.Resources не цепляет авто-TextBlock из строкового контента ContentPresenter
+         (текст уходил одной строкой и клипался краем Border). Явный TextBlock с
+         TextWrapping=Wrap + MaxWidth гарантирует перенос. Все тултипы приложения — строки. -->
+    <Style TargetType="ToolTip">
+        <Setter Property="Background" Value="{StaticResource PanelBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource FgBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+        <Setter Property="Padding" Value="8,5" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToolTip">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="1" CornerRadius="3" Padding="{TemplateBinding Padding}"
+                            MaxWidth="420" Margin="4">
+                        <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}"
+                                   TextWrapping="Wrap" MaxWidth="400"
+                                   Foreground="{StaticResource FgBrush}" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
 </ResourceDictionary>

@@ -10,6 +10,9 @@ public static class SelfBuildPaths
 {
     public const string SolutionFileName = "QwenPlayground.slnx";
 
+    /// <summary>Имя каталога внешних инструментов (ffmpeg и т.п.), управляемых лаунчером.</summary>
+    public const string ExternalDirName = "external";
+
     private static readonly string? _workspaceRootOverride;
 
     static SelfBuildPaths()
@@ -25,6 +28,23 @@ public static class SelfBuildPaths
         _workspaceRootOverride
         ?? LocateFromBaseDirectory()
         ?? Environment.CurrentDirectory;
+
+    /// <summary>
+    /// Каталог внешних инструментов (ffmpeg и т.п.). Лаунчер ставит
+    /// QWENPLAYGROUND_EXTERNAL_DIR при запуске; фолбэк — &lt;workspaceRoot&gt;/external.
+    /// </summary>
+    public static string ExternalDir
+    {
+        get
+        {
+            var fromEnv = Environment.GetEnvironmentVariable("QWENPLAYGROUND_EXTERNAL_DIR");
+            if (!string.IsNullOrWhiteSpace(fromEnv))
+            {
+                return Path.GetFullPath(fromEnv);
+            }
+            return Path.Combine(WorkspaceRoot, ExternalDirName);
+        }
+    }
 
     public static string RunRoot => Path.Combine(WorkspaceRoot, "run");
 

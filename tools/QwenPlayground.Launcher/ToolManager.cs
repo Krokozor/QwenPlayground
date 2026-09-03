@@ -68,7 +68,8 @@ public static class ToolManager
     public static async Task<(bool Success, string Message)> InstallAsync(ToolConfig tool, IProgress<string>? progress = null)
     {
         var extractDir = Path.Combine(SelfBuildPaths.WorkspaceRoot, tool.ExtractTo.Replace('/', Path.DirectorySeparatorChar));
-        var tempZip = Path.Combine(Path.GetTempPath(), $"qpw_{tool.ExtractTo}_{DateTime.Now:HHmmss}.zip");
+        var safeName = tool.ExtractTo.Replace('/', '_').Replace('\\', '_');
+        var tempZip = Path.Combine(Path.GetTempPath(), $"qpw_{safeName}_{DateTime.Now:HHmmss}.zip");
 
         try
         {

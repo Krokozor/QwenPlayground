@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -13,20 +13,19 @@ using QwenPlayground.Core.Templates;
 namespace QwenPlayground.App.ViewModels;
 
 /// <summary>
-/// Вкладка «Суммаризация»: полное стекло в то, как сжимается контекст.
-/// 1) Резюме любой сессии (блок «[Сжатое резюме ранней части диалога]» в system-сообщении);
-/// 2) слои L1/L2/L3 main-агента (sessions/main/layers.json);
-/// 3) промпты суммаризации — вместо констант в коде они лежат в config/prompts.json
-///    и правятся прямо здесь (действуют на следующий запуск компакции — и на ре-прогоны ниже);
-/// 4) перезапуски: ре-генерация резюме сессии и полный прогон конвейера L1/L2/L3 с показом
-///    каждого этапа. «Применить» пишет результат на диск (с бэкапом), ничего не меняя само.
+/// Вкладка «Суммаризация»: полное стекло в то, как сжимается контекст. Session-centric: все
+/// секции относятся к ВЫБРАННОЙ сессии (main и не-main равноправны), объёмные поля — в Expander.
+/// 1) Слои L1/L2/L3 выбранной сессии (sessions/&lt;id&gt;/layers.json) — главный вид;
+/// 2) Плоское резюме (legacy, блок «[Сжатое резюме...]» в system-сообщении) — для не-main;
+/// 3) Промпты суммаризации (config/prompts.json) — правятся здесь, действуют на следующий прогон;
+/// 4) Ре-прогоны: ре-генерация резюме и прогон конвейера L1/L2/L3 с показом каждого этапа;
+///    «Записать» пишет результат на диск (с бэкапом), ничего не меняя само.
 /// </summary>
 public partial class SummarizationViewModel : ObservableObject
 {
     private static readonly string SessionsRoot = ChatSessions.Root; // единый корень с ChatSessions
 
     private readonly Func<string, string?, Action<string>?, CancellationToken, Task<string>> _complete;
-    private readonly MemoryLayerStore _layerStore = new();
     private readonly SessionStore _sessionStore = new(SessionsRoot);
 
     // ── Сессии ───────────────────────────────────────────────────────────────────────
@@ -39,18 +38,6 @@ public partial class SummarizationViewModel : ObservableObject
 
     [ObservableProperty]
     private string _sessionNote = "Выберите сессию.";
-
-    [ObservableProperty]
-    private string _sessionStatus = string.Empty;
-
-    [ObservableProperty]
-    private string _summaryText = string.Empty;
-
-    [ObservableProperty]
-    private string _sessionPromptPreview = string.Empty;
-
-    [ObservableProperty]
-    private int _segmentSummaryCount;
 
     // ── Слои L1/L2/L3 ────────────────────────────────────────────────────────────────
 
@@ -95,13 +82,7 @@ public partial class SummarizationViewModel : ObservableObject
     private string _runStatus = string.Empty;
 
     [ObservableProperty]
-    private string? _proposedSummary;
-
-    [ObservableProperty]
     private LayerMemory? _proposedLayers;
-
-    [ObservableProperty]
-    private bool _hasSessionProposal;
 
     [ObservableProperty]
     private bool _hasLayerProposal;
@@ -117,6 +98,7 @@ public partial class SummarizationViewModel : ObservableObject
 
     partial void OnSelectedSessionChanged(SessionItem? value)
     {
+        ReloadLayers(); // слои следуют за выбранной сессией (per-session)
         if (RefreshSessionView())
         {
             RefreshStepPreviews();
@@ -153,124 +135,30 @@ public partial class SummarizationViewModel : ObservableObject
 
     private bool RefreshSessionView()
     {
-        HasSessionProposal = false;
-        ProposedSummary = null;
         if (SelectedSession is null)
         {
             SessionNote = "Выберите сессию.";
-            SummaryText = string.Empty;
-            SessionPromptPreview = string.Empty;
-            SegmentSummaryCount = 0;
             return false;
         }
-
-        var messages = LoadConversation(SelectedSession.Id);
-        if (SelectedSession.IsMain)
-        {
-            SessionNote =
-                "main-агент не хранит резюме в истории: его долгосрочная память — слои L1/L2/L3 «Слои памяти».";
-            SummaryText = string.Empty;
-        }
-        else
-        {
-            SummaryText = ExtractSummary(messages) ?? string.Empty;
-            SessionNote = SummaryText.Length == 0
-                ? "В этой сессии резюме ещё нет (появится после первой компакции)."
-                : "Резюме из system-сообщения сессии. Сохранение вернёт его на место.";
-        }
+        SessionNote = "Слои L1/L2/L3 выбранной сессии (sessions/<id>/layers.json).";
         return true;
     }
 
-    [RelayCommand]
-    private void RefreshSessionPrompt()
-    {
-        RefreshSessionPromptFor(SelectedSession);
-    }
-
-    private void RefreshSessionPromptFor(SessionItem? session)
-    {
-        if (session is null || session.IsMain)
-        {
-            SessionPromptPreview = string.Empty;
-            SegmentSummaryCount = 0;
-            return;
-        }
-        var messages = LoadConversation(session.Id);
-        RefreshSessionPromptFor(messages);
-    }
-
-    private void RefreshSessionPromptFor(IReadOnlyList<ChatMessage> messages)
-    {
-        var boundary = ContextCompactor.FindCompactionBoundary(messages, ContextCompactor.DefaultKeepRatio);
-        var (system, user) = ContextCompactor.BuildSummarizationRequest(messages, boundary);
-        SessionPromptPreview = StructuredCompletion.Render(user, system);
-        SegmentSummaryCount = Math.Max(0, boundary);
-    }
-
-    /// <summary>Сохранение отредактированного резюме в выбранную сессию (с бэкапом).</summary>
-    [RelayCommand]
-    private void SaveSummary()
-    {
-        if (SelectedSession is null || SelectedSession.IsMain)
-        {
-            SessionsStatus("Резюме main-агента — это слои; см. «Слои памяти».");
-            return;
-        }
-        var data = _sessionStore.Load(SelectedSession.Id);
-        if (data is null)
-        {
-            SessionsStatus("Сессия не найдена на диске.");
-            return;
-        }
-        var summary = SummaryText?.Trim() ?? string.Empty;
-        if (summary.Length == 0)
-        {
-            SessionsStatus("Резюме пустое — сохранение отменено.");
-            return;
-        }
-        try
-        {
-            new ContextBackupStore(SessionsRoot).Save(SelectedSession.Id);
-        }
-        catch (Exception ex)
-        {
-            SessionsStatus($"бэкап не удался, сохранить нельзя: {ex.Message}");
-            return;
-        }
-        var messages = data.Messages.ToList();
-        ApplySummaryToMessages(messages, summary);
-        _sessionStore.Save(data.Id, messages, data.Title, data.NextMessageId);
-        SessionsStatus($"Резюме сессии «{SelectedSession.Title}» сохранено.");
-    }
-
-    private void ApplySummaryToMessages(List<ChatMessage> messages, string summary)
-    {
-        var marker = ContextCompactor.SummaryMarker;
-        if (messages.Count > 0 && messages[0].Role == ChatRole.System)
-        {
-            var content = messages[0].Content;
-            var markerIndex = content.IndexOf(marker, StringComparison.Ordinal);
-            var baseContent = markerIndex >= 0 ? content[..markerIndex].TrimEnd() : content.TrimEnd();
-            messages[0].Content = (baseContent.Length > 0 ? baseContent + "\n\n" : string.Empty) + marker + "\n" + summary;
-        }
-        else
-        {
-            messages.Insert(0, ChatMessage.System(marker + "\n" + summary));
-        }
-    }
-
-    private void SessionsStatus(string text) => SessionStatus = text;
-
     // ── Слои L1/L2/L3 ────────────────────────────────────────────────────────────────
+
+    /// <summary>Store слоёв выбранной сессии (per-session, sessions/<id>/layers.json).</summary>
+    private MemoryLayerStore StoreForSelected() =>
+        new(Path.Combine(SessionsRoot, SelectedSession?.Id ?? MainAgent.SessionId));
 
     private void ReloadLayers()
     {
-        var layers = _layerStore.Load();
+        var store = StoreForSelected();
+        var layers = store.Load();
         Layer1 = layers.L1;
         Layer2 = layers.L2;
         Layer3 = layers.L3;
         UpdateLayersPromptBlock();
-        LayersStatus = "загружено из " + _layerStore.FilePath;
+        LayersStatus = "загружено из " + store.FilePath;
     }
 
     [RelayCommand]
@@ -283,18 +171,20 @@ public partial class SummarizationViewModel : ObservableObject
     [RelayCommand]
     private void SaveLayers()
     {
+        var sessionId = SelectedSession?.Id ?? MainAgent.SessionId;
         try
         {
-            new ContextBackupStore(SessionsRoot).Save(MainAgent.SessionId);
+            new ContextBackupStore(SessionsRoot).Save(sessionId);
         }
         catch (Exception ex)
         {
             LayersStatus = $"бэкап не удался, сохранить нельзя: {ex.Message}";
             return;
         }
-        _layerStore.Save(new LayerMemory { L1 = Layer1.Trim(), L2 = Layer2.Trim(), L3 = Layer3.Trim() });
+        var store = StoreForSelected();
+        store.Save(new LayerMemory { L1 = Layer1.Trim(), L2 = Layer2.Trim(), L3 = Layer3.Trim() });
         UpdateLayersPromptBlock();
-        LayersStatus = $"сохранено в {_layerStore.FilePath}";
+        LayersStatus = $"сохранено в {store.FilePath}";
         RefreshStepPreviews();
     }
 
@@ -311,8 +201,6 @@ public partial class SummarizationViewModel : ObservableObject
         var templates = PromptCatalog.Load();
         PromptSteps = new ObservableCollection<PromptStepItem>
         {
-            NewStep("SummarizationSystem", "Резюме сессии: system", PromptCatalog.Defaults.SummarizationSystem, templates.SummarizationSystem),
-            NewStep("SummarizationUser", "Резюме сессии: user", PromptCatalog.Defaults.SummarizationUser, templates.SummarizationUser),
             NewStep("Merge", "Слияние L1+L2", PromptCatalog.Defaults.Merge, templates.Merge),
             NewStep("MergeValidation", "Сверка слияния L1+L2", PromptCatalog.Defaults.MergeValidation, templates.MergeValidation),
             NewStep("SegmentSummary", "Сегмент → L3", PromptCatalog.Defaults.SegmentSummary, templates.SegmentSummary),
@@ -344,11 +232,6 @@ public partial class SummarizationViewModel : ObservableObject
 
         switch (SelectedStep.Key)
         {
-            case "SummarizationSystem":
-            case "SummarizationUser":
-                var (system, user) = ContextCompactor.BuildSummarizationRequest(messages, messages.Count);
-                StepRenderedPrompt = StructuredCompletion.Render(user, system);
-                break;
             case "Merge":
                 StepRenderedPrompt = StructuredCompletion.Render(MemoryLayerPipeline.BuildMergePrompt(layers.L1, layers.L2));
                 break;
@@ -407,8 +290,6 @@ public partial class SummarizationViewModel : ObservableObject
     {
         switch (step.Key)
         {
-            case "SummarizationSystem": templates.SummarizationSystem = step.Template; break;
-            case "SummarizationUser": templates.SummarizationUser = step.Template; break;
             case "Merge": templates.Merge = step.Template; break;
             case "MergeValidation": templates.MergeValidation = step.Template; break;
             case "SegmentSummary": templates.SegmentSummary = step.Template; break;
@@ -420,56 +301,6 @@ public partial class SummarizationViewModel : ObservableObject
 
         // ── Ре-прогоны ───────────────────────────────────────────────────────────────────
 
-    /// <summary>Ре-генерация резюме выбранной сессии (по текущим шаблонам промптов). Ничего не сохраняет само.</summary>
-    [RelayCommand]
-    private async Task RerunSummaryAsync()
-    {
-        var session = SelectedSession;
-        if (session is null || session.IsMain)
-        {
-            RunStatus = "Резюме перегенерировать можно только для обычной сессии (у main-агента — слои).";
-            return;
-        }
-        var messages = LoadConversation(session.Id);
-        var boundary = ContextCompactor.FindCompactionBoundary(messages, ContextCompactor.DefaultKeepRatio);
-        if (boundary == 0)
-        {
-            RunStatus = "В сессии нечего сжимать — разговор слишком короткий.";
-            return;
-        }
-
-        IsRunning = true;
-        _runBuffer.Clear();
-        _runThrottle.Reset();
-        RunOutput = string.Empty;
-        HasSessionProposal = false;
-        ProposedSummary = null;
-        RunStatus = $"генерация резюме ({boundary} сообщений)...";
-        try
-        {
-            var templates = PromptCatalog.Load();
-            var (system, user) = ContextCompactor.BuildSummarizationRequest(messages, boundary);
-            var result = await _complete(user, templates.SummarizationSystem, AppendRunToken, CancellationToken.None);
-            if (string.IsNullOrWhiteSpace(result))
-            {
-                RunStatus = "Модель вернула пустой результат.";
-                return;
-            }
-            ProposedSummary = result;
-            HasSessionProposal = true;
-            RunStatus = "Резюме сгенерировано. Проверьте и нажмите «Записать в сессию» (будет бэкап).";
-        }
-        catch (Exception ex)
-        {
-            RunStatus = "Ошибка: " + ex.Message;
-        }
-        finally
-        {
-            FlushRunOutput();
-            IsRunning = false;
-        }
-    }
-
     /// <summary>Полный сухой-прогон конвейера L1/L2/L3 на выбранной сессии. Результат — в ProposedLayers.</summary>
     [RelayCommand]
     private async Task RerunPipelineAsync()
@@ -477,7 +308,7 @@ public partial class SummarizationViewModel : ObservableObject
         var messages = SelectedSession is { } session && !session.IsMain
             ? LoadConversation(session.Id)
             : new List<ChatMessage>();
-        var layers = _layerStore.Load();
+        var layers = StoreForSelected().Load();
         var transcript = ContextCompactor.BuildTranscript(messages, messages.Count);
 
         IsRunning = true;
@@ -541,21 +372,8 @@ public partial class SummarizationViewModel : ObservableObject
         _runBuffer.Clear();
         _runThrottle.Reset();
         RunOutput = string.Empty;
-        HasSessionProposal = false;
         HasLayerProposal = false;
-        ProposedSummary = null;
         ProposedLayers = null;
-    }
-
-    [RelayCommand]
-    private void ApplyProposedSummary()
-    {
-        if (SelectedSession is null || SelectedSession.IsMain || ProposedSummary is null)
-        {
-            return;
-        }
-        SummaryText = ProposedSummary;
-        SaveSummary();
     }
 
     [RelayCommand]
@@ -567,17 +385,18 @@ public partial class SummarizationViewModel : ObservableObject
         }
         try
         {
-            new ContextBackupStore(SessionsRoot).Save(MainAgent.SessionId);
+            new ContextBackupStore(SessionsRoot).Save(SelectedSession?.Id ?? MainAgent.SessionId);
         }
         catch (Exception ex)
         {
             LayersStatus = $"бэкап не удался, сохранить нельзя: {ex.Message}";
             return;
         }
-        _layerStore.Save(ProposedLayers);
+        var store = StoreForSelected();
+        store.Save(ProposedLayers);
         ReloadLayers();
         HasLayerProposal = false;
-        LayersStatus = $"слои L1/L2/L3 перезаписаны в {_layerStore.FilePath}";
+        LayersStatus = $"слои L1/L2/L3 перезаписаны в {store.FilePath}";
         RefreshStepPreviews();
     }
 
@@ -589,17 +408,6 @@ public partial class SummarizationViewModel : ObservableObject
         return data?.Messages.ToList() ?? new List<ChatMessage>();
     }
 
-    private static string? ExtractSummary(IReadOnlyList<ChatMessage> messages)
-    {
-        if (messages.Count == 0 || messages[0].Role != ChatRole.System)
-        {
-            return null;
-        }
-        var markerIndex = messages[0].Content.IndexOf(ContextCompactor.SummaryMarker, StringComparison.Ordinal);
-        return markerIndex >= 0
-            ? messages[0].Content[(markerIndex + ContextCompactor.SummaryMarker.Length)..].Trim()
-            : null;
-    }
 }
 
 /// <summary>Сессия для списка: id, заголовок, признак main-агента (слои вместо резюме).</summary>

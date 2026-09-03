@@ -87,6 +87,65 @@ public sealed class ChatLogTests
     }
 
     [Fact]
+    public void TrimCompactedPrefix_KeepsSystemAndTail_RemovesMiddle()
+    {
+        var log = new ChatLog();
+        log.Add(new ChatMessage { Role = ChatRole.System, Content = "sys" });
+        for (var i = 0; i < 6; i++)
+        {
+            log.Add(User($"m{i}")); // ids 1..6
+        }
+        var changed = 0;
+        log.Changed += () => changed++;
+
+        // Граница = 4: хвост — m3, m4, m5 (индексы 4..6). Удаляем m0..m2 (индексы 1..3).
+        log.TrimCompactedPrefix(4);
+
+        Assert.Equal(4, log.Count);
+        Assert.Equal(1, changed);
+        Assert.Equal(ChatRole.System, log[0].Role);
+        Assert.Equal("m3", log[1].Content);
+        Assert.Equal("m4", log[2].Content);
+        Assert.Equal("m5", log[^1].Content);
+        // ID хвоста сохранились; новые сообщения получают id выше удалённых.
+        log.Add(User("новое"));
+        Assert.Equal(7, log[^1].Id);
+    }
+
+    [Fact]
+    public void TrimCompactedPrefix_NoSystem_KeepsTailOnly()
+    {
+        var log = new ChatLog();
+        for (var i = 0; i < 5; i++)
+        {
+            log.Add(User($"m{i}")); // ids 1..5
+        }
+
+        log.TrimCompactedPrefix(3);
+
+        Assert.Equal(2, log.Count);
+        Assert.Equal("m3", log[0].Content);
+        Assert.Equal("m4", log[^1].Content);
+    }
+
+    [Fact]
+    public void TrimCompactedPrefix_InvalidBoundary_IsNoOp()
+    {
+        var log = new ChatLog();
+        log.Add(new ChatMessage { Role = ChatRole.System, Content = "sys" });
+        log.Add(User("m0"));
+        var fired = 0;
+        log.Changed += () => fired++;
+
+        log.TrimCompactedPrefix(0);  // <= systemEnd
+        log.TrimCompactedPrefix(1);  // == systemEnd
+        log.TrimCompactedPrefix(99); // >= count
+
+        Assert.Equal(2, log.Count);
+        Assert.Equal(0, fired);
+    }
+
+    [Fact]
     public void RemoveFrom_RollsBackTailFromIndexInclusive()
     {
         var log = new ChatLog();
