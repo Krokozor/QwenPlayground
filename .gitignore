@@ -28,6 +28,10 @@ ffmpeg/
 # Траектория main-агента: персонализирована владельцем, приложение создаёт её само
 # из нейтрального шаблона (TrajectoryStore.DefaultContent) при первом старте.
 /trajectory.md
+
+# Идентичность main-агента: принадлежит юзеру (его среда, модели, конвенции).
+# Приложение создаёт нейтральную заглушку (MainAgent.DefaultIdentity) при первом старте.
+/main-agent.md
 /memories/
 /memory_research/
 /backups/
