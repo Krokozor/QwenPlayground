@@ -3,6 +3,10 @@
 # (значения параметров tool_call не обрезаются).
 * text=auto eol=lf
 
+# Исключение: bat/cmd обязаны быть CRLF — парсер cmd не работает с LF-переносами
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
 # Бинарники — как есть
 *.png binary
 *.jpg binary
