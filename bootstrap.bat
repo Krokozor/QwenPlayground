@@ -9,7 +9,7 @@ REM ---------- 1. Environment ----------
 where dotnet >nul 2>nul
 if errorlevel 1 (
     echo [ERROR] dotnet SDK not found in PATH.
-    echo Install .NET 10 SDK (10.0.400+): https://dotnet.microsoft.com/download
+    echo Install .NET 10 SDK 10.0.400 or newer: https://dotnet.microsoft.com/download
     pause
     exit /b 1
 )
@@ -17,7 +17,7 @@ for /f "delims=" %%v in ('dotnet --version') do set "DOTNET_VER=%%v"
 echo dotnet SDK: %DOTNET_VER%
 echo %DOTNET_VER% | findstr /r "^10\." >nul
 if errorlevel 1 (
-    echo [ERROR] .NET 10 SDK (10.0.400+) is required, found: %DOTNET_VER%
+    echo [ERROR] .NET 10 SDK 10.0.400 or newer is required, found: %DOTNET_VER%
     pause
     exit /b 1
 )
