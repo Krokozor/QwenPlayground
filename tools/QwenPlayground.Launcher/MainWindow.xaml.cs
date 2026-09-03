@@ -19,6 +19,36 @@ public partial class MainWindow : Window
         BuildEnvPanel();
         LoadSettingsTab();
         _ = AutoSyncCheckAsync();
+        _ = FillRepoFromOriginAsync();
+    }
+
+    /// <summary>
+    /// Если в конфиге репозиторий не задан — показываем origin текущего клона
+    /// (форк видит свой remote, а не URL владельца). Только отображение: в конфиг
+    /// значение пишется при явном сохранении настроек.
+    /// </summary>
+    private async Task FillRepoFromOriginAsync()
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_config.Repo))
+            {
+                return;
+            }
+            if (!GitService.IsGitRepo(SelfBuildPaths.WorkspaceRoot))
+            {
+                return;
+            }
+            var url = await GitService.GetRemoteUrlAsync();
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                Dispatcher.Invoke(() => RepoUrlBox.Text = url);
+            }
+        }
+        catch
+        {
+            // Отображение — best-effort.
+        }
     }
 
     // ===== Статус =====

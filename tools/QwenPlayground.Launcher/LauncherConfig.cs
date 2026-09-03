@@ -14,8 +14,11 @@ public sealed class LauncherConfig
     /// <summary>Корень проекта (где .slnx). Если не задан — вычисляется из расположения лаунчера.</summary>
     public string? WorkspaceRoot { get; set; }
 
-    /// <summary>URL git-репозитория.</summary>
-    public string Repo { get; set; } = "https://github.com/Krokozor/QwenPlayground.git";
+    /// <summary>
+    /// URL git-репозитория. Пусто — лаунчер подтягивает из `git remote get-url origin`
+    /// (важно для форков: каждый форк видит свой origin, а не URL владельца).
+    /// </summary>
+    public string Repo { get; set; } = string.Empty;
 
     /// <summary>Ветка для синхронизации.</summary>
     public string Branch { get; set; } = "main";
@@ -97,7 +100,7 @@ public sealed class LauncherConfig
     {
         var config = new LauncherConfig
         {
-            Repo = "https://github.com/Krokozor/QwenPlayground.git",
+            // Repo намеренно пуст: подтягивается из origin (форки видят свой remote).
             Branch = "main",
             Tools = new Dictionary<string, ToolConfig>
             {
