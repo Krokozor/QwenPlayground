@@ -63,26 +63,26 @@ cd QwenPlayground
 
 `Endpoint` — адрес llama.cpp сервера (OpenAI-compatible).
 
-### 3. Собрать
+### 3. Bootstrap (одноразово)
 
-```bash
-dotnet build QwenPlayground.slnx -c Release
-```
+Запустите `bootstrap.bat` в корне проекта. Он:
+
+- проверяет окружение (.NET 10 SDK, git)
+- собирает лаунчер и watchdog в `launcher/`
+- собирает первую версию приложения в `run/first` и активирует её (`run/current.txt`)
+
+Повторный запуск безопасен: активная версия не затрагивается, пересобирается только лаунчер.
 
 ### 4. Запустить
 
-Через лаунчер:
+Двойной клик по `launcher/QwenPlayground.Launcher.exe`. В лаунчере:
 
-```bash
-dotnet build tools/QwenPlayground.Launcher/QwenPlayground.Launcher.csproj -c Release -o launcher
-launcher/QwenPlayground.Launcher.exe
-```
+- **Запустить** — старт активной версии приложения
+- **Пересобрать** — сборка + тест-гейт + деплой новой версии в `run/<id>`
+- **Pull** — git pull из GitHub
+- **Скачать** (ffmpeg) — опционально, для мультимодальных задач
 
-Или напрямую:
-
-```bash
-dotnet run --project src/QwenPlayground.App -c Release
-```
+После bootstrap эстафета у лаунчера: все последующие сборки/обновления делаются из его GUI.
 
 ## Лаунчер
 
