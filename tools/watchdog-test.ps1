@@ -1,6 +1,6 @@
 # Тест watchdog'а на подставном процессе: смерть без маркера + чистый выход.
 $ErrorActionPreference = "Stop"
-$root = "V:\QwenPlayground"
+$root = Split-Path -Parent $PSScriptRoot  # скрипт лежит в tools/, корень — родитель
 $wdExe = Join-Path $root "launcher\QwenPlayground.Watchdog.exe"
 $testLogs = Join-Path $root "run\watchdog-test"
 if (Test-Path $testLogs) { Remove-Item $testLogs -Recurse -Force }
