@@ -198,7 +198,7 @@ internal static class Scenarios
         var memories = new[]
         {
             "The owner prefers the GUI in WPF with CommunityToolkit.Mvvm and MVVM conventions.",
-            "The companion model runs llama.cpp on RX570 (Vulkan) with Gemma4-E4B at http://192.168.0.109:8001.",
+            "The companion model runs llama.cpp on a separate GPU machine, so logit probes do not touch the main model's KV-cache.",
             "Associative memory recall in QwenPlayground uses semantic layers (categories A-Z + emoji) and normalized overlap scoring, no embeddings."
         };
 
