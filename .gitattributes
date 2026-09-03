@@ -1,0 +1,14 @@
+# Единообразие переносов строк: LF в репозитории и при checkout на всех платформах.
+# Важно: CRLF в C# raw string literals ломает QwenOutputParserTests
+# (значения параметров tool_call не обрезаются).
+* text=auto eol=lf
+
+# Бинарники — как есть
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.rar binary
+*.zip binary
+*.exe binary
+*.dll binary
