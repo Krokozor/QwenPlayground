@@ -194,6 +194,10 @@ public partial class MainViewModel : ObservableObject {
         get => S.PushOnRebuild;
         set => Set(S.PushOnRebuild, value, (s, v) => s.PushOnRebuild = v);
     }
+    public string PushRepo {
+        get => S.PushRepo;
+        set => Set(S.PushRepo, value, (s, v) => s.PushRepo = v);
+    }
 
     /// <summary>Компаньон-модель (логит-пробы, векторизация памяти) — отдельная машина.</summary>
     public string CompanionEndpoint {

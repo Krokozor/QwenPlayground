@@ -86,6 +86,11 @@ public sealed class AppSettings
     /// успешного билда. По умолчанию ВЫКЛ — коммиты и пуши делает владелец/агент явно.
     /// </summary>
     public bool PushOnRebuild { get; set; } = false;
+    /// <summary>
+    /// Куда пушить при PushOnRebuild (URL или remote). Пусто — пуш в текущий upstream (origin).
+    /// Для форков: укажите URL своего форка — rebuild_self будет пушить туда, не трогая origin.
+    /// </summary>
+    public string PushRepo { get; set; } = string.Empty;
     /// <summary>Последняя открытая сессия — восстанавливается при старте (иначе main-агент).</summary>
     public string? LastSessionId { get; set; }
 

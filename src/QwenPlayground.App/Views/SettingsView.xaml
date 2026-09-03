@@ -181,12 +181,18 @@
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="пуш в GitHub"
                                ToolTip="После успешного rebuild — git push уже закоммиченных коммитов. По умолчанию выкл: коммиты и пуши делает владелец/агент явно." />
                     <CheckBox Grid.Row="0" Grid.Column="1" IsChecked="{Binding PushOnRebuild}" Margin="0,3"
                               VerticalAlignment="Center"
                               ToolTip="После успешного rebuild — git push уже закоммиченных коммитов. По умолчанию выкл: коммиты и пуши делает владелец/агент явно." />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="куда пушить"
+                               ToolTip="URL или имя remote, в который пушит rebuild_self (для форков: URL своего форка). Пусто — текущий upstream (origin). Действует только при включённом «пуш в GitHub»." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,3" VerticalAlignment="Center"
+                             Text="{Binding PushRepo, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="URL или имя remote, в который пушит rebuild_self (для форков: URL своего форка). Пусто — текущий upstream (origin). Действует только при включённом «пуш в GitHub»." />
                 </Grid>
             </Expander>
 

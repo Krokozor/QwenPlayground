@@ -65,20 +65,34 @@ public sealed class RebuildSelfTool : AgentTool
     /// Пуш после успешного билда, только если включён в настройках (PushOnRebuild, по умолчанию
     /// выкл): git push уже закоммиченных коммитов. Инструмент НЕ коммитит — коммиты делает
     /// владелец/агент явно. null — пуш выключен.
+    /// Направление: PushRepo (URL/remote, например форк) — если задан; иначе текущий upstream.
     /// </summary>
     private static string? MaybePush()
     {
-        if (!Settings.AppSettings.Get().PushOnRebuild)
+        var settings = Settings.AppSettings.Get();
+        if (!settings.PushOnRebuild)
         {
             return null;
         }
         var root = SelfBuildPaths.WorkspaceRoot;
-        var (_, upstream) = RunGit(root, "rev-parse --verify -q @{u}");
-        if (string.IsNullOrEmpty(upstream))
+
+        string pushArgs;
+        if (!string.IsNullOrWhiteSpace(settings.PushRepo))
         {
-            return "push: no upstream — skipped";
+            // Явное направление (форк): HEAD текущей ветки → main цели.
+            pushArgs = $"push {settings.PushRepo.Trim()} HEAD:main";
         }
-        var (code, output) = RunGit(root, "push", timeoutMs: 60000);
+        else
+        {
+            var (_, upstream) = RunGit(root, "rev-parse --verify -q @{u}");
+            if (string.IsNullOrEmpty(upstream))
+            {
+                return "push: no upstream — skipped (укажите «куда пушить» в настройках или установите upstream)";
+            }
+            pushArgs = "push";
+        }
+
+        var (code, output) = RunGit(root, pushArgs, timeoutMs: 60000);
         return code == 0
             ? $"push: ok ({(output.Length > 0 ? output : "nothing to push")})"
             : $"push: FAILED (exit {code}) — {output}";

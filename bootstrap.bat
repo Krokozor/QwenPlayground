@@ -60,6 +60,11 @@ if not exist "run\current.txt" (
     echo run\current.txt already exists - active version left untouched.
 )
 
+REM ---------- 4. Shortcut to the launcher ----------
+powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; $lnk = $ws.CreateShortcut('%~dp0QwenPlayground.lnk'); $lnk.TargetPath = '%~dp0launcher\QwenPlayground.Launcher.exe'; $lnk.WorkingDirectory = '%~dp0launcher'; $lnk.Description = 'QwenPlayground launcher'; $lnk.Save()"
+if errorlevel 1 (
+    echo [WARNING] Could not create QwenPlayground.lnk shortcut
+)
 echo.
 echo === Done: baton passed to the launcher ===
 echo.

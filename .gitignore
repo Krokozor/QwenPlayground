@@ -24,6 +24,10 @@ ffmpeg/
 # User data (root only! — patterns without leading / would also match
 # source folders like src/QwenPlayground.Core/Sessions/)
 /sessions/
+
+# Траектория main-агента: персонализирована владельцем, приложение создаёт её само
+# из нейтрального шаблона (TrajectoryStore.DefaultContent) при первом старте.
+/trajectory.md
 /memories/
 /memory_research/
 /backups/
