@@ -226,11 +226,11 @@ public partial class MainWindow : Window
         SetBusy(true);
         StatusText.Text = $"Проверка обновлений {name}…";
 
-        // Для ffmpeg: сравниваем локальную версию с последней на GitHub
-        // Пока: просто показываем что проверяем (полная логика — потом)
-        await Task.Delay(1000); // имитация проверки
-        StatusText.Text = $"{name}: актуальная версия";
-        LogBox.AppendText($"\n[{DateTime.Now:HH:mm:ss}] {name}: проверка обновлений — актуально");
+        // Настоящая проверка: digest локальной сборки (сайдкар .asset-info) против
+        // последнего релиза из GitHub API (ToolManager.CheckUpdateAsync).
+        var result = await ToolManager.CheckUpdateAsync(tool);
+        StatusText.Text = $"{name}: {result}";
+        LogBox.AppendText($"\n[{DateTime.Now:HH:mm:ss}] {name}: проверка обновлений — {result}");
         LogBox.ScrollToEnd();
 
         btn.IsEnabled = true;

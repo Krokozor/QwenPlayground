@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Text.Json;
 using QwenPlayground.Core.SelfBuild;
 
 namespace QwenPlayground.Launcher;
@@ -121,6 +122,13 @@ public static class ToolManager
                 return (false, $"Бинарник не найден после экстракции: {binPath}");
             }
 
+            // Best-effort: метаданные сборки для будущей «Проверить обновления».
+            var info = await GetLatestAssetInfoAsync(tool);
+            if (info is not null)
+            {
+                SaveAssetInfo(tool, info);
+            }
+
             Log($"installed {tool.ExtractTo} successfully");
             return (true, "Установлено успешно");
         }
@@ -151,5 +159,127 @@ public static class ToolManager
             return true;
         }
         return false;
+    }
+
+    // ── Проверка обновлений ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// «Паспорт» скачанной сборки: digest ассета (sha256) и дата публикации релиза.
+    /// Релиз-тег «latest» у авто-сборок обновляется на месте, поэтому именно digest
+    /// ассета — честный идентификатор конкретной сборки.
+    /// </summary>
+    public sealed record AssetInfo(string Digest, string PublishedAt, string AssetName);
+
+    private static readonly HttpClient CheckHttp = new()
+    {
+        Timeout = TimeSpan.FromSeconds(20)
+    };
+
+    /// <summary>Сайдкар-файл с метаданными сборки в каталоге экстракции инструмента.</summary>
+    private static string AssetInfoPath(ToolConfig tool) =>
+        Path.Combine(SelfBuildPaths.WorkspaceRoot, tool.ExtractTo.Replace('/', Path.DirectorySeparatorChar), ".asset-info");
+
+    /// <summary>
+    /// Последний релиз из GitHub API (тег «latest»): digest и дата публикации ассета,
+    /// совпадающего с именем файла в DownloadUrl. null — URL не GitHub-релиз или сбой сети.
+    /// </summary>
+    public static async Task<AssetInfo?> GetLatestAssetInfoAsync(ToolConfig tool)
+    {
+        try
+        {
+            var uri = new Uri(tool.DownloadUrl);
+            if (!uri.Host.EndsWith("github.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+            var parts = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            // /<owner>/<repo>/releases/download/<tag>/<asset-name>
+            if (parts.Length < 5 || parts[2] != "releases")
+            {
+                return null;
+            }
+            var assetName = parts[^1];
+
+            using var response = await CheckHttp.GetAsync(
+                $"https://api.github.com/repos/{parts[0]}/{parts[1]}/releases/latest");
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var publishedAt = root.GetProperty("published_at").GetString() ?? "";
+            foreach (var asset in root.GetProperty("assets").EnumerateArray())
+            {
+                if (asset.GetProperty("name").GetString() != assetName)
+                {
+                    continue;
+                }
+                var digest = asset.GetProperty("digest").GetString() ?? "";
+                return new AssetInfo(digest, publishedAt, assetName);
+            }
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Сохранить метаданные сборки в сайдкар (best-effort).</summary>
+    public static void SaveAssetInfo(ToolConfig tool, AssetInfo info)
+    {
+        try
+        {
+            File.WriteAllText(AssetInfoPath(tool), $"{info.Digest}\n{info.PublishedAt}\n");
+        }
+        catch
+        {
+            // Метаданные — не критичны для установки.
+        }
+    }
+
+    /// <summary>Прочитать метаданные локальной сборки. null — не установлены/нет сайдкора.</summary>
+    public static AssetInfo? LoadAssetInfo(ToolConfig tool)
+    {
+        try
+        {
+            var lines = File.ReadAllLines(AssetInfoPath(tool));
+            if (lines.Length >= 2)
+            {
+                return new AssetInfo(lines[0], lines[1], string.Empty);
+            }
+        }
+        catch
+        {
+            // Нет сайдкора.
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Настоящая проверка обновлений: digest локальной сборки (сайдкар) против
+    /// последнего релиза из GitHub API. Возвращает человекочитаемое сообщение.
+    /// </summary>
+    public static async Task<string> CheckUpdateAsync(ToolConfig tool)
+    {
+        if (!tool.IsInstalled())
+        {
+            return "не установлен";
+        }
+        var latest = await GetLatestAssetInfoAsync(tool);
+        if (latest is null)
+        {
+            return "проверка не удалась: источник не является GitHub-релизом или нет сети";
+        }
+        var local = LoadAssetInfo(tool);
+        if (local is null)
+        {
+            return $"последняя сборка {latest.PublishedAt}; локально нет метаданных версии (установлен до их введения) — нажмите «Скачать», чтобы обновить";
+        }
+        return latest.Digest == local.Digest
+            ? $"актуальная версия (сборка {latest.PublishedAt})"
+            : $"доступна новая сборка: {latest.PublishedAt} (ваша: {local.PublishedAt}) — нажмите «Скачать»";
     }
 }
