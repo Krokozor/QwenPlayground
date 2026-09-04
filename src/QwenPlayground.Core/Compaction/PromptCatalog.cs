@@ -39,16 +39,82 @@ public static class PromptCatalog
 {
     public static class Defaults
     {
+        // Единый скелет слоя: сегмент-суммаризация (транскрипт → L3) и merge (L1+L2 → L1)
+        // пишут ОДИН И ТОТ ЖЕ сорт документа — слои остаются однородными, и merge —
+        // структура-сохраняющее слияние. Заголовки секций — на русском, т.к. попадают в
+        // вывод; подсказки в квадратных скобках — на английском (инструкция модели).
+        private const string LayerTemplate = """
+            <template>
+            ## Задача
+            - [one or two brief sentences: what the user was trying to accomplish; quote verbatim where the exact wording matters, or "(none)"]
+
+            ## Контекст
+            - [constraints, agreements, important technical facts and assumptions about the project/environment, or "(none)"]
+
+            ## Решения
+            - [decisions and agreements with the reason where known; user rules and directives — verbatim, or "(none)"]
+
+            ## Ошибки и инциденты
+            - [error or incident: how it was resolved, plus any related user feedback, or "(none)"]
+
+            ## Состояние
+            ### Готово
+            - [finished work, verified facts, or changes made; otherwise "(none)"]
+            ### В работе
+            - [current work, partial changes, or investigation state; otherwise "(none)"]
+            ### Заблокировано
+            - [blockers, failing commands, or unknowns; otherwise "(none)"]
+
+            ## Открытые нити
+            - [explicitly requested work not yet completed, deferred decisions, TODOs, or "(none)"]
+
+            ## Дальше
+            1. [the immediate concrete next action, or "(none)"]
+            2. [the next action if known, or "(none)"]
+
+            ## Файлы
+            - [exact file or directory path: why it matters, or "(none)"]
+            </template>
+            """;
+
+        private const string LayerRules = """
+            Rules:
+            - Keep every section, even when empty. Write "(none)" for an empty section — never drop a section.
+            - Use terse bullets, not prose paragraphs.
+            - Preserve exact file paths, symbols, commands, error strings, URLs, identifiers, and numeric values when known.
+            - Capture user feedback and explicit instructions faithfully, especially corrections.
+            - Write the layer in Russian. Do not mention the summarization process or that context was compacted. Output only the layer text, no commentary.
+            """;
+
         public const string Merge =
             "You are the memory layer merge module of an agent. Below are two layers of long-term memory: " +
-            "L1 (oldest) and L2 (middle).\n" +
-            "Merge them into one dense layer: keep every still-relevant fact, decision, agreement, " +
-            "exact paths, names, ids and settings; update or drop what is stale; do not duplicate. " +
-            "The result is a compact coherent text in Russian, no headings or commentary.\n\n" +
-            "[L1]\n" +
-            "{{l1}}\n\n" +
-            "[L2]\n" +
-            "{{l2}}";
+            "<l1> is the generalized history of the past, <l2> is the newer fragment. " +
+            "L2 is chronologically later than L1.\n" +
+            "Merge them into one dense layer. <l1> and <l2> are discarded after this: anything you do not " +
+            "carry into the result is lost.\n\n" +
+            "When merging:\n" +
+            "- Carry forward objectives, constraints, decisions, agreements, and open threads from <l1> " +
+            "even when <l2> does not mention them. Drop only what is finished and no longer needed, or " +
+            "too stale to be useful for continuing the work.\n" +
+            "- <l2> is more recent than <l1>. Where they conflict, <l2> wins: state the corrected fact and " +
+            "drop the old claim.\n" +
+            "- Where important changes happened between the eras, describe the delta inline: not only the " +
+            "new state, but what changed, from what to what, and why.\n" +
+            "- Move completed work from \"В работе\" to \"Готово\". If a blocker has been resolved, drop it " +
+            "while keeping any details still needed to continue.\n" +
+            "- Update \"Задача\" and \"Дальше\" to reflect the current state.\n" +
+            "- The result is a single consolidated layer under the same structure — not a concatenation " +
+            "of the two.\n\n" +
+            "Output exactly the Markdown structure shown inside <template> and keep the section order " +
+            "unchanged. Do not include the <template> tags in your response.\n\n" +
+            LayerTemplate + "\n" +
+            LayerRules + "\n" +
+            "<l1>\n" +
+            "{{l1}}\n" +
+            "</l1>\n\n" +
+            "<l2>\n" +
+            "{{l2}}\n" +
+            "</l2>";
 
         public const string MergeValidation =
             "You verify fact loss during memory merging. Below are the old layers L1 and L2 and the result of " +
@@ -65,16 +131,18 @@ public static class PromptCatalog
             "{{temp}}";
 
         public const string SegmentSummary =
-            "You summarize a segment of an agent's conversation. Below is a transcript of the earlier part of the dialogue. " +
-            "Compress it into a dense structured summary in Russian — it will become the fresh L3 memory layer.\n\n" +
-            "Principles:\n" +
-            "- Rather keep an extra detail than lose an important one: exact paths, type and method names, " +
-            "setting values, build and session ids, URLs — verbatim.\n" +
-            "- Quote decisions, agreements and user rules verbatim or close to the original.\n" +
-            "- Errors, incidents and how they were fixed — explicitly.\n" +
-            "- Open threads, TODOs and the current state — as separate items.\n\n" +
-            "Output only the summary, no commentary or layer headings.\n\n" +
-            "{{transcript}}";
+            "You summarize a segment of an agent's conversation. Create a new anchored summary of the " +
+            "segment in the <transcript> tags below so the agent can continue the work after the chat is " +
+            "compacted. The summary will become the fresh L3 memory layer. " +
+            "The <state> blocks in the transcript carry per-message metadata (time, context size, build, " +
+            "surfaced memories): use them for chronology, do not summarize them as content.\n\n" +
+            "Output exactly the Markdown structure shown inside <template> and keep the section order " +
+            "unchanged. Do not include the <template> tags in your response.\n\n" +
+            LayerTemplate + "\n" +
+            LayerRules + "\n" +
+            "<transcript>\n" +
+            "{{transcript}}\n" +
+            "</transcript>";
 
         public const string SegmentValidation =
             "You verify fact loss during summarization. Below are the segment transcript and its summary (L3).\n" +

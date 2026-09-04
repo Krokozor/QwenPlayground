@@ -155,8 +155,9 @@ public sealed class LlmCompletionClient : ICompletionSource
         {
             throw; // отмена не должна уходить во второй запрос и маскироваться под «сервер молчит»
         }
-        catch
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or IOException or TimeoutException)
         {
+            // «Сервер молчит» (сеть/разбор) — деградируем до null; остальное (OOM, баги) — наружу.
         }
 
         try
@@ -176,8 +177,9 @@ public sealed class LlmCompletionClient : ICompletionSource
         {
             throw;
         }
-        catch
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or IOException or TimeoutException)
         {
+            // второй endpoint тоже молчит — null; остальное наружу.
         }
 
         return null;

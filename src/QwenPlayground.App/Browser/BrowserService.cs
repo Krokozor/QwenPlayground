@@ -613,7 +613,8 @@ public static class BrowserService
                 var status = e.Response?.StatusCode ?? 0;
                 _networkLog?.Add(new Dictionary<string, string>
                 {
-                    ["method"] = "GET",
+                    // Метод реального запроса (раньше хардкодился "GET" — POST/PUT показывались GET).
+                    ["method"] = e.Request?.Method ?? "GET",
                     ["url"] = uri,
                     ["status"] = status.ToString(),
                     ["type"] = ""

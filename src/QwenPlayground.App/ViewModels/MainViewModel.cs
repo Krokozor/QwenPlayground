@@ -823,23 +823,26 @@ public partial class MainViewModel : ObservableObject {
 
     private string? ResolveSystemPrompt() {
         var isMain = _sessions.CurrentId == MainAgent.SessionId;
-        string? basePrompt;
-        if (isMain)
-        {
-            basePrompt = _identity.GetFor(true);
-        }
-        else
-        {
-            // Не-main: профиль + слои L1/L2/L3 сессии (per-session) — дистиллированная история,
-            // инжектится как у main (медленная деградация контекста).
-            var profile = ChatProfiles.Get().ResolvePrompt(_promptKey).RenderSystemPrompt();
-            basePrompt = profile is null ? null : profile + SessionLayersBlock();
-        }
+        // Ядро: main — динамическая идентичность (main-agent.md + траектория),
+        // не-main — профиль. Слои L1/L2/L3 инжектятся ниже ОТДЕЛЬНО и независимо от ядра:
+        // пустой (default) профиль их не глотает — баг 2026-09-04: после компакции слои
+        // писались в sessions/<id>/layers.json, но в промпт (и превью) не попадали, т.к.
+        // RenderSystemPrompt() для пустого профиля возвращает null.
+        string? core = isMain
+            ? _identity.GetFor(true)
+            : ChatProfiles.Get().ResolvePrompt(_promptKey).RenderSystemPrompt();
+
         // Секция «внешние инструменты» (external/README.md) — всем интерактивным сессиям.
         var note = _externalTools.Get();
-        basePrompt = basePrompt is null
-            ? (note is null ? null : note)
-            : (note is null ? basePrompt : basePrompt + "\n\n" + note);
+        // Слои памяти L1/L2/L3 (per-session, sessions/<id>/layers.json) — дистиллированная
+        // история; у main и не-main один и тот же путь (CurrentId = "main" / id сессии).
+        var layers = new MemoryLayerStore(
+            Path.Combine(SelfBuildPaths.WorkspaceRoot, "sessions", _sessions.CurrentId)).Load();
+        var layersBlock = layers.IsEmpty ? string.Empty : layers.ToPromptBlock();
+
+        // Base-промпт (без индекса полок) — для детекта ЕСТЕСТВЕННОЙ смены промпта: именно
+        // он меняется при компакции/смене сессии/слоях. С его сменой батчим staged-деактивации.
+        var basePrompt = Combine(Combine(core, note), layersBlock.Length > 0 ? layersBlock : null);
 
         // Staged-деактивации: снимаем помеченные группы ТОЛЬКО когда base-промпт и так меняется
         // (компакция/смена сессии/слои) — деактивация батчится с неизбежным rebuild'ом, а не
@@ -858,11 +861,11 @@ public partial class MainViewModel : ObservableObject {
         _cachedBasePrompt = basePrompt;
 
         // Индекс полок: pending-группы рисуются как активные (их тулзы реально ещё в промпте).
+        // Вставляется ПЕРЕД слоями: системный промпт течёт в чат как
+        // «кто я → какие инструменты → старая история → чуть новейшая → последняя → чат».
         var index = ToolGroupIndex.Render(EffectiveShelves(), _toolRegistry);
-
-        var final = basePrompt is null
-            ? (index.Length > 0 ? index : null)
-            : (index.Length > 0 ? basePrompt + "\n\n" + index : basePrompt);
+        var beforeLayers = Combine(Combine(core, note), index.Length > 0 ? index : null);
+        var final = Combine(beforeLayers, layersBlock.Length > 0 ? layersBlock : null);
         // Трекер кешированного промпта: изменился → KV-кеш пересоберётся (диагностика).
         if (!string.Equals(_cachedSystemPrompt, final, StringComparison.Ordinal))
         {
@@ -873,16 +876,9 @@ public partial class MainViewModel : ObservableObject {
         return final;
     }
 
-    /// <summary>
-    /// Слои L1/L2/L3 текущей не-main сессии (per-session, sessions/<id>/layers.json) — дистиллированная
-    /// история. Пустые слои — пусто. Main слои уже несёт InjectedIdentity (не дублируем).
-    /// </summary>
-    private string SessionLayersBlock()
-    {
-        var layers = new MemoryLayerStore(
-            Path.Combine(SelfBuildPaths.WorkspaceRoot, "sessions", _sessions.CurrentId)).Load();
-        return layers.IsEmpty ? string.Empty : "\n\n" + layers.ToPromptBlock();
-    }
+    /// <summary>Склейка двух фрагментов промпта пустой строкой; null/пусто — второй фрагмент как есть.</summary>
+    private static string? Combine(string? a, string? b) =>
+        a is null ? b : b is null ? a : a + "\n\n" + b;
 
     /// <summary>
     /// Тулзы для запроса: базовый набор (Core + активные полки) ∩ whitelist профиля (если задан).
@@ -994,8 +990,10 @@ public partial class MainViewModel : ObservableObject {
         if (string.IsNullOrEmpty(lastId) || lastId == _sessions.CurrentId) 
             return;        
         
-        if (!LoadSession(lastId)) 
-            _sessions.PersistCurrentId(); // последняя сессия пропала — фиксируем main, чтобы не пытаться снова        
+        if (LoadSession(lastId))
+            RefreshSessions(); // CurrentId уже переехал — синхронизируем SelectedSession, иначе селектор покажет main
+        else
+            _sessions.PersistCurrentId(); // последняя сессия пропала — фиксируем main, чтобы не пытаться снова
     }
 
     public void SaveCurrent() {
@@ -1272,6 +1270,14 @@ public partial class MainViewModel : ObservableObject {
     /// <summary>Ручная компакция из UI.</summary>
     [RelayCommand(CanExecute = nameof(CanInteract))]
     private async Task CompactAsync() => await _maintenance.CompactFromUiAsync();
+
+    /// <summary>Скрыть панель live-превью сжатия («×» на панели).</summary>
+    [RelayCommand]
+    private void HideCompactionPanel() => _compaction.Hide();
+
+    /// <summary>Открыть панель сжатия из тулбара (кнопка активна, когда в панели есть что показывать).</summary>
+    [RelayCommand]
+    private void ShowCompactionPanel() => _compaction.Open();
     private bool CanInteract() => !IsBusy;
     private GenerationOptions BuildOptions(int? maxTokensOverride = null) =>
     S.ToGenerationOptions(maxTokensOverride);

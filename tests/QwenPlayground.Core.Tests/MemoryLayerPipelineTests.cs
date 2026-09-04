@@ -52,6 +52,23 @@ public sealed class MemoryLayerPipelineTests
     }
 
     [Fact]
+    public async Task RunAsync_L1Empty_L2Filled_L3Empty_ShiftsL2WithoutDuplication()
+    {
+        // Краевой случай каскада: L1 пуст, L2 заполнен, L3 пуст. L2 сдвигается в L1,
+        // а L2 остаётся ПУСТЫМ (раньше сюда падало старое L2 — контент дублировался
+        // в оба слоя и рендерился дважды в системном промпте).
+        var current = new LayerMemory { L1 = "", L2 = "middle layer", L3 = "" };
+
+        var result = await MemoryLayerPipeline.RunAsync(current, "transcript", FakeCompleter(
+            new Dictionary<string, string> { ["You summarize a segment"] = "segment summary" }));
+
+        Assert.True(result.SegmentSucceeded);
+        Assert.Equal("middle layer", result.Next.L1);
+        Assert.Equal(string.Empty, result.Next.L2); // дубля нет
+        Assert.Equal("segment summary", result.Next.L3);
+    }
+
+    [Fact]
     public async Task RunAsync_IsolatesContexts()
     {
         const string l1 = "SECRET_L1";

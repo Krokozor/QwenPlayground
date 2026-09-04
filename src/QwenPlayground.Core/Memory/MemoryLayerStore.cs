@@ -5,7 +5,8 @@ using QwenPlayground.Core.Serialization;
 namespace QwenPlayground.Core.Memory;
 
 /// <summary>
-/// Хранилище слоёв памяти (L1/L2/L3) main-агента: файл layers.json в каталоге сессии.
+/// Хранилище слоёв памяти (L1/L2/L3) сессии: файл layers.json в каталоге сессии
+/// (sessions/main у main-агента, sessions/&lt;id&gt; у остальных — per-session).
 /// Источник истины для долгосрочной памяти — в сам чат слои не пишутся, а инжектятся
 /// в системный промпт при сборке (см. LayerMemory.ToPromptBlock).
 /// </summary>
@@ -21,7 +22,7 @@ public sealed class MemoryLayerStore
         System.IO.Directory.CreateDirectory(_directory);
     }
 
-    /// <summary>Каталог сессии (sessions/main).</summary>
+    /// <summary>Каталог сессии (sessions/main по умолчанию).</summary>
     public string Directory => _directory;
 
     public string FilePath => Path.Combine(_directory, "layers.json");

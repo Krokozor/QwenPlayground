@@ -6,9 +6,11 @@ using QwenPlayground.Core.SelfBuild;
 namespace QwenPlayground.App;
 
 /// <summary>
-/// Динамический системный промпт main-агента: идентичность (main-agent.md) + слои памяти
-/// (layers.json) + траектория (trajectory.md). В историю чата не пишется — собирается
-/// при каждом рендере, чтобы переживать рестарты и rebuild_self.
+/// Динамическое ЯДРО системного промпта main-агента: идентичность (main-agent.md) +
+/// траектория (trajectory.md). Слои памяти НЕ здесь — их дописывает
+/// MainViewModel.ResolveSystemPrompt в самый конец промпта (общий порядок секций у main
+/// и не-main). В историю чата не пишется — собирается при каждом рендере, чтобы
+/// переживать рестарты и rebuild_self.
 ///
 /// Хот-путь: сборка случается на каждой итерации хода. Состав кэшируется по mtime
 /// файлов-зависимостей — правка любого из них агентом через edit_file инвалидирует
@@ -16,7 +18,6 @@ namespace QwenPlayground.App;
 /// </summary>
 public sealed class InjectedIdentity
 {
-    private readonly MemoryLayerStore _layerStore = new();
     private readonly FileDependentCache<string?> _cache;
 
     public InjectedIdentity()
@@ -25,7 +26,6 @@ public sealed class InjectedIdentity
             new[]
             {
                 Path.Combine(SelfBuildPaths.WorkspaceRoot, MainAgent.IdentityFileName),
-                _layerStore.FilePath,
                 new TrajectoryStore().FilePath
             },
             Compose,
@@ -38,15 +38,10 @@ public sealed class InjectedIdentity
     private string? Compose()
     {
         var parts = new List<string> { MainAgent.LoadIdentity(SelfBuildPaths.WorkspaceRoot) };
-        var memoryBlock = _layerStore.Load().ToPromptBlock();
-        if (memoryBlock.Length > 0)
-        {
-            parts.Add(memoryBlock);
-        }
         var trajectory = new TrajectoryStore().Load();
         if (trajectory.Length > 0)
         {
-            parts.Add("— Траектория (текущее направление) —\n" + trajectory);
+            parts.Add("# Trajectory (current direction)\n\n" + trajectory);
         }
         return string.Join("\n\n", parts);
     }

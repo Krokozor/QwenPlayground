@@ -16,31 +16,51 @@ public partial class CompactionPreview : ObservableObject
     private readonly Stopwatch _throttle = new();
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasContent))]
     [NotifyPropertyChangedFor(nameof(ShowPanel))]
     private bool _isActive;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasPreview))]
+    [NotifyPropertyChangedFor(nameof(HasContent))]
     [NotifyPropertyChangedFor(nameof(ShowPanel))]
     private string _preview = string.Empty;
 
     [ObservableProperty]
     private string _stage = string.Empty;
 
+    /// <summary>Пользователь скрыл панель «×» (превью сохраняется; новая компакция откроет панель сама).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowPanel))]
+    private bool _isHidden;
+
     public bool HasPreview => Preview.Length > 0;
 
-    /// <summary>Панель live-превью видна во время компакции или пока остался прошлый вывод.</summary>
-    public bool ShowPanel => IsActive || HasPreview;
+    /// <summary>В панели есть что показывать: идёт компакция или остался прошлый вывод.</summary>
+    public bool HasContent => IsActive || HasPreview;
 
-    /// <summary>Начало компакции: чистим буфер и поднимаем панель.</summary>
+    /// <summary>
+    /// Панель live-превью видна во время компакции или пока остался прошлый вывод,
+    /// пока пользователь не скрыл её «×» (кнопка «Сжатие» в тулбаре открывает обратно).
+    /// </summary>
+    public bool ShowPanel => HasContent && !IsHidden;
+
+    /// <summary>Начало компакции: чистим буфер и поднимаем панель (перекрывает «×» — авто-открытие, как раньше).</summary>
     public void Begin()
     {
         _buffer.Clear();
         Preview = string.Empty;
         Stage = string.Empty;
         IsActive = true;
+        IsHidden = false;
         _throttle.Restart();
     }
+
+    /// <summary>Скрыть панель «×»: превью сохраняется, панель закрывается до открытия из тулбара.</summary>
+    public void Hide() => IsHidden = true;
+
+    /// <summary>Открыть панель из тулбара (кнопка активна, когда есть что показывать).</summary>
+    public void Open() => IsHidden = false;
 
     /// <summary>Очередной этап конвейера: заголовок-разделитель в превью.</summary>
     public void NewStage(string name)

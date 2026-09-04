@@ -28,15 +28,19 @@ public sealed class LayerMemory
             return string.Empty;
         }
 
+        // Заголовки — в стиле «# Tools» эталонного шаблона: H1 на секцию, H2 на слой,
+        // пустая строка между заголовком и содержимым. Порядок слоёв L1→L2→L3: промпт
+        // течёт к чату «старая история → чуть новейшая → последняя → чат».
         var builder = new StringBuilder();
-        builder.AppendLine("— Долгосрочная память (слои L1–L3) —");
+        builder.AppendLine("# Long-term memory (layers L1–L3)");
+        builder.AppendLine();
         builder.AppendLine(
-            "Это твоя слоистая память по глубине: L3 — самые свежие события, L2 — средний слой, " +
-            "L1 — самый старый дистиллят. Слои — часть твоей идентичности и преемственности: " +
-            "опирайся на них при работе, не выбрасывай важное и не повторяй уже решённое.");
-        AppendLayer(builder, "Слой L1", L1);
-        AppendLayer(builder, "Слой L2", L2);
-        AppendLayer(builder, "Слой L3", L3);
+            "This is your layered memory by depth: L3 — the freshest events, L2 — the middle layer, " +
+            "L1 — the oldest distillate. The layers are part of your identity and continuity: " +
+            "rely on them while working, do not discard what matters and do not re-solve what is already solved.");
+        AppendLayer(builder, "Layer L1", L1);
+        AppendLayer(builder, "Layer L2", L2);
+        AppendLayer(builder, "Layer L3", L3);
         return builder.ToString().TrimEnd();
     }
 
@@ -46,6 +50,6 @@ public sealed class LayerMemory
         {
             return;
         }
-        builder.AppendLine().Append('[').Append(title).AppendLine("]").AppendLine(content.Trim());
+        builder.AppendLine().Append("## ").Append(title).AppendLine().AppendLine().AppendLine(content.Trim());
     }
 }

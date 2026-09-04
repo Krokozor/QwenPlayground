@@ -56,6 +56,10 @@
             <Button Content="&#9200;" Command="{Binding WakeNowCommand}" ToolTip="Разбудить main-агента: wake-сигнал или heartbeat вне расписания"
                     Padding="8,0" Margin="0,0,4,0" />
             <Button Content="Сжать" Command="{Binding CompactCommand}" Padding="12,2" Margin="0,0,4,0" />
+            <!-- «Сжатие» — открыть панель live-превью сжатия; неактивна, пока в ней пусто. -->
+            <Button Content="Сжатие" Command="{Binding ShowCompactionPanelCommand}" Padding="12,2" Margin="0,0,4,0"
+                    IsEnabled="{Binding Compaction.HasContent}"
+                    ToolTip="Открыть панель сжатия контекста (неактивна, пока в ней нет содержимого)" />
             <!-- DockPanel.Dock: без него последний элемент растягивается на весь остаток ширины. -->
             <Button Content="Скопировать чат" Command="{Binding CopyChatCommand}" Padding="12,2" DockPanel.Dock="Left" />
         </DockPanel>
@@ -186,6 +190,9 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <DockPanel Grid.Row="0">
+                    <Button Content="&#215;" Command="{Binding HideCompactionPanelCommand}"
+                            DockPanel.Dock="Right" Padding="4,0" FontSize="11"
+                            ToolTip="Скрыть панель (содержимое сохранится; откроется кнопкой «Сжатие» в тулбаре)" />
                     <TextBlock Text="▶ сжатие контекста" Foreground="#7aa2f7" FontWeight="Bold" FontSize="11"
                                VerticalAlignment="Center" />
                     <TextBlock Text="{Binding Compaction.Stage}" Foreground="#888" FontSize="11"

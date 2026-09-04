@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
+using QwenPlayground.Core.MetaInfo;
 
 namespace QwenPlayground.Core.Tests;
 
@@ -73,5 +74,32 @@ public sealed class ContextCompactorTests
         };
 
         Assert.Equal(0, ContextCompactor.FindCompactionBoundary(messages, 0.5));
+    }
+
+    [Fact]
+    public void BuildTranscript_IncludesStateBlockForChronology()
+    {
+        // State-блок (time, context, build, mem) должен попасть в транскрипт: суммаризатору
+        // нужна хронология сегмента, а не голый текст.
+        var message = new ChatMessage { Id = 5, Role = ChatRole.Assistant, Content = "привет" };
+        message.StateBlock = new StateBlock { MsgId = 5, Time = new DateTime(2026, 9, 4, 8, 30, 0) };
+
+        var transcript = ContextCompactor.BuildTranscript(new[] { message }, 1);
+
+        Assert.Contains("### assistant", transcript);
+        Assert.Contains("<state>", transcript);
+        Assert.Contains("time=2026-09-04 08:30:00", transcript);
+        Assert.True(transcript.IndexOf("<state>", StringComparison.Ordinal) <
+                    transcript.IndexOf("привет", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void BuildTranscript_WithoutStateBlock_StaysClean()
+    {
+        var transcript = ContextCompactor.BuildTranscript(
+            new[] { ChatMessage.Assistant("привет") }, 1);
+
+        Assert.DoesNotContain("<state>", transcript);
+        Assert.Contains("### assistant", transcript);
     }
 }

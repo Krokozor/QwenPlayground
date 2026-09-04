@@ -12,6 +12,8 @@ public sealed class ShellTool : AgentTool
     [ToolParameter("Timeout in seconds")]
     public int TimeoutSeconds { get; set; } = 60;
 
+    // Подсказка для подтверждения пользователя (TryConfirm), НЕ граница безопасности:
+    // агент имеет полный доступ к shell, список не блокирует ничего критичного.
     private static readonly string[] DangerousPatterns =
         ["del ", "rmdir", "rm -", "format ", "shutdown", "taskkill", "remove-item"];
 

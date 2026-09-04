@@ -8,8 +8,18 @@ internal static class ProjectFiles
 
     public static IEnumerable<string> Enumerate(string projectRoot, string? includePattern = null)
     {
+        // FileSystemGlobbing: паттерн БЕЗ директорной части матчит только корневой уровень —
+        // "*.cs" молча не найдёт ни одного вложенного файла (известная грабель, записана в
+        // памяти 2026-09-03). Нормализуем: "имя.расширение" → "**/имя.расширение".
+        var pattern = includePattern;
+        if (pattern is { Length: > 0 } &&
+            !pattern.Contains('/') && !pattern.Contains('\\') && !pattern.Contains("**"))
+        {
+            pattern = "**/" + pattern;
+        }
+
         var matcher = new Matcher(StringComparison.OrdinalIgnoreCase);
-        matcher.AddInclude(includePattern is { Length: > 0 } ? includePattern : "**/*");
+        matcher.AddInclude(pattern is { Length: > 0 } ? pattern : "**/*");
 
         foreach (var path in matcher.GetResultsInFullPath(projectRoot))
         {

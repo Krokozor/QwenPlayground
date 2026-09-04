@@ -116,6 +116,14 @@ public sealed class AgentLoop
                 conversation.Count > 0 && conversation[^1].Role == ChatRole.Assistant)
             {
                 continued = conversation[^1];
+                // Блок собран с MsgId = «следующий» ID (счётчик), но сообщение-продолжение
+                // уже имеет СВОЙ стабильный ID — подменяем, иначе модель видит в префилле
+                // чужой msg_id (и персистится блок с ним). Рендер истории синхронизирует
+                // MsgId повторно (AppendAssistant) — это страховка для старых записей.
+                if (stateBlock is not null)
+                {
+                    stateBlock.MsgId = continued.Id;
+                }
                 prompt = QwenChatTemplate.Render(
                              messages.GetRange(0, messages.Count - 1),
                              definitions, addGenerationPrompt: true, reasoningEffort: reasoningEffort, stateBlock: stateBlock)

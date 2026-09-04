@@ -53,6 +53,38 @@ public sealed class ToolOutputCapTests : IDisposable
     }
 
     [Fact]
+    public async Task Grep_IncludePatternMatchesNestedFiles()
+    {
+        // Грабель FileSystemGlobbing: "*.cs" без "**" матчит только корневой уровень и
+        // молча возвращает "no matches". ProjectFiles нормализует такой паттерн в "**/*.cs".
+        Directory.CreateDirectory(Path.Combine(_dir, "src", "sub"));
+        File.WriteAllText(Path.Combine(_dir, "src", "sub", "Code.cs"), "needle in nested cs");
+        File.WriteAllText(Path.Combine(_dir, "notes.txt"), "needle in txt");
+
+        var result = await new GrepTool { Pattern = "needle", Include = "*.cs" }
+            .ExecuteAsync(Context(), CancellationToken.None);
+
+        Assert.Contains("Code.cs", result);
+        Assert.DoesNotContain("notes.txt", result); // include реально фильтрует
+        Assert.DoesNotContain("no matches", result);
+    }
+
+    [Fact]
+    public async Task Grep_IncludeWithExplicitDirsStillWorks()
+    {
+        Directory.CreateDirectory(Path.Combine(_dir, "src", "sub"));
+        Directory.CreateDirectory(Path.Combine(_dir, "other"));
+        File.WriteAllText(Path.Combine(_dir, "src", "sub", "Code.cs"), "needle in nested cs");
+        File.WriteAllText(Path.Combine(_dir, "other", "x.cs"), "needle in other cs");
+
+        var result = await new GrepTool { Pattern = "needle", Include = "src/**/*.cs" }
+            .ExecuteAsync(Context(), CancellationToken.None);
+
+        Assert.Contains("Code.cs", result);
+        Assert.DoesNotContain("x.cs", result); // явный директорный паттерн не расширяется
+    }
+
+    [Fact]
     public async Task ReadFile_TruncatesAtTotalCap_AndSuggestsOffset()
     {
         Directory.CreateDirectory(_dir);

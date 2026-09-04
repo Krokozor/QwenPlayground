@@ -82,4 +82,66 @@ public sealed class CompactionPreviewTests
         Assert.True(preview.ShowPanel); // превью прошлого прогона остаётся на экране
         Assert.Equal("итог", preview.Preview);
     }
+
+    [Fact]
+    public void Hide_ClosesPanel_ButKeepsPreview()
+    {
+        var preview = new CompactionPreview();
+        preview.Begin();
+        WaitThrottleWindow();
+        preview.Append("итог");
+        preview.Flush();
+        preview.End();
+
+        preview.Hide();
+
+        Assert.True(preview.IsHidden);
+        Assert.False(preview.ShowPanel); // «×» убрал панель
+        Assert.True(preview.HasPreview); // но превью не потеряно
+        Assert.True(preview.HasContent); // кнопка «Сжатие» в тулбаре остаётся активной
+    }
+
+    [Fact]
+    public void Open_RestoresHiddenPanel()
+    {
+        var preview = new CompactionPreview();
+        preview.Begin();
+        WaitThrottleWindow();
+        preview.Append("итог");
+        preview.Flush();
+        preview.End();
+        preview.Hide();
+
+        preview.Open();
+
+        Assert.False(preview.IsHidden);
+        Assert.True(preview.ShowPanel);
+    }
+
+    [Fact]
+    public void Begin_ReopensPanel_AfterUserHiddenIt()
+    {
+        // Авто-открытие при старте компакции сохраняется: «×» не переживает новый прогон.
+        var preview = new CompactionPreview();
+        preview.Begin();
+        WaitThrottleWindow();
+        preview.Append("итог");
+        preview.Flush();
+        preview.End();
+        preview.Hide();
+
+        preview.Begin();
+
+        Assert.False(preview.IsHidden);
+        Assert.True(preview.ShowPanel);
+    }
+
+    [Fact]
+    public void HasContent_False_WhenNothingHappened()
+    {
+        var preview = new CompactionPreview();
+
+        Assert.False(preview.HasContent); // кнопка «Сжатие» в тулбаре неактивна
+        Assert.False(preview.ShowPanel);
+    }
 }

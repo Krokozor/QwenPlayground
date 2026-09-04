@@ -46,10 +46,10 @@ public sealed class MemoryLayerStoreTests : IDisposable
         var layers = new LayerMemory { L1 = "только старый слой" };
         var block = layers.ToPromptBlock();
 
-        Assert.Contains("Слой L1", block);
+        Assert.Contains("Layer L1", block);
         Assert.Contains("только старый слой", block);
-        Assert.DoesNotContain("Слой L2", block);
-        Assert.DoesNotContain("Слой L3", block);
+        Assert.DoesNotContain("Layer L2", block);
+        Assert.DoesNotContain("Layer L3", block);
     }
 
     [Fact]
@@ -63,8 +63,24 @@ public sealed class MemoryLayerStoreTests : IDisposable
     {
         var block = new LayerMemory { L3 = "свежие события" }.ToPromptBlock();
 
-        Assert.Contains("слоистая память", block);
-        Assert.Contains("L1", block); // объяснение упоминает глубину слоёв
+        Assert.Contains("layered memory", block);
+        Assert.Contains("L1", block); // the explanation mentions the layer depth
+    }
+
+    [Fact]
+    public void ToPromptBlock_UsesMarkdownHeadingsLikeToolsSection()
+    {
+        // Форматирование системного промпта едино: секция — H1, слой — H2 (стиль «# Tools»).
+        var layers = new LayerMemory { L1 = "старое", L3 = "новое" };
+        var block = layers.ToPromptBlock();
+
+        Assert.StartsWith("# Long-term memory (layers L1–L3)", block);
+        Assert.Contains("## Layer L1", block);
+        Assert.Contains("## Layer L3", block);
+        Assert.DoesNotContain("## Layer L2", block);
+        // H2 заголовок отделён от содержимого пустой строкой, как «# Tools» (AppendLine → CRLF).
+        var nl = Environment.NewLine;
+        Assert.Contains($"## Layer L1{nl}{nl}старое", block);
     }
 
     public void Dispose()

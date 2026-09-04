@@ -98,7 +98,10 @@ public static class MemoryLayerPipeline
                     L1 = mergeNeeded
                         ? mergedTemp!
                         : hasL2 ? current.L2.Trim() : current.L1.Trim(),
-                    L2 = hasL3 ? current.L3.Trim() : current.L2.Trim(),
+                    // Каскад: в L2 сдвигается только L3. Пустой L3 → L2 пуст (раньше сюда
+                    // падало старое L2, и при L1 пуст / L2 заполнен / L3 пуст контент
+                    // дублировался в оба слоя — системный промпт показывал его дважды).
+                    L2 = hasL3 ? current.L3.Trim() : string.Empty,
                     L3 = segmentSummary!
                 },
                 Facts = facts,

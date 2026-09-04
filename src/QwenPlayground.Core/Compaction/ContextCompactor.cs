@@ -77,6 +77,13 @@ public static class ContextCompactor
         {
             var message = messages[i];
             transcript.Append("### ").Append(message.Role.ToString().ToLowerInvariant()).Append('\n');
+            // State-блок (msg_id, time, context, build, mem) — та же служебная метка, что и в живом
+            // промпте: суммаризатору нужна хронология сегмента (время, рост контекста, смена билдов),
+            // а не голый текст. У старых сообщений (до введения блока) — пропускается.
+            if (message.StateBlock is { } stateBlock)
+            {
+                transcript.Append(stateBlock).Append('\n');
+            }
             if (message.Reasoning is { Length: > 0 } reasoning)
             {
                 transcript.Append("[thoughts] ").Append(Cap(reasoning, cap)).Append('\n');

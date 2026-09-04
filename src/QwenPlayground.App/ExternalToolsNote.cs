@@ -29,7 +29,9 @@ public sealed class ExternalToolsNote
         {
             return null;
         }
+        // Заголовок секции — собственный H1 файла («# External tools (external/)») — в стиле
+        // «# Tools» эталонного шаблона; код заголовок не добавляет, чтобы не дублировать.
         var content = File.ReadAllText(_filePath).Trim();
-        return content.Length == 0 ? null : "— Внешние инструменты (external/) —\n" + content;
+        return content.Length == 0 ? null : content;
     }
 }

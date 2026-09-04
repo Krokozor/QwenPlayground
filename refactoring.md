@@ -98,6 +98,53 @@
 
 ## Changelog
 
+### 2026-09-04 — код-аудит: заглушки, хардкод, сомнительные места
+
+Свип всего `src/` (413 .cs) на заглушки/захардкоженные значения/сомнительные места. В целом код чистый:
+нет TODO/FIXME (кроме одного осознанного), нет NotImplemented, пустых catch без комментариев и
+захардкоженных адресов/ключей. Найдено:
+
+**Живые баги**
+1. **`grep` include-фильтр** (`Tools/Builtins/ProjectFiles.cs`) — паттерн `*.cs` передаётся в
+   `Matcher.AddInclude` как есть; в FileSystemGlobbing паттерн без `**` матчит только корневой
+   уровень → `grep include="*.cs"` молча возвращает "no matches". Известная грабель (записана
+   2026-09-03, workaround `**/*.cs`), в коде НЕ зафиксирована. Лечение: в `Enumerate` нормализовать —
+   если в паттерне нет `/` и `**`, предпоставить `**/`.
+2. **`BrowserService.cs:616`** — network log захардкодил `["method"] = "GET"`: все запросы в
+   `browser_network` показываются GET. `e.Request?.Method` доступен — взять оттуда.
+3. **`MemoryLayerPipeline.RunAsync`** (строки ~96–103) — ветка «L1 пуст, L2 заполнен, L3 пуст»:
+   `L2 = hasL3 ? current.L3 : current.L2` кладёт старое L2 и в L1, и в L2 (дубль в системном
+   промпте). Обычным каскадом недостижимо, но через ручную правку layers.json — да. Лечение:
+   `L2 = hasL3 ? current.L3.Trim() : string.Empty`.
+
+**Несогласованности / сомнительное**
+4. `ContextMaintenance.CompactLayersAsync` — факты сохраняются `Take(MemoryExtractor.MaxFacts)`,
+   а статус репортит `+{result.Facts.Count}` — завышает, если модель дала больше капа.
+5. `QwenChatTemplate.AppendAssistant` (стр. 236) — мутация входа при рендере:
+   `message.StateBlock.MsgId = message.Id`. Рендер должен быть чистым; при общем StateBlock на
+   несколько сообщений — перекрёстное заражение.
+6. `ShellTool.DangerousPatterns` — наивные подстроки: `Contains("del ")` ложно срабатывает на
+   «model » (`echo model`), а `rd`/`erase`/`del` в конце команды пропускает. Это подсказка для
+   подтверждения, а не security-граница — оформить как таковую (или word-boundary).
+7. `LlmCompletionClient.CountTokensAsync` — два голых `catch { }` глотают ВСЁ (включая OOM и
+   баги в своём коде). Сужить до `HttpRequestException or JsonException or IOException`.
+8. **`TokenCounter` — мёртвый код**: нигде не вызывается (BPETokenizer помечен WIP/выведен из
+   использования 2026-08-20, но TokenCounter его всё ещё грузит). Удалить или пометить так же.
+9. `BPETokenizer.EncodeWord` — неизвестный merge молча добавляет токен ID 0 (BOS) в результат.
+   Опасный тихий фолбэк даже для WIP-кода.
+
+**Мелочи (магия-числа, дубли)**
+10. `LlmCompletionClient.cs:21` — TODO(развитие) про `IInferenceBackend` (в backlog, отложено
+    решением владельца — оставить как есть).
+11. `LlmProbeClient` — `["model"] = "probe"`: placeholder-имя модели (llama.cpp игнорирует, но
+    путает).
+12. `MainViewModel` (стр. 1194) — `const int cap = 20000` для вставки файла в чат — магия.
+13. `BrowserService.GetNetworkLog` — 200 (ring buffer) / 30 (recent) / 100 (длина URL) — магия.
+14. `WebFetchTool.ExtractMainContent` — порог `> 200` символов в 4 местах — магия.
+15. `ContextMaintenance` — `_surfacer.Clear()` вызывается дважды (RunAsync + CompactLayersAsync).
+16. `MemorySimilarity.ScanPassAsync` — `pairs.Pending.Any(...)` O(n) внутри двойного цикла —
+    O(n³) на всех парах; пока память мала не болит, при росте — индексируемые множества.
+
 ### 2026-09-02 (45) — rebuild_self: честный git-статус + пуш по настройке (PushOnRebuild)
 Владелец заметил «(pushed: NO — internet may be down)» и не поверил: ручной `git push` прошёл.
 Причина: rebuild_self НИКОГДА не пушил — GetGitStatus только сравнивал HEAD с @{u} и при

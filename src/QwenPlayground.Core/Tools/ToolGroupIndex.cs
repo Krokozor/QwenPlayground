@@ -54,7 +54,7 @@ public static class ToolGroupIndex
 
         var lines = new List<string>
         {
-            "## Tool groups (shelves)",
+            "# Tool groups (shelves)",
             string.Empty,
             "Tool groups are collections of tools added to your prompt on demand: the core set is always " +
             "available, the groups below are not. After evaluating the task, if it requires a group's " +

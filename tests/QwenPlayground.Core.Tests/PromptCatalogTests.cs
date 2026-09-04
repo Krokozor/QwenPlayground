@@ -58,4 +58,42 @@ public sealed class PromptCatalogTests
 
         Assert.Equal("keep {{nothing}}", result);
     }
+
+    [Fact]
+    public void SegmentSummary_Default_RendersLayerTemplate()
+    {
+        var prompt = PromptCatalog.Defaults.SegmentSummary;
+
+        // Скелет секций — с начала строки (отступ raw-строки снят рендером).
+        Assert.Contains("\n## Задача\n", prompt);
+        Assert.Contains("\n## Контекст\n", prompt);
+        Assert.Contains("\n## Решения\n", prompt);
+        Assert.Contains("\n## Ошибки и инциденты\n", prompt);
+        Assert.Contains("\n## Состояние\n", prompt);
+        Assert.Contains("\n### Готово\n", prompt);
+        Assert.Contains("\n### В работе\n", prompt);
+        Assert.Contains("\n### Заблокировано\n", prompt);
+        Assert.Contains("\n## Открытые нити\n", prompt);
+        Assert.Contains("\n## Дальше\n", prompt);
+        Assert.Contains("\n## Файлы\n", prompt);
+        Assert.Contains("<template>", prompt);
+        Assert.Contains("</template>", prompt);
+        Assert.Contains("{{transcript}}", prompt);
+    }
+
+    [Fact]
+    public void Merge_Default_SharesLayerTemplate_AndChronology()
+    {
+        var merge = PromptCatalog.Defaults.Merge;
+
+        // Тот же скелет, что у сегмента: слой — один сорт документа.
+        Assert.Contains("\n## Задача\n", merge);
+        Assert.Contains("\n## Файлы\n", merge);
+        // Хронология (L2 новее), дельта инлайн, структура сохраняется.
+        Assert.Contains("chronologically later", merge);
+        Assert.Contains("delta inline", merge);
+        Assert.Contains("same structure", merge);
+        Assert.Contains("{{l1}}", merge);
+        Assert.Contains("{{l2}}", merge);
+    }
 }

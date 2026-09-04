@@ -233,7 +233,11 @@ public static class QwenChatTemplate
         if (message.StateBlock is null)
             AppendMessageId(builder, message.Id);
         else {
-            message.StateBlock.MsgId = message.Id; // state-блоку нужен актуальный ID сообщения, чтобы модель понимала, что это за ход
+            // Страховка: персистированный блок мог сохраниться с устаревшим MsgId
+            // (продолжение хода, старые версии) — перед показом модели синхронизируем
+            // с актуальным стабильным ID сообщения. АгентLoop для продолжений ставит
+            // правильный ID ещё до рендера (см. continue-ветку).
+            message.StateBlock.MsgId = message.Id;
             builder.Append(message.StateBlock.ToString()).Append('\n');
         }
         

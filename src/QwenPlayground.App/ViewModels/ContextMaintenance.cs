@@ -71,7 +71,7 @@ public sealed class ContextMaintenance
         _ui = ui;
         // Шов для тестов: в приложении — реальное хранилище memories/.
         _storeFactory = storeFactory ?? (() => new MemoryStore());
-        // Per-session store слоёв: main — общий (разделён с InjectedIdentity), не-main — sessions/<id>/.
+        // Per-session store слоёв: sessions/<id>/ (у main — sessions/main).
         _layerStoreFactory = layerStoreFactory ??
             (id => new MemoryLayerStore(Path.Combine(SelfBuildPaths.WorkspaceRoot, "sessions", id)));
         _onCompacted = onCompacted;
@@ -185,12 +185,14 @@ public sealed class ContextMaintenance
         }
 
         store.Save(result.Next);
+        var savedFacts = 0;
         if (isMain)
         {
             // Утерянные факты валидаций → memories/ + diary (main-надстройка, не для lite).
             foreach (var fact in result.Facts.Take(MemoryExtractor.MaxFacts))
             {
                 await SaveMemoryClassifiedAsync(fact, source: "compaction");
+                savedFacts++;
             }
             new DiaryStore().Append(result.Next.L3);
         }
@@ -212,8 +214,10 @@ public sealed class ContextMaintenance
             System.Diagnostics.Debug.WriteLine($"[shelf] авто-выключение после компакции: {exception.Message}");
         }
 
+        // Статус репортит реально СОХРАНЁННЫЕ факты (кап Take(MaxFacts)), а не всё,
+        // что модель вернула: раньше +{Facts.Count} завышал число при переполнении капа.
         _ui.SetStatus(isMain
-            ? $"контекст сжат: {boundary} сообщ. → L3, +{result.Facts.Count} в память"
+            ? $"контекст сжат: {boundary} сообщ. → L3, +{savedFacts} в память"
             : $"контекст сжат: {boundary} сообщ. → слои (L3)");
     }
 
