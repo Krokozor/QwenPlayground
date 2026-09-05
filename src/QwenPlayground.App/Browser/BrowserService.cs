@@ -2,6 +2,7 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
+using QwenPlayground.Core.SelfBuild;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -170,6 +171,16 @@ public static class BrowserService
 
             // 6. Enable network monitoring
             await EnableNetworkMonitoringAsync();
+
+            // 6.5. Enable download capture (files → workspace downloads/)
+            EnableDownloadCapture(core);
+
+            // 6.6. Permissions: в агентском браузере нет пользователя, который подтвердил бы
+            // «разрешить несколько автоматических загрузок» и т.п. — разрешаем автоматически.
+            core.PermissionRequested += (s, e) =>
+            {
+                try { e.State = CoreWebView2PermissionState.Allow; } catch { }
+            };
 
             // 7. Start auto-suspend timer (suspend after 2 min idle)
             StartSuspendTimer();
@@ -401,11 +412,12 @@ public static class BrowserService
     }
 
     /// <summary>Click at specific viewport coordinates (for canvas, SVG, elements without CSS selectors).
-    /// trusted=true — CDP-клик (isTrusted=true), для сайтов с антибот-проверкой.</summary>
-    public static async Task<string> ClickAtAsync(int x, int y, bool trusted = false)
+    /// trusted=true — CDP-клик (isTrusted=true), для сайтов с антибот-проверкой.
+    /// button: left/right (ПКМ), clicks: 1-3 (двойной клик).</summary>
+    public static async Task<string> ClickAtAsync(int x, int y, bool trusted = false, string button = "left", int clicks = 1)
     {
         if (trusted)
-            return await CdpClickAsync(x, y);
+            return await CdpClickAsync(x, y, button, clicks);
         var core = await GetCoreAsync();
         var urlBefore = core.Source;
 
@@ -417,7 +429,7 @@ public static class BrowserService
         }
         core.NavigationCompleted += OnNav;
 
-        var js = BuildClickAtJs(x, y);
+        var js = BuildClickAtJs(x, y, button, clicks);
         var result = await core.ExecuteScriptAsync(js);
         var text = Unquote(result);
         if (text != "OK")
@@ -553,6 +565,46 @@ public static class BrowserService
     }
 
     /// <summary>
+    /// Fetch a URL in the page context — с cookie/сессией текущей страницы, БЕЗ навигации.
+    /// ExecuteScriptAsync не дожидается Promise (возвращает {}), поэтому: fetch пишёт результат
+    /// в window.__agent_fetch, C# поллит глобальную переменную.
+    /// </summary>
+    public static async Task<string> FetchAsync(string url, int timeoutMs = 30_000)
+    {
+        var core = await GetCoreAsync();
+        await core.ExecuteScriptAsync(
+            "(function() {" +
+            "window.__agent_fetch = null;" +
+            "fetch(" + JsStr(url) + ", { credentials: 'include' }).then(function(r) {" +
+            "return r.text().then(function(t) { window.__agent_fetch = { status: r.status, body: t }; });" +
+            "}).catch(function(e) { window.__agent_fetch = { error: String(e) }; });" +
+            "return 'started';" +
+            "})()");
+
+        const int Cap = 50_000;
+        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            var raw = await core.ExecuteScriptAsync(
+                "window.__agent_fetch ? JSON.stringify(window.__agent_fetch) : null");
+            var json = Unquote(raw);
+            if (json is not null && json != "null" && json != "{}")
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("error", out var err))
+                    return "Fetch failed: " + err.GetString() + " (CORS? другой домен? — для других доменов webfetch или navigate)";
+                var status = doc.RootElement.GetProperty("status").GetInt32();
+                var body = doc.RootElement.GetProperty("body").GetString() ?? "";
+                var total = body.Length;
+                if (body.Length > Cap) body = body[..Cap] + $"\n… truncated ({total} chars total)";
+                return $"HTTP {status} ({total} chars):\n{body}";
+            }
+            await Task.Delay(200);
+        }
+        return $"Timeout: fetch of {url} did not complete within {timeoutMs}ms (CORS? slow network?)";
+    }
+
+    /// <summary>
     /// Search for text on the page. Returns total count + per-match info: approximate scroll
     /// position (px from top of page & % of page height), visibility, element, context snippet.
     /// Non-invasive when matchIndex &lt; 0 (read-only: no DOM change, no scroll). When matchIndex
@@ -628,8 +680,9 @@ public static class BrowserService
     }
 
     /// <summary>Press a key. If selector is provided, focuses that element first.
-    /// trusted=true — CDP-событие (isTrusted=true), для сайтов с isTrusted-проверкой (Google submit).</summary>
-    public static async Task<string> KeyAsync(string key, string? selector = null, bool trusted = false)
+    /// trusted=true — CDP-событие (isTrusted=true), для сайтов с isTrusted-проверкой (Google submit).
+    /// modifiers: "ctrl+shift+alt+meta" — для Ctrl+C, Ctrl+A и т.п.</summary>
+    public static async Task<string> KeyAsync(string key, string? selector = null, bool trusted = false, string modifiers = "")
     {
         var core = await GetCoreAsync();
         if (trusted)
@@ -643,7 +696,7 @@ public static class BrowserService
                     "return 'OK';" +
                     "})()");
             }
-            var cdpResult = await CdpKeyAsync(key);
+            var cdpResult = await CdpKeyAsync(key, modifiers);
             return cdpResult + (selector is not null ? $" (focused {selector} first)" : "");
         }
         var keyJs = key.ToLowerInvariant() switch
@@ -662,9 +715,10 @@ public static class BrowserService
             "end" => "End",
             _ => key
         };
-        var js = BuildKeyJs(keyJs, selector);
+        var js = BuildKeyJs(keyJs, selector, modifiers);
         var result = await core.ExecuteScriptAsync(js);
-        return Unquote(result) == "OK" ? $"Pressed {key}{(selector is not null ? $" in {selector}" : "")}" : $"Key failed: {Unquote(result)}";
+        var label = string.IsNullOrEmpty(modifiers) ? key : $"{modifiers}+{key}";
+        return Unquote(result) == "OK" ? $"Pressed {label}{(selector is not null ? $" in {selector}" : "")}" : $"Key failed: {Unquote(result)}";
     }
 
     /// <summary>Move the cursor overlay to specific coordinates. Returns current element info at that point.</summary>
@@ -712,25 +766,32 @@ public static class BrowserService
     }
 
     /// <summary>
-    /// Dispatch a TRUSTED mouse event via CDP (isTrusted=true).
-    /// This bypasses the synthetic event limitation — works for form submits, etc.
+    /// Dispatch TRUSTED mouse events via CDP (isTrusted=true): left/right button, 1-3 clicks
+    /// (double-click = clickCount 1→2, как в реальном браузере).
     /// </summary>
-    public static async Task<string> CdpClickAsync(int x, int y)
+    public static async Task<string> CdpClickAsync(int x, int y, string button = "left", int clicks = 1)
     {
-        // MousePressed
-        await CdpAsync("Input.dispatchMouseEvent",
-            $"{{\"type\":\"mousePressed\",\"x\":{x},\"y\":{y},\"button\":\"left\",\"clickCount\":1}}");
-        // MouseReleased
-        await CdpAsync("Input.dispatchMouseEvent",
-            $"{{\"type\":\"mouseReleased\",\"x\":{x},\"y\":{y},\"button\":\"left\",\"clickCount\":1}}");
-        return $"CDP click at ({x},{y})";
+        var b = button.ToLowerInvariant() == "right" ? "right" : "left";
+        var cc = Math.Clamp(clicks, 1, 3);
+        for (var i = 1; i <= cc; i++)
+        {
+            await CdpAsync("Input.dispatchMouseEvent",
+                $"{{\"type\":\"mousePressed\",\"x\":{x},\"y\":{y},\"button\":\"{b}\",\"clickCount\":{i}}}");
+            await CdpAsync("Input.dispatchMouseEvent",
+                $"{{\"type\":\"mouseReleased\",\"x\":{x},\"y\":{y},\"button\":\"{b}\",\"clickCount\":{i}}}");
+            if (cc > 1 && i < cc) await Task.Delay(80);
+        }
+        return cc == 1
+            ? $"CDP {b} click at ({x},{y})"
+            : $"CDP {cc}x {b} click at ({x},{y})";
     }
 
     /// <summary>
     /// Dispatch a TRUSTED key event via CDP (isTrusted=true).
     /// Fixes the form-submit problem that synthetic KeyboardEvent can't solve.
+    /// modifiers: "ctrl+shift+alt+meta" (CDP bitfield: Alt=1, Ctrl=2, Meta=4, Shift=8).
     /// </summary>
-    public static async Task<string> CdpKeyAsync(string key)
+    public static async Task<string> CdpKeyAsync(string key, string modifiers = "")
     {
         var keyDesc = key.ToLowerInvariant() switch
         {
@@ -751,13 +812,30 @@ public static class BrowserService
             "delete" => 46,
             _ => 0
         };
-        // keyDown
+        var mod = ParseModifiers(modifiers);
+        var label = string.IsNullOrEmpty(modifiers) ? key : $"{modifiers}+{key}";
+        // rawKeyDown (не keyDown) — CDP-канон для «настоящих» нажатий с модификаторами
         await CdpAsync("Input.dispatchKeyEvent",
-            $"{{\"type\":\"keyDown\",\"key\":\"{keyDesc}\",\"code\":\"{keyDesc}\",\"windowsVirtualKeyCode\":{keyCode},\"nativeVirtualKeyCode\":{keyCode}}}");
-        // keyUp
+            $"{{\"type\":\"rawKeyDown\",\"key\":\"{keyDesc}\",\"code\":\"{keyDesc}\",\"windowsVirtualKeyCode\":{keyCode},\"nativeVirtualKeyCode\":{keyCode},\"modifiers\":{mod}}}");
         await CdpAsync("Input.dispatchKeyEvent",
-            $"{{\"type\":\"keyUp\",\"key\":\"{keyDesc}\",\"code\":\"{keyDesc}\",\"windowsVirtualKeyCode\":{keyCode},\"nativeVirtualKeyCode\":{keyCode}}}");
-        return $"CDP key: {key}";
+            $"{{\"type\":\"keyUp\",\"key\":\"{keyDesc}\",\"code\":\"{keyDesc}\",\"windowsVirtualKeyCode\":{keyCode},\"nativeVirtualKeyCode\":{keyCode},\"modifiers\":{mod}}}");
+        return $"CDP key: {label}";
+    }
+
+    /// <summary>"ctrl+shift" → CDP bitfield (Alt=1, Ctrl=2, Meta=4, Shift=8).</summary>
+    private static int ParseModifiers(string modifiers)
+    {
+        var m = 0;
+        foreach (var p in modifiers.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            m |= p.ToLowerInvariant() switch
+            {
+                "ctrl" or "control" => 2,
+                "alt" => 1,
+                "shift" => 8,
+                "meta" or "cmd" or "win" => 4,
+                _ => 0
+            };
+        return m;
     }
 
     // ─── Network Diagnostics ──────────────────────────────────
@@ -799,6 +877,162 @@ public static class BrowserService
         var lines = recent.Select(r =>
             $"{r["method"]} {r.GetValueOrDefault("status", "?")} [{r.GetValueOrDefault("type", "")}] {r["url"][..Math.Min(r["url"].Length, 100)]}");
         return $"Last {recent.Count()} requests (of {_networkLog.Count} total):\n" + string.Join("\n", lines);
+    }
+
+    // ─── Downloads / Uploads ──────────────────────────────────
+
+    private sealed record DownloadEntry(string Path, string FileName, long Size, DateTime Time, bool Consumed = false);
+    private static readonly List<DownloadEntry> _downloads = new();
+    private static readonly object _downloadsLock = new();
+
+    /// <summary>Файлы скачиваются в воркспейс (downloads/), а не в «Downloads» системы —
+    /// чтобы агент мог сразу читать их другими инструментами.</summary>
+    private static string DownloadDir => Path.Combine(SelfBuildPaths.WorkspaceRoot, "downloads");
+
+    /// <summary>
+    /// Перехват загрузок (API SDK 1.0.2903): DownloadStarting — переопределяем ResultFilePath
+    /// в downloads/ (имя из URL, анти-коллизия), Handled=true — браузер не лезет в «Downloads».
+    /// Готовность отслеживаем через operation.StateChanged (события DownloadCompleted в этой
+    /// версии нет) и записываем в журнал (читает browser_download).
+    /// </summary>
+    private static void EnableDownloadCapture(CoreWebView2 core)
+    {
+        core.DownloadStarting += (s, e) =>
+        {
+            try
+            {
+                Directory.CreateDirectory(DownloadDir);
+                var op = e.DownloadOperation;
+                var name = "download_" + DateTime.Now.ToString("HHmmss_fff");
+                try
+                {
+                    var seg = new Uri(op.Uri).AbsolutePath.TrimEnd('/');
+                    var last = seg.Substring(seg.LastIndexOf('/') + 1);
+                    if (!string.IsNullOrWhiteSpace(last)) name = Uri.UnescapeDataString(last);
+                }
+                catch { }
+                var path = Path.Combine(DownloadDir, name);
+                var i = 1;
+                while (File.Exists(path))
+                {
+                    var dot = name.LastIndexOf('.');
+                    path = Path.Combine(DownloadDir, dot > 0 ? name[..dot] + "_" + i + name[dot..] : name + "_" + i);
+                    i++;
+                }
+                e.ResultFilePath = path;
+                e.Handled = true;
+                op.StateChanged += (_, _) =>
+                {
+                    try
+                    {
+                        if (op.State != CoreWebView2DownloadState.Completed) return;
+                        long size = 0;
+                        try { size = new FileInfo(op.ResultFilePath).Length; } catch { }
+                        lock (_downloadsLock)
+                        {
+                            _downloads.Add(new DownloadEntry(op.ResultFilePath, Path.GetFileName(op.ResultFilePath), size, DateTime.Now));
+                            if (_downloads.Count > 50) _downloads.RemoveAt(0);
+                        }
+                    }
+                    catch { }
+                };
+            }
+            catch { /* путь по умолчанию лучше, чем падение на скачивании */ }
+        };
+    }
+
+    /// <summary>
+    /// Получить результат загрузки. Агент кликает ссылку, затем вызывает инструмент.
+    /// Две ветки: (1) есть незабрана́я завершённая загрузка — возвращаем её (без тайм-окна:
+    /// зазор «клик → вызов» = время размышления модели, непредсказуемо); (2) ждём завершения
+    /// следующей (500ms poll) — для медленных файлов, которые ещё скачиваются.
+    /// </summary>
+    public static async Task<string> WaitForDownloadAsync(int timeoutMs)
+    {
+        DownloadEntry ready;
+        lock (_downloadsLock)
+        {
+            ready = _downloads.LastOrDefault(d => !d.Consumed);
+            if (ready is not null)
+            {
+                var idx = _downloads.IndexOf(ready);
+                _downloads[idx] = ready with { Consumed = true };
+            }
+        }
+        if (ready is not null)
+            return $"Downloaded: {ready.Path} ({ready.Size} bytes) — you can read it with other tools.";
+
+        int before;
+        lock (_downloadsLock) before = _downloads.Count;
+        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (_downloadsLock)
+            {
+                if (_downloads.Count > before)
+                {
+                    var d = _downloads[^1];
+                    return $"Downloaded: {d.Path} ({d.Size} bytes) — you can read it with other tools.";
+                }
+            }
+            await Task.Delay(500);
+        }
+        return $"No download completed within {timeoutMs}ms. Click the download link/button first, then call browser_download.";
+    }
+
+    /// <summary>
+    /// Upload a file into an <input type="file"> via CDP DOM.setFileInputFiles — trusted,
+    /// сайт не отличает от реального выбора. nodeId берём из DOM.getDocument + DOM.querySelector.
+    /// </summary>
+    public static async Task<string> UploadAsync(string selector, string filePath)
+    {
+        try
+        {
+            return await UploadCoreAsync(selector, filePath);
+        }
+        catch (Exception ex)
+        {
+            return $"Error: {ex.GetType().Name}: {ex.Message}";
+        }
+    }
+
+    private static async Task<string> UploadCoreAsync(string selector, string filePath)
+    {
+        if (!File.Exists(filePath)) return $"Error: file not found: {filePath}";
+        var abs = Path.GetFullPath(filePath);
+
+        // objectId элемента через Runtime.evaluate (DOM.querySelector в CDP-субмножестве
+        // WebView2 не поддерживается — бросает ArgumentException).
+        // expression строится как JS (JsStr = JS-строковый литерал), затем сериализуется
+        // в JSON целиком — иначе кавычки из JsStr ломают JSON-обёртку (WebView2 бросает
+        // ArgumentException на битом JSON).
+        var expression = "document.querySelector(" + JsStr(selector) + ")";
+        var evalParams = JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["expression"] = expression,
+            ["returnByValue"] = false
+        });
+        var ev = await CdpAsync("Runtime.evaluate", evalParams);
+        using (var evJson = JsonDocument.Parse(ev))
+        {
+            if (evJson.RootElement.TryGetProperty("exceptionDetails", out _))
+                return $"Error: JS exception while querying {selector}";
+            var result = evJson.RootElement.GetProperty("result");
+            if (!result.TryGetProperty("objectId", out var oid))
+                return $"Error: not found: {selector}";
+            await CdpAsync("DOM.setFileInputFiles",
+                $"{{\"files\":[{JsStr(abs)}],\"objectId\":{JsStr(oid.GetString())}}}");
+        }
+
+        // change-событие — чтобы React/формы заметили файл.
+        var core = await GetCoreAsync();
+        await core.ExecuteScriptAsync(
+            "(function() {" +
+            "var el = document.querySelector(" + JsStr(selector) + ");" +
+            "if (el) el.dispatchEvent(new Event('change', { bubbles: true }));" +
+            "return 'OK';" +
+            "})()");
+        return $"Uploaded {Path.GetFileName(abs)} to {selector}";
     }
 
     // ─── Auto-Suspend ─────────────────────────────────────────
@@ -1009,29 +1243,51 @@ public static class BrowserService
         "return JSON.stringify({ total: results.length, capped: results.length >= CAP, docHeight: docHeight, viewH: viewH, jumped: jumped, matches: results });" +
         "})()";
 
-    private static string BuildKeyJs(string key, string? selector)
+    private static string BuildKeyJs(string key, string? selector, string modifiers = "")
     {
         var focusPart = selector is not null
             ? "var el = document.querySelector(" + JsStr(selector) + "); if (el) el.focus();"
             : "var el = document.activeElement || document.body;";
+        var modInit = ModJsInit(modifiers);
         return "(function() {" +
             focusPart +
-            "el.dispatchEvent(new KeyboardEvent('keydown', { key: " + JsStr(key) + ", bubbles: true }));" +
-            "el.dispatchEvent(new KeyboardEvent('keypress', { key: " + JsStr(key) + ", bubbles: true }));" +
-            "el.dispatchEvent(new KeyboardEvent('keyup', { key: " + JsStr(key) + ", bubbles: true }));" +
+            "el.dispatchEvent(new KeyboardEvent('keydown', { key: " + JsStr(key) + ", bubbles: true" + modInit + " }));" +
+            "el.dispatchEvent(new KeyboardEvent('keypress', { key: " + JsStr(key) + ", bubbles: true" + modInit + " }));" +
+            "el.dispatchEvent(new KeyboardEvent('keyup', { key: " + JsStr(key) + ", bubbles: true" + modInit + " }));" +
             "return 'OK';" +
             "})()";
     }
 
-    private static string BuildClickAtJs(int x, int y) =>
-        "(function() {" +
-        "var el = document.elementFromPoint(" + x + ", " + y + ");" +
-        "if (!el) return 'ERROR: no element at (" + x + "," + y + ")';" +
-        "el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: " + x + ", clientY: " + y + " }));" +
-        "el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: " + x + ", clientY: " + y + " }));" +
-        "el.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: " + x + ", clientY: " + y + " }));" +
-        "return 'OK';" +
-        "})()";
+    /// <summary>"ctrl+shift" → ", ctrlKey: true, shiftKey: true" для init-объекта KeyboardEvent.</summary>
+    private static string ModJsInit(string modifiers)
+    {
+        var parts = modifiers.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(p => p.ToLowerInvariant()).ToList();
+        var sb = new StringBuilder();
+        if (parts.Contains("ctrl") || parts.Contains("control")) sb.Append(", ctrlKey: true");
+        if (parts.Contains("shift")) sb.Append(", shiftKey: true");
+        if (parts.Contains("alt")) sb.Append(", altKey: true");
+        if (parts.Contains("meta") || parts.Contains("cmd") || parts.Contains("win")) sb.Append(", metaKey: true");
+        return sb.ToString();
+    }
+
+    private static string BuildClickAtJs(int x, int y, string button, int clicks)
+    {
+        var btn = button.ToLowerInvariant() == "right" ? 2 : 0;
+        var cc = Math.Clamp(clicks, 1, 3);
+        return "(function() {" +
+            "var el = document.elementFromPoint(" + x + ", " + y + ");" +
+            "if (!el) return 'ERROR: no element at (" + x + "," + y + ")';" +
+            "var opts = { bubbles: true, clientX: " + x + ", clientY: " + y + ", button: " + btn + " };" +
+            "for (var i = 0; i < " + cc + "; i++) {" +
+            "el.dispatchEvent(new MouseEvent('mousedown', opts));" +
+            "el.dispatchEvent(new MouseEvent('mouseup', opts));" +
+            // Последний клик: dblclick при двойном, contextmenu при ПКМ.
+            "el.dispatchEvent(new MouseEvent(" + (cc > 1 ? "i === 1 ? 'dblclick' : 'click'" : (btn == 2 ? "'contextmenu'" : "'click'")) + ", opts));" +
+            "}" +
+            "return 'OK';" +
+            "})()";
+    }
 
     private const string ConsoleInterceptorJs =
         "(function() {" +

@@ -98,6 +98,32 @@
 
 ## Changelog
 
+### 2026-09-05 — браузер: файлы (download/upload), fetch с сессией, варианты кликов и клавиш
+
+По итогам обсуждения «каких инструментов не хватает WebView2» (обсуждение с владельцем):
+
+1. **`browser_download`** — файлы скачиваются в `downloads/` воркспейса (а не в «Downloads» системы).
+   API SDK 1.0.2903: `DownloadStarting` → `ResultFilePath` + `Handled=true`, имя из `Uri`
+   (DefaultDownloadFileName в этой версии нет), готовность — `operation.StateChanged`
+   (события DownloadCompleted НЕТ). Семантика инструмента: «незабрана́я» загрузка (флаг Consumed,
+   без тайм-окна — зазор «клик → вызов» = время размышления модели) либо ожидание следующей (500ms poll).
+   Плюс `PermissionRequested → Allow` (Chrome блокирует 2+ автоматические загрузки без подтверждения
+   multipleAutomaticDownloads — в агентском браузере некого спрашивать).
+2. **`browser_upload`** — `DOM.setFileInputFiles` через objectId из `Runtime.evaluate`
+   (DOM.querySelector в CDP-субмножестве WebView2 не поддерживается). + change-событие для React.
+   **Ловушка**: JsStr (JS-строковый литерал) внутри JSON-параметров ломает JSON — WebView2 бросает
+   синхронный ArgumentException на битом JSON. Правильно: собрать expression, затем
+   `JsonSerializer.Serialize` целиком.
+3. **`browser_fetch`** — fetch URL в контексте страницы (cookie/сессия, `credentials: 'include'`),
+   БЕЗ навигации. Promise-ловушка: результат в `window.__agent_fetch`, C# поллит. Кап 50KB.
+   Cross-origin → CORS → в описании «для других доменов webfetch/navigate».
+4. **`browser_key(Modifiers)`** — ctrl/shift/alt/meta: CDP-bitfield (Alt=1,Ctrl=2,Meta=4,Shift=8)
+   в trusted-пути, `ctrlKey/shiftKey/...` в синтетическом. Ctrl+C/Ctrl+A и т.п.
+5. **`browser_click_at(Button, Clicks)`** — left/right (ПКМ → contextmenu), 1-3 клика
+   (двойной: clickCount 1→2 в CDP, dblclick в JS).
+6. Обсуждены и ОТКЛОНЕНЫ как избыточные (evaluate закрывает одним выражением):
+   browser_state, browser_links, browser_html. Response bodies в network-лог — в backlog.
+
 ### 2026-09-05 — браузер: 7 улучшений + фикс сломанного browser_wait
 
 По итогам ревью набора браузерных инструментов (обсуждение с владельцем):
@@ -898,4 +924,5 @@ memories/ + diary) остаётся только main'у — горизонт з
 - **Событийная шина агента**: AgentEvent уже discriminated-union — можно дать подписку сторонним UI/логгерам, не только MainViewModel.
 - **Оркестратор** — **удалён (2026-08-21)**: сырая неиспользуемая фича (мультиагент: директор + подчинённые через общий чат, разделение контекста на специализированных агентов). Убраны `Core/Orchestration/`, `OrchestratorViewModel`, `OrchestratorView`, вкладка в UI, тесты. Идея сохранена у владельца в голове — можно вернуть, если понадобится.
 - **Тесты**: harness-сценарии (`tools/Harness`) требуют живой LLM — выделить в отдельную категорию, чтобы `dotnet test` был чисто юнитовым гейтом для self-build.
+- **Тела ответов в browser_network** (обсуждено с владельцем 2026-09-05, отложено): `WebResourceResponseReceived.GetResponseStream()` даёт тела HTTP-ответов — можно ловить JSON API-вызовов страницы (дебаг/скрапинг). Не делаем, пока не понадобится: пересекается с webfetch/browser_fetch.
 - **BPETokenizer (WIP / долгосрочный проект, из актива 2026-08-20)** — локальный счётчик токенов на `assets/tokenizer.json`: код сохранён (`Core/Tokenizers/BPETokenizer` + `TokenCounter`, пометка WIP в шапке), но НЕ используется — количество всегда фактическое от сервера, оценок нет. Для возвращения в бой нужен полный merge-проход по early-merge правила (ByteLevel), нормализация (NFC), спецтокены; затем сверка на живом сервере, что расхождение с /tokenize ≈ 0.

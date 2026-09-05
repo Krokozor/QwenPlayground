@@ -25,10 +25,12 @@ public static class ToolGroupIndex
     {
         [ToolGroup.Browser] =
             "WebView2 browser — a real embedded browser you drive: navigate (URL, back, forward, reload), " +
-            "click/type/hover/select/scroll via CSS selectors or coordinates (with trusted CDP mode for " +
-            "anti-bot sites), press keys, wait for elements to appear/disappear, search page text (find where " +
-            "to scroll), take screenshots (viewport, full page, frame series), extract text line-by-line, " +
-            "evaluate arbitrary JS, read console and network logs. Every action returns a screenshot, so you " +
+            "click/type/hover/select/scroll via CSS selectors or coordinates (trusted CDP mode, right-click, " +
+            "double-click, key modifiers like Ctrl+C), press keys, wait for elements to appear/disappear, " +
+            "search page text (find where to scroll), take screenshots (viewport, full page, frame series), " +
+            "extract text line-by-line, download files (saved to workspace downloads/), upload files into " +
+            "forms, fetch URLs with the page's session cookies, evaluate arbitrary JS, read console and " +
+            "network logs. Every action returns a screenshot, so you " +
             "see what happened. Activate when the task involves a website: web automation, scraping, " +
             "inspecting a page, verifying UI in a real browser, debugging page behavior.",
 

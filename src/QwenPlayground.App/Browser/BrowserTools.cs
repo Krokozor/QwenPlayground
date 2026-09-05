@@ -53,6 +53,7 @@ public sealed class BrowserClickTool : BrowserToolBase
 [Tool("browser_click_at", "Click at specific viewport coordinates (x, y) in the 1280x800 virtual viewport. " +
                           "Use when: the target is a canvas, SVG, or element without a reliable CSS selector. " +
                           "RECOMMENDED: use browser_cursor_move first to verify the target before clicking. " +
+                          "Button: 'left' (default) or 'right' (context menu). Clicks: 1 (default), 2 (double-click) or 3 (triple). " +
                           "Set Trusted=true for a CDP click (isTrusted=true) if the site ignores normal clicks (anti-bot). " +
                           "If the click triggers navigation, waits up to 2s. " +
                           "Returns: text result + screenshot.", ToolGroup.Browser)]
@@ -62,13 +63,17 @@ public sealed class BrowserClickAtTool : BrowserToolBase
     public int X { get; set; }
     [ToolParameter("Y coordinate in viewport (0-800)", Required = true)]
     public int Y { get; set; }
+    [ToolParameter("Mouse button: 'left' (default) or 'right'", Required = false)]
+    public string Button { get; set; } = "left";
+    [ToolParameter("Number of clicks: 1 (default), 2 (double-click), 3 (triple-click)", Required = false)]
+    public int Clicks { get; set; } = 1;
     [ToolParameter("Use trusted CDP click (isTrusted=true) — when the site ignores normal clicks", Required = false)]
     public bool Trusted { get; set; } = false;
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
     {
         if (!BrowserService.IsAttached) return "Error: browser not available.";
-        var result = await BrowserService.ClickAtAsync(X, Y, Trusted);
+        var result = await BrowserService.ClickAtAsync(X, Y, Trusted, Button, Clicks);
         await Task.Delay(300);
         var screenshotPath = await BrowserService.ScreenshotAsync();
         SetScreenshot(screenshotPath);
@@ -134,13 +139,15 @@ public sealed class BrowserKeyTool : BrowserToolBase
     public string Key { get; set; } = string.Empty;
     [ToolParameter("Optional CSS selector to focus before pressing (e.g. 'textarea[name=\"q\"]')")]
     public string? Selector { get; set; }
+    [ToolParameter("Modifier keys: combination of ctrl, shift, alt, meta (e.g. 'ctrl', 'ctrl+shift') — for Ctrl+C, Ctrl+A", Required = false)]
+    public string Modifiers { get; set; } = "";
     [ToolParameter("Dispatch via CDP (isTrusted=true) — when the site ignores synthetic key events", Required = false)]
     public bool Trusted { get; set; } = false;
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
     {
         if (!BrowserService.IsAttached) return "Error: browser not available.";
-        var result = await BrowserService.KeyAsync(Key, Selector, Trusted);
+        var result = await BrowserService.KeyAsync(Key, Selector, Trusted, Modifiers);
         await Task.Delay(200);
         var screenshotPath = await BrowserService.ScreenshotAsync();
         SetScreenshot(screenshotPath);
@@ -344,6 +351,66 @@ public sealed class BrowserFindTool : BrowserToolBase
             SetScreenshot(screenshotPath);
         }
         return text;
+    }
+}
+
+[Tool("browser_download", "Wait for the next file download to complete and return its path + size. " +
+                          "Files are saved to the workspace's downloads/ folder, so you can read them with other tools " +
+                          "(read_file, webfetch no — file tools). Click the download link/button FIRST, then call this. " +
+                          "Returns: 'Downloaded: <path> (<size> bytes)' or a timeout message if nothing was downloaded.")]
+public sealed class BrowserDownloadTool : BrowserToolBase
+{
+    [ToolParameter("Timeout in ms (default 30000, max 120000)", Required = false)]
+    public int TimeoutMs { get; set; } = 30_000;
+
+    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
+    {
+        if (!BrowserService.IsAttached) return "Error: browser not available.";
+        return await BrowserService.WaitForDownloadAsync(Math.Clamp(TimeoutMs, 1_000, 120_000));
+    }
+}
+
+[Tool("browser_upload", "Upload a file from disk into an <input type=\"file\"> element (via CDP DOM.setFileInputFiles — " +
+                        "trusted, the site cannot tell it apart from a real file selection). " +
+                        "Returns: confirmation + screenshot.")]
+public sealed class BrowserUploadTool : BrowserToolBase
+{
+    [ToolParameter("CSS selector of the <input type=\"file\"> element", Required = true)]
+    public string Selector { get; set; } = string.Empty;
+    [ToolParameter("Path to the file to upload (relative to the workspace or absolute)", Required = true)]
+    public string Path { get; set; } = string.Empty;
+
+    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
+    {
+        if (!BrowserService.IsAttached) return "Error: browser not available.";
+        var result = await BrowserService.UploadAsync(Selector, Path);
+        await Task.Delay(300);
+        var screenshotPath = await BrowserService.ScreenshotAsync();
+        SetScreenshot(screenshotPath);
+        return result;
+    }
+}
+
+[Tool("browser_fetch", "Fetch a URL in the page context — with the current page's cookies and session (logged-in state). " +
+                       "Does NOT navigate away from the current page. Returns: HTTP status + body (capped at 50KB). " +
+                       "Use for: API endpoints of the current site, pages that require login. " +
+                       "Cross-origin requests may fail with CORS — for OTHER domains use webfetch or browser_navigate. " +
+                       "Returns: text result + screenshot.")]
+public sealed class BrowserFetchTool : BrowserToolBase
+{
+    [ToolParameter("URL to fetch (absolute, or relative to the current page)", Required = true)]
+    public string Url { get; set; } = string.Empty;
+    [ToolParameter("Timeout in ms (default 30000)", Required = false)]
+    public int TimeoutMs { get; set; } = 30_000;
+
+    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
+    {
+        if (!BrowserService.IsAttached) return "Error: browser not available.";
+        var result = await BrowserService.FetchAsync(Url, Math.Clamp(TimeoutMs, 1_000, 120_000));
+        await Task.Delay(200);
+        var screenshotPath = await BrowserService.ScreenshotAsync();
+        SetScreenshot(screenshotPath);
+        return result;
     }
 }
 
