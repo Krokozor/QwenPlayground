@@ -1,4 +1,6 @@
 using System.IO;
+using System.Text;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -477,6 +479,81 @@ public static class BrowserService
         return Unquote(result);
     }
 
+    /// <summary>
+    /// Search for text on the page. Returns total count + per-match info: approximate scroll
+    /// position (px from top of page & % of page height), visibility, element, context snippet.
+    /// Non-invasive when matchIndex &lt; 0 (read-only: no DOM change, no scroll). When matchIndex
+    /// &gt;= 0, scrolls that match to the viewport center and highlights it (yellow) — the caller
+    /// should then take a screenshot. Returns (formatted text, whether a match was jumped to).
+    /// </summary>
+    public static async Task<(string Text, bool Jumped)> FindAsync(string query, bool caseSensitive, int matchIndex)
+    {
+        var core = await GetCoreAsync();
+        var js = BuildFindJs(query, caseSensitive, matchIndex);
+        var raw = await core.ExecuteScriptAsync(js);
+        var json = Unquote(raw);
+
+        FindResult? fr;
+        try
+        {
+            fr = JsonSerializer.Deserialize<FindResult>(json, FindJsonOpts);
+        }
+        catch
+        {
+            return ("Error: could not parse find result: " + json, false);
+        }
+        if (fr is null)
+            return ("Error: empty find result.", false);
+
+        if (fr.total == 0)
+            return ($"No matches for \"{query}\" (page {fr.docHeight}px, viewport {fr.viewH}px).", false);
+
+        var sb = new StringBuilder();
+        var totalLabel = fr.capped ? $"{fr.total}+ (showing first {fr.total})" : fr.total.ToString();
+        sb.Append($"Found {totalLabel} match(es) for \"{query}\" — page {fr.docHeight}px, viewport {fr.viewH}px.\n");
+        sb.Append("y = px from top of page, % = fraction of page height (so you know roughly where to scroll):\n");
+        foreach (var m in fr.matches)
+        {
+            sb.Append($"  [{m.i}] y≈{m.y} ({m.pct}%) {(m.vis ? "" : "[hidden] ")}<{m.el}> \"{CleanSnippet(m.ctx)}\"\n");
+        }
+        if (fr.jumped)
+            sb.Append($"→ Scrolled to match [{matchIndex}] and highlighted it (yellow). Screenshot attached.");
+        else
+            sb.Append("Tip: pass MatchIndex=<i> to scroll to and screenshot match <i>.");
+        return (sb.ToString().TrimEnd(), fr.jumped);
+    }
+
+    /// <summary>Compact a context snippet for one line: flatten whitespace, cap length.</summary>
+    private static string CleanSnippet(string s)
+    {
+        s = s.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+        s = s.Trim();
+        if (s.Length > 120) s = s[..120] + "…";
+        return s;
+    }
+
+    private static readonly JsonSerializerOptions FindJsonOpts = new() { PropertyNameCaseInsensitive = true };
+
+    private sealed class FindResult
+    {
+        public int total { get; set; }
+        public bool capped { get; set; }
+        public int docHeight { get; set; }
+        public int viewH { get; set; }
+        public bool jumped { get; set; }
+        public List<FindMatch> matches { get; set; } = new();
+    }
+
+    private sealed class FindMatch
+    {
+        public int i { get; set; }
+        public int y { get; set; }
+        public int pct { get; set; }
+        public bool vis { get; set; }
+        public string el { get; set; } = "";
+        public string ctx { get; set; } = "";
+    }
+
     /// <summary>Press a key. If selector is provided, focuses that element first.</summary>
     public static async Task<string> KeyAsync(string key, string? selector = null)
     {
@@ -757,6 +834,76 @@ public static class BrowserService
         "var parts = [];" +
         "els.forEach(function(el){ parts.push(el.innerText); });" +
         "return parts.join('\\n---\\n');" +
+        "})()";
+
+    private const int FindCap = 50;
+
+    /// <summary>
+    /// Walk all text nodes, find every occurrence of <paramref name="query"/>, and for each
+    /// record its absolute document Y (rect.top + scrollY), % of page height, visibility,
+    /// element descriptor and a context snippet. If matchIndex &gt;= 0, scroll that match to the
+    /// viewport center and wrap it in a yellow &lt;mark&gt;. Returns a JSON string.
+    /// </summary>
+    private static string BuildFindJs(string query, bool caseSensitive, int matchIndex) =>
+        "(function() {" +
+        "var query = " + JsStr(query) + ";" +
+        "var caseSensitive = " + (caseSensitive ? "true" : "false") + ";" +
+        "var matchIndex = " + matchIndex + ";" +
+        "var CAP = " + FindCap + ";" +
+        "var prev = document.querySelectorAll('#__agent_find_mark');" +
+        "for (var k = 0; k < prev.length; k++) { if (prev[k].parentNode) prev[k].parentNode.removeChild(prev[k]); }" +
+        "var docHeight = Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);" +
+        "var viewH = window.innerHeight;" +
+        "var results = [];" +
+        "var ranges = [];" +
+        "if (document.body) {" +
+        // Skip text inside non-rendered elements (script/style/noscript/template): raw code,
+        // never visible page text — pure noise for a "where to scroll" search.
+        "var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {" +
+        "acceptNode: function(n) {" +
+        "var p = n.parentElement;" +
+        "if (p) { var t = p.tagName; if (t === 'SCRIPT' || t === 'STYLE' || t === 'NOSCRIPT' || t === 'TEMPLATE') return NodeFilter.FILTER_REJECT; }" +
+        "return NodeFilter.FILTER_ACCEPT;" +
+        "}});" +
+        "var node;" +
+        "while ((node = walker.nextNode()) && results.length < CAP) {" +
+        "var text = node.nodeValue || '';" +
+        "if (!text) continue;" +
+        "var hay = caseSensitive ? text : text.toLowerCase();" +
+        "var needle = caseSensitive ? query : query.toLowerCase();" +
+        "var idx = 0;" +
+        "while (true) {" +
+        "if (results.length >= CAP) break;" +
+        "var found = hay.indexOf(needle, idx);" +
+        "if (found === -1) break;" +
+        "var range = document.createRange();" +
+        "range.setStart(node, found);" +
+        "range.setEnd(node, found + query.length);" +
+        "var rect = range.getBoundingClientRect();" +
+        "var absTop = rect.top + window.scrollY;" +
+        "var snippet = text.slice(Math.max(0, found - 40), found + query.length + 40);" +
+        "var el = node.parentElement;" +
+        "var desc = el ? el.tagName.toLowerCase() : '';" +
+        "if (el && el.id) desc += '#' + el.id;" +
+        "if (el && el.className && typeof el.className === 'string') desc += '.' + el.className.split(' ').slice(0,2).join('.');" +
+        "results.push({ i: results.length, y: Math.round(absTop), pct: docHeight > 0 ? Math.round(absTop / docHeight * 100) : 0, vis: (rect.width > 0 || rect.height > 0), el: desc, ctx: snippet });" +
+        "ranges.push(range);" +
+        "idx = found + 1;" +
+        "}" +
+        "}" +
+        "}" +
+        "var jumped = false;" +
+        "if (matchIndex >= 0 && matchIndex < results.length) {" +
+        "var r = ranges[matchIndex];" +
+        "var mark = document.createElement('mark');" +
+        "mark.id = '__agent_find_mark';" +
+        "mark.style.cssText = 'background:#ff0;box-shadow:0 0 0 2px #f0f;';" +
+        "try { r.surroundContents(mark); } catch (e) {}" +
+        "var targetY = results[matchIndex].y - Math.floor(viewH / 2);" +
+        "window.scrollTo(0, Math.max(0, targetY));" +
+        "jumped = true;" +
+        "}" +
+        "return JSON.stringify({ total: results.length, capped: results.length >= CAP, docHeight: docHeight, viewH: viewH, jumped: jumped, matches: results });" +
         "})()";
 
     private static string BuildKeyJs(string key, string? selector)

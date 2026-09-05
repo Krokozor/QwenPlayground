@@ -283,6 +283,39 @@ public sealed class BrowserExtractTool : AgentTool
     }
 }
 
+[Tool("browser_find", "Search for text on the page and tell you WHERE each match is, so you can scroll to it " +
+                      "instead of scrolling blindly. Returns total count + for each match: approximate scroll " +
+                      "position (px from top of page & % of page height), visibility, the element, and a context " +
+                      "snippet. Case-insensitive by default. Max 50 matches (more common words are capped). " +
+                      "By default NO screenshot (text only, cheap). Set MatchIndex (0-based) to scroll to and " +
+                      "highlight that specific match — then a screenshot is attached showing it in the viewport. " +
+                      "Text in <script>/<style>/<noscript>/<template> (raw code) is excluded; CSS-hidden " +
+                      "content is still listed but marked [hidden]. Text inside <iframe>s is not searched.", ToolGroup.Browser)]
+public sealed class BrowserFindTool : BrowserToolBase
+{
+    [ToolParameter("Text to search for on the page", Required = true)]
+    public string Query { get; set; } = string.Empty;
+
+    [ToolParameter("Case-sensitive search (default false)", Required = false)]
+    public bool CaseSensitive { get; set; } = false;
+
+    [ToolParameter("0-based index of a match to scroll to and highlight (returns a screenshot). Omit for a text-only list.", Required = false)]
+    public int MatchIndex { get; set; } = -1;
+
+    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
+    {
+        if (!BrowserService.IsAttached) return "Error: browser not available.";
+        var (text, jumped) = await BrowserService.FindAsync(Query, CaseSensitive, MatchIndex);
+        if (jumped)
+        {
+            await Task.Delay(300);
+            var screenshotPath = await BrowserService.ScreenshotAsync();
+            SetScreenshot(screenshotPath);
+        }
+        return text;
+    }
+}
+
 [Tool("browser_evaluate", "Execute arbitrary JavaScript on the page and return the result. " +
                           "POWER TOOL — use for anything not covered by other tools. " +
                           "Examples: form.submit(), getComputedStyle(el), localStorage.getItem('token'). " +
