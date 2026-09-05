@@ -41,7 +41,7 @@ public partial class BrowserView : UserControl
     {
         try
         {
-            await BrowserService.GoBackAsync();
+            StatusText.Text = await BrowserService.NavigateActionAsync("back", "");
             await TakeScreenshot();
         }
         catch (Exception ex)
@@ -54,7 +54,7 @@ public partial class BrowserView : UserControl
     {
         try
         {
-            await BrowserService.GoForwardAsync();
+            StatusText.Text = await BrowserService.NavigateActionAsync("forward", "");
             await TakeScreenshot();
         }
         catch (Exception ex)
@@ -67,7 +67,7 @@ public partial class BrowserView : UserControl
     {
         try
         {
-            await BrowserService.ReloadAsync();
+            StatusText.Text = await BrowserService.NavigateActionAsync("reload", "");
             await TakeScreenshot();
         }
         catch (Exception ex)

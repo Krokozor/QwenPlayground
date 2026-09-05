@@ -249,22 +249,35 @@ public static class BrowserService
         }
     }
 
-    public static async Task GoBackAsync()
+    /// <summary>
+    /// Единая точка навигации: navigate (URL) / back / forward / reload.
+    /// back/forward/reload дают короткий задержку-стабилизацию (NavigationCompleted
+    /// на них не подписываемся — 500-800мс достаточно для SPA-роутинга).
+    /// </summary>
+    public static async Task<string> NavigateActionAsync(string action, string url, CancellationToken ct = default)
     {
         var core = await GetCoreAsync();
-        if (core.CanGoBack) core.GoBack();
-    }
-
-    public static async Task GoForwardAsync()
-    {
-        var core = await GetCoreAsync();
-        if (core.CanGoForward) core.GoForward();
-    }
-
-    public static async Task ReloadAsync()
-    {
-        var core = await GetCoreAsync();
-        core.Reload();
+        switch (action.Trim().ToLowerInvariant())
+        {
+            case "back":
+                if (!core.CanGoBack) return "Cannot go back — no previous page in history.";
+                core.GoBack();
+                await Task.Delay(500);
+                return $"Went back → {core.Source}";
+            case "forward":
+                if (!core.CanGoForward) return "Cannot go forward — no next page in history.";
+                core.GoForward();
+                await Task.Delay(500);
+                return $"Went forward → {core.Source}";
+            case "reload":
+                core.Reload();
+                await Task.Delay(800);
+                return $"Reloaded {core.Source}";
+            default:
+                if (string.IsNullOrWhiteSpace(url))
+                    return $"Error: Action='{action}' unknown (use navigate/back/forward/reload) and no Url given.";
+                return await NavigateAsync(url, ct);
+        }
     }
 
     public static async Task<string> GetCurrentUrlAsync()
@@ -387,9 +400,12 @@ public static class BrowserService
         return $"Clicked {selector}";
     }
 
-    /// <summary>Click at specific viewport coordinates (for canvas, SVG, elements without CSS selectors).</summary>
-    public static async Task<string> ClickAtAsync(int x, int y)
+    /// <summary>Click at specific viewport coordinates (for canvas, SVG, elements without CSS selectors).
+    /// trusted=true — CDP-клик (isTrusted=true), для сайтов с антибот-проверкой.</summary>
+    public static async Task<string> ClickAtAsync(int x, int y, bool trusted = false)
     {
+        if (trusted)
+            return await CdpClickAsync(x, y);
         var core = await GetCoreAsync();
         var urlBefore = core.Source;
 
@@ -418,12 +434,17 @@ public static class BrowserService
         return $"Clicked at ({x},{y})";
     }
 
-    public static async Task<string> TypeAsync(string selector, string text)
+    /// <summary>Type into an input/textarea. mode='set' — value целиком (быстро);
+    /// mode='type' — посимвольно с keydown/input/keyup (React-контролируемые инпуты, debounce-поиск).</summary>
+    public static async Task<string> TypeAsync(string selector, string text, string mode = "set")
     {
         var core = await GetCoreAsync();
-        var js = BuildTypeJs(selector, text);
+        var js = mode.Equals("type", StringComparison.OrdinalIgnoreCase)
+            ? BuildTypeCharsJs(selector, text)
+            : BuildTypeJs(selector, text);
         var result = await core.ExecuteScriptAsync(js);
-        return Unquote(result) == "OK" ? $"Typed '{text}' into {selector}" : $"Type failed: {Unquote(result)}";
+        var ok = Unquote(result) == "OK";
+        return ok ? $"Typed '{text}' into {selector} (mode={mode})" : $"Type failed: {Unquote(result)}";
     }
 
     public static async Task<string> SelectAsync(string selector, string value)
@@ -448,20 +469,55 @@ public static class BrowserService
         return r + "/" + await core.ExecuteScriptAsync("document.documentElement.scrollHeight");
     }
 
-    public static async Task<string> HoverAsync(string selector)
+    /// <summary>Hover over an element. trusted=true — CDP mouseMoved (isTrusted=true):
+    /// для реальных :hover-меню, которые не открываются от синтетического mouseover.</summary>
+    public static async Task<string> HoverAsync(string selector, bool trusted = false)
     {
         var core = await GetCoreAsync();
-        var js = BuildHoverJs(selector);
-        var result = await core.ExecuteScriptAsync(js);
+        if (trusted)
+        {
+            var js = "(function() {" +
+                "var el = document.querySelector(" + JsStr(selector) + ");" +
+                "if (!el) return 'ERROR: not found: " + EscapeJs(selector) + "';" +
+                "el.scrollIntoView({ block: 'center' });" +
+                "var r = el.getBoundingClientRect();" +
+                "return Math.round(r.left + r.width / 2) + ',' + Math.round(r.top + r.height / 2);" +
+                "})()";
+            var raw = await core.ExecuteScriptAsync(js);
+            var text = Unquote(raw);
+            var parts = text.Split(',');
+            if (parts.Length != 2 || !int.TryParse(parts[0], out var cx) || !int.TryParse(parts[1], out var cy))
+                return $"Hover failed: {text}";
+            await CdpAsync("Input.dispatchMouseEvent", $"{{\"type\":\"mouseMoved\",\"x\":{cx},\"y\":{cy}}}");
+            return $"Trusted hover at ({cx},{cy}) on {selector}";
+        }
+        var hoverJs = BuildHoverJs(selector);
+        var result = await core.ExecuteScriptAsync(hoverJs);
         return Unquote(result) == "OK" ? $"Hovered {selector}" : $"Hover failed: {Unquote(result)}";
     }
 
-    public static async Task<string> WaitAsync(string selector, int timeoutMs)
+    /// <summary>Wait for an element. mode='appear' (default) — дождаться появления;
+    /// mode='absent' — дождаться исчезновения (спиннер ушёл, модалка закрылась).
+    /// ВАЖНО: ExecuteScriptAsync НЕ дожидается JS-Promise (возвращает сам объект {}),
+    /// поэтому опрос идёт на C#-стороне каждые 200мс — MutationObserver/Promise не работают.</summary>
+    public static async Task<string> WaitAsync(string selector, int timeoutMs, string mode = "appear")
     {
         var core = await GetCoreAsync();
-        var js = BuildWaitJs(selector, timeoutMs);
-        var result = await core.ExecuteScriptAsync(js);
-        return Unquote(result) == "OK" ? $"Element {selector} appeared" : $"Timeout waiting for {selector} ({timeoutMs}ms)";
+        var absent = mode.Equals("absent", StringComparison.OrdinalIgnoreCase);
+        var checkJs = "(function() {" +
+                      "var found = !!document.querySelector(" + JsStr(selector) + ");" +
+                      "return " + (absent ? "!found" : "found") + " ? 'YES' : 'NO';" +
+                      "})()";
+        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(timeoutMs);
+        while (true)
+        {
+            var result = await core.ExecuteScriptAsync(checkJs);
+            if (Unquote(result) == "YES")
+                return absent ? $"Element {selector} is gone" : $"Element {selector} appeared";
+            if (DateTime.UtcNow >= deadline)
+                return $"Timeout waiting for {selector} to {(absent ? "disappear" : "appear")} ({timeoutMs}ms)";
+            await Task.Delay(200);
+        }
     }
 
     public static async Task<string> EvaluateAsync(string script)
@@ -471,12 +527,29 @@ public static class BrowserService
         return Unquote(result);
     }
 
-    public static async Task<string> ExtractAsync(string selector)
+    /// <summary>
+    /// Read element text line-based (like file_read): returns lines offset..offset+limit-1
+    /// of the joined innerText + how many lines remain. Keeps context cost predictable.
+    /// </summary>
+    public static async Task<string> ExtractAsync(string selector, int offset, int limit)
     {
         var core = await GetCoreAsync();
         var js = BuildExtractJs(selector);
         var result = await core.ExecuteScriptAsync(js);
-        return Unquote(result);
+        var text = Unquote(result);
+        if (text.StartsWith("ERROR:", StringComparison.Ordinal)) return text;
+
+        var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        var total = lines.Length;
+        offset = Math.Clamp(offset, 0, total);
+        if (offset >= total)
+            return $"Nothing to read at line {offset} (content is {total} lines).";
+        var end = Math.Min(offset + limit, total);
+        var slice = string.Join("\n", lines.Skip(offset).Take(end - offset));
+        var tail = end < total
+            ? $"\n… {total - end} more lines — continue with Offset={end}."
+            : "\n(end of content)";
+        return $"Lines {offset}–{end - 1} of {total} for {selector}:\n{slice}\n{tail.TrimStart()}";
     }
 
     /// <summary>
@@ -554,10 +627,25 @@ public static class BrowserService
         public string ctx { get; set; } = "";
     }
 
-    /// <summary>Press a key. If selector is provided, focuses that element first.</summary>
-    public static async Task<string> KeyAsync(string key, string? selector = null)
+    /// <summary>Press a key. If selector is provided, focuses that element first.
+    /// trusted=true — CDP-событие (isTrusted=true), для сайтов с isTrusted-проверкой (Google submit).</summary>
+    public static async Task<string> KeyAsync(string key, string? selector = null, bool trusted = false)
     {
         var core = await GetCoreAsync();
+        if (trusted)
+        {
+            if (selector is not null)
+            {
+                await core.ExecuteScriptAsync(
+                    "(function() {" +
+                    "var el = document.querySelector(" + JsStr(selector) + ");" +
+                    "if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }" +
+                    "return 'OK';" +
+                    "})()");
+            }
+            var cdpResult = await CdpKeyAsync(key);
+            return cdpResult + (selector is not null ? $" (focused {selector} first)" : "");
+        }
         var keyJs = key.ToLowerInvariant() switch
         {
             "enter" => "Enter",
@@ -793,6 +881,33 @@ public static class BrowserService
         "return 'OK';" +
         "})()";
 
+    /// <summary>
+    /// Type character-by-character: keydown → native value setter (React-совместимо) → input → keyup
+    /// на каждый символ. Нативный setter (Object.getOwnPropertyDescriptor(...).set) нужен, чтобы
+    /// React-контролируемые инпуты приняли значение — прямое el.value = ... React не видит.
+    /// </summary>
+    private static string BuildTypeCharsJs(string selector, string text) =>
+        "(function() {" +
+        "var el = document.querySelector(" + JsStr(selector) + ");" +
+        "if (!el) return 'ERROR: not found: " + EscapeJs(selector) + "';" +
+        "el.scrollIntoView({ block: 'center' });" +
+        "el.focus();" +
+        "var text = " + JsStr(text) + ";" +
+        "function appendChar(ch) {" +
+        "var proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;" +
+        "var desc = Object.getOwnPropertyDescriptor(proto, 'value');" +
+        "if (desc && desc.set) desc.set.call(el, el.value + ch); else el.value = el.value + ch;" +
+        "el.dispatchEvent(new Event('input', { bubbles: true }));" +
+        "}" +
+        "for (var i = 0; i < text.length; i++) {" +
+        "el.dispatchEvent(new KeyboardEvent('keydown', { key: text[i], bubbles: true }));" +
+        "appendChar(text[i]);" +
+        "el.dispatchEvent(new KeyboardEvent('keyup', { key: text[i], bubbles: true }));" +
+        "}" +
+        "el.dispatchEvent(new Event('change', { bubbles: true }));" +
+        "return 'OK';" +
+        "})()";
+
     private static string BuildSelectJs(string selector, string value) =>
         "(function() {" +
         "var el = document.querySelector(" + JsStr(selector) + ");" +
@@ -813,19 +928,7 @@ public static class BrowserService
         "return 'OK';" +
         "})()";
 
-    private static string BuildWaitJs(string selector, int timeoutMs) =>
-        "(function() {" +
-        "return new Promise(function(resolve) {" +
-        "var el = document.querySelector(" + JsStr(selector) + ");" +
-        "if (el) { resolve('OK'); return; }" +
-        "var obs = new MutationObserver(function() {" +
-        "var el = document.querySelector(" + JsStr(selector) + ");" +
-        "if (el) { obs.disconnect(); resolve('OK'); }" +
-        "});" +
-        "obs.observe(document.body, { childList: true, subtree: true });" +
-        "setTimeout(function(){ obs.disconnect(); resolve('TIMEOUT'); }, " + timeoutMs + ");" +
-        "});" +
-        "})()";
+
 
     private static string BuildExtractJs(string selector) =>
         "(function() {" +

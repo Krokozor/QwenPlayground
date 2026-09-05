@@ -24,12 +24,13 @@ public static class ToolGroupIndex
     private static readonly Dictionary<ToolGroup, string> InactiveDescriptions = new()
     {
         [ToolGroup.Browser] =
-            "WebView2 browser — a real embedded browser you drive: navigate to a URL, click/type/hover/" +
-            "select/scroll via CSS selectors or coordinates, press keys (incl. trusted CDP keys), wait for " +
-            "elements, take screenshots (viewport, full page, frame series), extract text, evaluate arbitrary " +
-            "JS, read console and network logs. Every action returns a screenshot, so you see what happened. " +
-            "Activate when the task involves a website: web automation, scraping, inspecting a page, " +
-            "verifying UI in a real browser, debugging page behavior.",
+            "WebView2 browser — a real embedded browser you drive: navigate (URL, back, forward, reload), " +
+            "click/type/hover/select/scroll via CSS selectors or coordinates (with trusted CDP mode for " +
+            "anti-bot sites), press keys, wait for elements to appear/disappear, search page text (find where " +
+            "to scroll), take screenshots (viewport, full page, frame series), extract text line-by-line, " +
+            "evaluate arbitrary JS, read console and network logs. Every action returns a screenshot, so you " +
+            "see what happened. Activate when the task involves a website: web automation, scraping, " +
+            "inspecting a page, verifying UI in a real browser, debugging page behavior.",
 
         [ToolGroup.CSharp] =
             "Roslyn C# analysis over the workspace .NET solution — semantic, not just text search: find a " +

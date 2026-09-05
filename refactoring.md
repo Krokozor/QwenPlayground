@@ -98,6 +98,38 @@
 
 ## Changelog
 
+### 2026-09-05 — браузер: 7 улучшений + фикс сломанного browser_wait
+
+По итогам ревью набора браузерных инструментов (обсуждение с владельцем):
+
+1. **Trusted-режим вместо отдельных CDP-инструментов** — `Trusted` (bool) добавлен в
+   `browser_click_at`, `browser_hover`, `browser_key`. Отдельный `browser_cdp_key` УДАЛЁН
+   (стал `browser_key(trusted=true)`). Меньше сущностей, модель не гадает, какой инструмент брать.
+   Trusted = CDP `Input.dispatchMouseEvent`/`dispatchKeyEvent` (isTrusted=true) — для сайтов
+   с антибот-проверкой.
+2. **`browser_navigate(Action)`** — `Action`: navigate (default, нужен Url) / back / forward / reload.
+   Url стал optional. Сервис: единый `NavigateActionAsync` (CanGoBack/CanGoForward-проверки,
+   500-800мс стабилизация). Debug-вкладка BrowserView переключена на него.
+3. **`browser_extract` — пагинация как в file_read** — `Offset`/`Limit` (default 100 строк, max 500),
+   ответ «Lines X–Y of N … continue with Offset=Z». Раньше возвращал ВЕСЬ innerText без лимита.
+4. **`browser_wait` — `Mode` appear/absent** — absent = дождаться исчезновения (спиннер/модалка).
+5. **`browser_type` — `Mode` set/type** — type = посимвольно (keydown → нативный value setter →
+   input → keyup): React-контролируемые инпуты и debounce-поиск. Нативный setter
+   (`Object.getOwnPropertyDescriptor(proto,'value').set`) — прямой `el.value=` React не видит.
+6. **`sleep` (Core)** — пауза на N секунд (1-300) для случаев, когда время должно пройти, а
+   загрузка страницы не покрывает: таймеры, капчи «посмотри рекламу X секунд», rate-limit'ы.
+7. **Описания find/extract разведены** — перекрёстные ссылки («ГДЕ → find, ЧТО → extract») +
+   пометки про iframe (same-origin → browser_evaluate).
+
+**Найден и исправлен живой баг (с MVP!): `ExecuteScriptAsync` НЕ дожидается JS-Promise** —
+возвращает сам Promise-объект как `"{}"`. Старый `browser_wait` (MutationObserver в Promise)
+поэтому ВСЕГДА возвращал «timeout». Переписан на опрос с C#-стороны: `ExecuteScriptAsync`
+'YES'/'NO' каждые 200мс. Правило: любой JS через ExecuteScriptAsync должен возвращать
+значение синхронно, не Promise.
+
+Проверено на живой странице (Википедия): find (35 матчей с y/%), extract-пагинация (136 строк),
+wait absent/appear, navigate back, type mode=type, trusted key/click (submit формы поиска).
+
 ### 2026-09-04 — код-аудит: заглушки, хардкод, сомнительные места
 
 Свип всего `src/` (413 .cs) на заглушки/захардкоженные значения/сомнительные места. В целом код чистый:

@@ -3,13 +3,17 @@ using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.App.Browser;
 
-[Tool("browser_navigate", "Navigate the agent's browser to a URL. Waits for page load (up to 30s). " +
-                          "ALWAYS use this first before interacting with a site. " +
-                          "Returns: text result + screenshot of the loaded page. " +
+[Tool("browser_navigate", "Navigate the agent's browser. Action='navigate' (default): go to Url, waits for page load (up to 30s). " +
+                          "Action='back'/'forward': move through page history (no Url needed). Action='reload': refresh the current page. " +
+                          "ALWAYS use Action='navigate' with a URL first before interacting with a site. " +
+                          "Returns: text result + screenshot of the resulting page. " +
                           "If the internet is down, you'll get a timeout error after 30s.", ToolGroup.Browser)]
 public sealed class BrowserNavigateTool : BrowserToolBase
 {
-    [ToolParameter("The URL to navigate to (must start with http:// or https://)", Required = true)]
+    [ToolParameter("Action: 'navigate' (default, go to Url), 'back', 'forward', or 'reload'", Required = false)]
+    public string Action { get; set; } = "navigate";
+
+    [ToolParameter("The URL to navigate to (required for Action='navigate', must start with http:// or https://)", Required = false)]
     public string Url { get; set; } = string.Empty;
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
@@ -17,7 +21,7 @@ public sealed class BrowserNavigateTool : BrowserToolBase
         if (!BrowserService.IsAttached)
             return "Error: browser not available. ChatView may not have loaded yet.";
 
-        var result = await BrowserService.NavigateAsync(Url, ct);
+        var result = await BrowserService.NavigateActionAsync(Action, Url, ct);
         await BrowserService.InjectCursorOverlayAsync();
         var screenshotPath = await BrowserService.ScreenshotAsync();
         SetScreenshot(screenshotPath);
@@ -49,6 +53,7 @@ public sealed class BrowserClickTool : BrowserToolBase
 [Tool("browser_click_at", "Click at specific viewport coordinates (x, y) in the 1280x800 virtual viewport. " +
                           "Use when: the target is a canvas, SVG, or element without a reliable CSS selector. " +
                           "RECOMMENDED: use browser_cursor_move first to verify the target before clicking. " +
+                          "Set Trusted=true for a CDP click (isTrusted=true) if the site ignores normal clicks (anti-bot). " +
                           "If the click triggers navigation, waits up to 2s. " +
                           "Returns: text result + screenshot.", ToolGroup.Browser)]
 public sealed class BrowserClickAtTool : BrowserToolBase
@@ -57,11 +62,13 @@ public sealed class BrowserClickAtTool : BrowserToolBase
     public int X { get; set; }
     [ToolParameter("Y coordinate in viewport (0-800)", Required = true)]
     public int Y { get; set; }
+    [ToolParameter("Use trusted CDP click (isTrusted=true) — when the site ignores normal clicks", Required = false)]
+    public bool Trusted { get; set; } = false;
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
     {
         if (!BrowserService.IsAttached) return "Error: browser not available.";
-        var result = await BrowserService.ClickAtAsync(X, Y);
+        var result = await BrowserService.ClickAtAsync(X, Y, Trusted);
         await Task.Delay(300);
         var screenshotPath = await BrowserService.ScreenshotAsync();
         SetScreenshot(screenshotPath);
@@ -90,7 +97,9 @@ public sealed class BrowserCursorMoveTool : BrowserToolBase
     }
 }
 
-[Tool("browser_type", "Type text into an input/textarea. Sets value, focuses element, fires input+change events. " +
+[Tool("browser_type", "Type text into an input/textarea. Mode='set' (default): sets value at once, fast. " +
+                      "Mode='type': types character-by-character with key events — use for React/controlled inputs " +
+                      "and debounced live-search where setting the value at once doesn't register. " +
                       "Triggers autocomplete on sites like Google. " +
                       "NOTE: does NOT submit forms — use browser_key(enter, selector) or click submit button. " +
                       "Returns: text result + screenshot (you'll see autocomplete if it appeared).", ToolGroup.Browser)]
@@ -100,11 +109,13 @@ public sealed class BrowserTypeTool : BrowserToolBase
     public string Selector { get; set; } = string.Empty;
     [ToolParameter("Text to type into the field", Required = true)]
     public string Text { get; set; } = string.Empty;
+    [ToolParameter("Mode: 'set' (default, value at once) or 'type' (character-by-character with key events)", Required = false)]
+    public string Mode { get; set; } = "set";
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
     {
         if (!BrowserService.IsAttached) return "Error: browser not available.";
-        var result = await BrowserService.TypeAsync(Selector, Text);
+        var result = await BrowserService.TypeAsync(Selector, Text, Mode);
         await Task.Delay(200);
         var screenshotPath = await BrowserService.ScreenshotAsync();
         SetScreenshot(screenshotPath);
@@ -114,8 +125,8 @@ public sealed class BrowserTypeTool : BrowserToolBase
 
 [Tool("browser_key", "Press a keyboard key. If selector is provided, focuses that element first. " +
                      "Keys: enter, tab, escape, backspace, delete, space, arrowup/down/left/right, home, end, or single char. " +
-                     "NOTE: some sites (Google) ignore synthetic Enter for form submit (isTrusted check). " +
-                     "Workaround: use browser_evaluate('document.querySelector(\"form\").submit()') or navigate to URL. " +
+                     "Set Trusted=true to dispatch via CDP (isTrusted=true) — use when the site ignores synthetic events " +
+                     "(e.g. Google form submit checks isTrusted). " +
                      "Returns: text result + screenshot.", ToolGroup.Browser)]
 public sealed class BrowserKeyTool : BrowserToolBase
 {
@@ -123,11 +134,13 @@ public sealed class BrowserKeyTool : BrowserToolBase
     public string Key { get; set; } = string.Empty;
     [ToolParameter("Optional CSS selector to focus before pressing (e.g. 'textarea[name=\"q\"]')")]
     public string? Selector { get; set; }
+    [ToolParameter("Dispatch via CDP (isTrusted=true) — when the site ignores synthetic key events", Required = false)]
+    public bool Trusted { get; set; } = false;
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
     {
         if (!BrowserService.IsAttached) return "Error: browser not available.";
-        var result = await BrowserService.KeyAsync(Key, Selector);
+        var result = await BrowserService.KeyAsync(Key, Selector, Trusted);
         await Task.Delay(200);
         var screenshotPath = await BrowserService.ScreenshotAsync();
         SetScreenshot(screenshotPath);
@@ -175,16 +188,20 @@ public sealed class BrowserScrollTool : BrowserToolBase
 }
 
 [Tool("browser_hover", "Hover over an element (triggers :hover styles, dropdowns, tooltips). " +
+                       "Set Trusted=true for a CDP mouse move (isTrusted=true) — use when the normal hover " +
+                       "doesn't open the menu (real :hover dropdowns on React etc.). " +
                         "Returns: text result + screenshot (you'll see the tooltip/dropdown if it appeared).", ToolGroup.Browser)]
 public sealed class BrowserHoverTool : BrowserToolBase
 {
     [ToolParameter("CSS selector of the element to hover", Required = true)]
     public string Selector { get; set; } = string.Empty;
+    [ToolParameter("Use trusted CDP mouse move (isTrusted=true) — when normal hover doesn't open the menu", Required = false)]
+    public bool Trusted { get; set; } = false;
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
     {
         if (!BrowserService.IsAttached) return "Error: browser not available.";
-        var result = await BrowserService.HoverAsync(Selector);
+        var result = await BrowserService.HoverAsync(Selector, Trusted);
         await Task.Delay(300);
         var screenshotPath = await BrowserService.ScreenshotAsync();
         SetScreenshot(screenshotPath);
@@ -192,20 +209,24 @@ public sealed class BrowserHoverTool : BrowserToolBase
     }
 }
 
-[Tool("browser_wait", "Wait for an element to appear (polls via MutationObserver). " +
-                      "Use after actions that trigger async loading (AJAX, SPA routing). " +
-                      "Returns: 'appeared' or 'timeout' + screenshot of current state.", ToolGroup.Browser)]
+[Tool("browser_wait", "Wait for an element to appear or disappear (polls the page every 200ms). " +
+                      "Mode='appear' (default): wait until the element exists — use after actions that trigger " +
+                      "async loading (AJAX, SPA routing). Mode='absent': wait until the element is gone " +
+                      "(spinner finished, modal closed). " +
+                      "Returns: result + screenshot of current state.", ToolGroup.Browser)]
 public sealed class BrowserWaitTool : BrowserToolBase
 {
     [ToolParameter("CSS selector to wait for", Required = true)]
     public string Selector { get; set; } = string.Empty;
     [ToolParameter("Timeout in ms (default 10000)", Required = false)]
     public int TimeoutMs { get; set; } = 10_000;
+    [ToolParameter("Mode: 'appear' (default, wait until element exists) or 'absent' (wait until element is gone)", Required = false)]
+    public string Mode { get; set; } = "appear";
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
     {
         if (!BrowserService.IsAttached) return "Error: browser not available.";
-        var result = await BrowserService.WaitAsync(Selector, TimeoutMs);
+        var result = await BrowserService.WaitAsync(Selector, TimeoutMs, Mode);
         var screenshotPath = await BrowserService.ScreenshotAsync();
         SetScreenshot(screenshotPath);
         return result;
@@ -268,18 +289,26 @@ public sealed class BrowserScreenshotSeriesTool : BrowserToolBase
     }
 }
 
-[Tool("browser_extract", "Extract text content from elements matching a CSS selector. " +
-                         "Returns: innerText of all matching elements (joined by ---). NO screenshot. " +
+[Tool("browser_extract", "Read text content from elements matching a CSS selector — line-based, like file_read. " +
+                         "Returns lines Offset..Offset+Limit-1 of the elements' innerText (default: first 100 lines) " +
+                         "+ how many lines remain; pass Offset to continue. NO screenshot. " +
+                         "Use for: reading tables, lists, prices, article text without visual inspection. " +
+                         "To LOCATE text on the page (where to scroll) use browser_find instead. " +
+                         "Text inside <iframe>s is not visible — use browser_evaluate (iframe.contentDocument) for same-origin frames. " +
                          "Use for: reading tables, lists, prices, article text without visual inspection.", ToolGroup.Browser)]
 public sealed class BrowserExtractTool : AgentTool
 {
     [ToolParameter("CSS selector (e.g. 'table', '.price', 'h1, h2', 'article p')", Required = true)]
     public string Selector { get; set; } = string.Empty;
+    [ToolParameter("First line to read, 0-based (default 0)", Required = false)]
+    public int Offset { get; set; }
+    [ToolParameter("Max lines to read (default 100, max 500)", Required = false)]
+    public int Limit { get; set; } = 100;
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
     {
         if (!BrowserService.IsAttached) return "Error: browser not available.";
-        return await BrowserService.ExtractAsync(Selector);
+        return await BrowserService.ExtractAsync(Selector, Math.Max(0, Offset), Math.Clamp(Limit, 1, 500));
     }
 }
 
@@ -290,7 +319,9 @@ public sealed class BrowserExtractTool : AgentTool
                       "By default NO screenshot (text only, cheap). Set MatchIndex (0-based) to scroll to and " +
                       "highlight that specific match — then a screenshot is attached showing it in the viewport. " +
                       "Text in <script>/<style>/<noscript>/<template> (raw code) is excluded; CSS-hidden " +
-                      "content is still listed but marked [hidden]. Text inside <iframe>s is not searched.", ToolGroup.Browser)]
+                      "content is still listed but marked [hidden]. Text inside <iframe>s is not searched — " +
+                      "use browser_evaluate (iframe.contentDocument) for same-origin frames. " +
+                      "To READ full element content (not just locate it) use browser_extract instead.", ToolGroup.Browser)]
 public sealed class BrowserFindTool : BrowserToolBase
 {
     [ToolParameter("Text to search for on the page", Required = true)]
@@ -366,23 +397,3 @@ public sealed class BrowserNetworkTool : AgentTool
     }
 }
 
-[Tool("browser_cdp_key", "Press a keyboard key using CDP (Chrome DevTools Protocol) — generates TRUSTED events (isTrusted=true). " +
-                         "USE THIS INSTEAD OF browser_key when the site ignores synthetic events (e.g. Google form submit). " +
-                         "Keys: enter, tab, escape, backspace, delete, space, or single char. " +
-                         "Returns: confirmation text + screenshot.", ToolGroup.Browser)]
-public sealed class BrowserCdpKeyTool : BrowserToolBase
-{
-    [ToolParameter("Key to press: enter, tab, escape, backspace, delete, space, or single char", Required = true)]
-    public string Key { get; set; } = string.Empty;
-
-    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
-    {
-        if (!BrowserService.IsAttached) return "Error: browser not available.";
-        BrowserService.TouchActivity();
-        var result = await BrowserService.CdpKeyAsync(Key);
-        await Task.Delay(300);
-        var screenshotPath = await BrowserService.ScreenshotAsync();
-        SetScreenshot(screenshotPath);
-        return result;
-    }
-}
