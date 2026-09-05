@@ -90,7 +90,7 @@ public sealed class HeartbeatController : IAppService
         // от занятости чата (иначе долгая генерация = слепое пятно по своему стражу).
         _watchdogGuard?.Invoke();
 
-        // FSM: фоновые задачи только в Idle (не во время Generating/Compacting/AwaitingUser/...).
+        // FSM: фоновые задачи только в Idle (не во время Generating/Compacting/AwaitingConfirmation/...).
         if (_isBusy())
         {
             return;

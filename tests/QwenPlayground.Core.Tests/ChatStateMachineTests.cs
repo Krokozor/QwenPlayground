@@ -59,29 +59,6 @@ public sealed class ChatStateMachineTests
     }
 
     [Fact]
-    public void Generating_To_AwaitingUser_IsAllowed()
-    {
-        var fsm = new ChatStateMachine();
-        fsm.Transition(ChatState.Generating);
-
-        fsm.Transition(ChatState.AwaitingUser);
-
-        Assert.Equal(ChatState.AwaitingUser, fsm.Current);
-    }
-
-    [Fact]
-    public void AwaitingUser_To_Generating_IsAllowed()
-    {
-        var fsm = new ChatStateMachine();
-        fsm.Transition(ChatState.Generating);
-        fsm.Transition(ChatState.AwaitingUser);
-
-        fsm.Transition(ChatState.Generating);
-
-        Assert.Equal(ChatState.Generating, fsm.Current);
-    }
-
-    [Fact]
     public void Idle_To_Compacting_IsAllowed()
     {
         var fsm = new ChatStateMachine();
@@ -96,8 +73,8 @@ public sealed class ChatStateMachineTests
     {
         var fsm = new ChatStateMachine();
 
-        // Idle → AwaitingUser не разрешено
-        Assert.Throws<InvalidOperationException>(() => fsm.Transition(ChatState.AwaitingUser));
+        // Idle → AwaitingConfirmation не разрешено
+        Assert.Throws<InvalidOperationException>(() => fsm.Transition(ChatState.AwaitingConfirmation));
     }
 
     [Fact]
@@ -105,7 +82,7 @@ public sealed class ChatStateMachineTests
     {
         var fsm = new ChatStateMachine();
 
-        var result = fsm.TryTransition(ChatState.AwaitingUser);
+        var result = fsm.TryTransition(ChatState.AwaitingConfirmation);
 
         Assert.False(result);
         Assert.Equal(ChatState.Idle, fsm.Current);

@@ -3,7 +3,7 @@ namespace QwenPlayground.Core.Chat;
 /// <summary>
 /// Логические состояния чата. FSM: состояния линейны, переходы явные.
 /// Зачем: IsGenerating как bool не выражает «генерация с паузой на компакцию»,
-/// «ожидание ответа юзера», «ручная компакция идёт параллельно». FSM убирает реентерабельность.
+/// «ожидание подтверждения действия», «ручная компакция идёт параллельно». FSM убирает реентерабельность.
 /// </summary>
 public enum ChatState
 {
@@ -13,8 +13,6 @@ public enum ChatState
     Generating,
     /// <summary>Компакция контекста (ручная или авто между итерациями).</summary>
     Compacting,
-    /// <summary>Ожидание ответа юзера (ask_user).</summary>
-    AwaitingUser,
     /// <summary>Ожидание подтверждения (confirm).</summary>
     AwaitingConfirmation,
     /// <summary>Перезапуск в новую версию запрошен (терминальное для текущего процесса).</summary>
@@ -39,9 +37,8 @@ public sealed class ChatStateMachine
     private static readonly Dictionary<ChatState, HashSet<ChatState>> AllowedTransitions = new()
     {
         [ChatState.Idle] = new() { ChatState.Generating, ChatState.Compacting, ChatState.RestartPending },
-        [ChatState.Generating] = new() { ChatState.Compacting, ChatState.AwaitingUser, ChatState.AwaitingConfirmation, ChatState.RestartPending, ChatState.Idle },
+        [ChatState.Generating] = new() { ChatState.Compacting, ChatState.AwaitingConfirmation, ChatState.RestartPending, ChatState.Idle },
         [ChatState.Compacting] = new() { ChatState.Generating, ChatState.Idle },
-        [ChatState.AwaitingUser] = new() { ChatState.Generating },
         [ChatState.AwaitingConfirmation] = new() { ChatState.Generating },
         [ChatState.RestartPending] = new() { } // терминальное
     };
@@ -78,7 +75,7 @@ public sealed class ChatStateMachine
 
     /// <summary>Чат занят (нельзя принимать новые ходы/ручную компакцию).</summary>
     public bool IsBusy => Current is ChatState.Generating or ChatState.Compacting
-        or ChatState.AwaitingUser or ChatState.AwaitingConfirmation;
+        or ChatState.AwaitingConfirmation;
 
     /// <summary>Можно отменить текущий ход (только в Generating).</summary>
     public bool CanCancel => Current == ChatState.Generating;

@@ -92,7 +92,7 @@ Idle→Compacting→Idle; запрос во время Generating ставитс
 - `ReflectionToolProvider(Assembly[])` — встроенные [Tool]-классы (Core + App сборки);
 - динамическая регистрация `Register(entry)` — точка для MCP-клиента и плагинов.
 
-Интерактив инструментов (ask_user, подтверждение shell) — pull через статический
+Интерактив инструментов (подтверждение shell) — pull через статический
 `AgentInteraction`; оконную реализацию регистрирует `ChatInteraction` при старте.
 
 ## Память агента
@@ -186,7 +186,7 @@ Idle→Compacting→Idle; запрос во время Generating ставитс
 **Шаг 1 сделан (2026-08-25)**: `Core/Runtime/AgentRuntime.cs` — скоуп с провайдером
 настроек и маршрутом интерактива; `AgentLoopRequest.Runtime` и `ToolContext.Runtime`
 несут скоуп до цикла и инструментов (null → main); `AgentInteraction` стал фасадом над
-`Main`. Цикл читает конфиг из профиля скоупа, ask_user/shell тянут интерактив из
+`Main`. Цикл читает конфиг из профиля скоупа, shell тянет интерактив из
 контекста. Осталось: сессии (ChatSessions.Root), скрытые статические чтения настроек
 в Core/Memory, маршруты интерактива у дочерних (окно vs очередь).
 

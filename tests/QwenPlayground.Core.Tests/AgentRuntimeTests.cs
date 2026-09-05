@@ -33,23 +33,11 @@ public sealed class AgentRuntimeTests
     }
 
     [Fact]
-    public void TryAsk_NoProvider_ReturnsNull()
+    public void TryConfirm_NoProvider_ReturnsNull()
     {
         var scope = new AgentRuntime();
 
-        Assert.Null(scope.TryAsk("q?", CancellationToken.None));
         Assert.Null(scope.TryConfirm("q?", CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task TryAsk_RoutesToRegisteredProvider()
-    {
-        var scope = new AgentRuntime { Ask = (q, _) => Task.FromResult("a:" + q) };
-        var pending = scope.TryAsk("да?", CancellationToken.None);
-        Assert.NotNull(pending);
-        var answer = await pending;
-
-        Assert.Equal("a:да?", answer);
     }
 
     [Fact]
@@ -57,15 +45,15 @@ public sealed class AgentRuntimeTests
     {
         try
         {
-            Func<string, CancellationToken, Task<string>> provider = (q, _) => Task.FromResult(q);
-            AgentInteraction.Ask = provider;
+            Func<string, CancellationToken, Task<bool>> provider = (_, _) => Task.FromResult(true);
+            AgentInteraction.Confirm = provider;
 
-            Assert.Same(provider, AgentRuntime.Main.Ask);
-            Assert.Same(AgentRuntime.Main.Ask, AgentInteraction.Ask);
+            Assert.Same(provider, AgentRuntime.Main.Confirm);
+            Assert.Same(AgentRuntime.Main.Confirm, AgentInteraction.Confirm);
         }
         finally
         {
-            AgentInteraction.Ask = null; // не протекаем в параллельные тесты
+            AgentInteraction.Confirm = null; // не протекаем в параллельные тесты
         }
     }
 
@@ -85,32 +73,6 @@ public sealed class AgentRuntimeTests
         var context = new ToolContext(@"C:\tmp", runtime: scope);
 
         Assert.Same(scope, context.Scope);
-    }
-
-    [Fact]
-    public async Task AskUserTool_RoutesThroughContextScope_NotStatics()
-    {
-        var registry = new ToolRegistry();
-        var isolated = new AgentRuntime { Ask = (_, _) => Task.FromResult("изолированный ответ") };
-
-        try
-        {
-            // У main интерактива нет: если бы тул тянул статику, получил бы ошибку.
-            var scopedContext = new ToolContext(@"C:\tmp", runtime: isolated);
-            var result = await registry.ExecuteAsync("ask_user",
-                new System.Text.Json.Nodes.JsonObject { ["question"] = "да?" }, scopedContext);
-            Assert.Equal("изолированный ответ", result);
-
-            // Обратный случай: провайдер только у main, у скоупа его нет — честная деградация.
-            var bareScope = new ToolContext(@"C:\tmp", runtime: new AgentRuntime());
-            var degraded = await registry.ExecuteAsync("ask_user",
-                new System.Text.Json.Nodes.JsonObject { ["question"] = "да?" }, bareScope);
-            Assert.Contains("no user is available", degraded);
-        }
-        finally
-        {
-            AgentInteraction.Ask = null;
-        }
     }
 
     [Fact]

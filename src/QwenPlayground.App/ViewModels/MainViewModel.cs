@@ -48,7 +48,7 @@ public partial class MainViewModel : ObservableObject {
     // Сердцебиение: решение «когда и чем будить» — в HeartbeatController (тестируемо),
     // исполнение хода/flush — здесь.
     private readonly HeartbeatController _heartbeat;
-    // Оконный интерактив инструментов (ask_user/подтверждение shell) поверх FSM.
+    // Оконный интерактив инструментов (подтверждение shell) поверх FSM.
     private readonly ChatInteraction _interaction;
     // Жизненный цикл: реестр стартуемых/останавливаемых сервисов.
     private readonly AppLifecycle _lifecycle;
@@ -444,7 +444,7 @@ public partial class MainViewModel : ObservableObject {
         SaveCurrent),
         onCompacted: DeactivateUnusedShelves);
 
-        // Интерактив инструментов (ask_user, подтверждение shell) — pull-модель: оконные
+        // Интерактив инструментов (подтверждение shell) — pull-модель: оконные
         // провайдеры живут в ChatInteraction, Core не знает про окна и FSM.
         _interaction = new ChatInteraction(_chatState);
         _interaction.Register();

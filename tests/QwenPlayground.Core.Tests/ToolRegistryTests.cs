@@ -139,34 +139,6 @@ public sealed class ToolRegistryTests : IDisposable
     }
 
     [Fact]
-    public async Task AskUser_UsesRegisteredProvider()
-    {
-        // Провайдер интерактива — статика: регистрируем и ОБЯЗАТЕЛЬНО снимаем в finally,
-        // чтобы не протечь в параллельные тесты.
-        AgentInteraction.Ask = (question, _) => Task.FromResult("ответ: " + question);
-        try
-        {
-            var context = new ToolContext(_root);
-            var result = await _registry.ExecuteAsync("ask_user",
-                new JsonObject { ["question"] = "да?" }, context);
-
-            Assert.Equal("ответ: да?", result);
-        }
-        finally
-        {
-            AgentInteraction.Ask = null;
-        }
-    }
-
-    [Fact]
-    public async Task AskUser_NoCallback_ReturnsError()
-    {
-        var result = await _registry.ExecuteAsync("ask_user", new JsonObject { ["question"] = "да?" }, _context);
-
-        Assert.Contains("no user is available", result);
-    }
-
-    [Fact]
     public async Task Collections_ArrayParams_ParsedFromJsonStrings()
     {
         var registry = new ToolRegistry(typeof(ToolRegistryTests).Assembly);

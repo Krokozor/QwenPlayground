@@ -80,7 +80,6 @@ public partial class DiagnosticsViewModel : ObservableObject
             ChatState.Idle => "Чат свободен, можно отправлять сообщения.",
             ChatState.Generating => "Агент работает: генерация или выполнение инструментов.",
             ChatState.Compacting => "Идёт сжатие контекста (ручное или автоматическое).",
-            ChatState.AwaitingUser => "Ожидает ответа на вопрос (ask_user).",
             ChatState.AwaitingConfirmation => "Ожидает подтверждения действия (confirm).",
             ChatState.RestartPending => "Запрошен перезапуск в новую версию.",
             _ => state.ToString()
