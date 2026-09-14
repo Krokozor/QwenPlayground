@@ -48,9 +48,10 @@ public static class ToolGroupIndex
     /// </summary>
     /// <summary>
     /// MCP server info for the table (populated by App layer, passed to Core).
+    /// Status: "active" (shelf on + connected), "inactive" (shelf off), "disconnected" (no connection).
     /// </summary>
     public sealed record McpServerRow(
-        string Name, bool Connected, string Transport, string Address, int ToolCount, string Description);
+        string Name, string Status, string Transport, string Address, int ToolCount, string Description);
 
     public static string Render(IReadOnlyCollection<ToolGroup> active, ToolRegistry registry,
         IReadOnlyList<McpServerRow>? mcpServers = null)
@@ -101,8 +102,7 @@ public static class ToolGroupIndex
             lines.Add("|---|---|---|---|---|---|");
             foreach (var s in mcpServers)
             {
-                lines.Add($"| {s.Name} | {(s.Connected ? "connected" : "disconnected")} | " +
-                          $"{s.Transport} | {s.Address} | {s.ToolCount} | {s.Description} |");
+                lines.Add($"| {s.Name} | {s.Status} | {s.Transport} | {s.Address} | {s.ToolCount} | {s.Description} |");
             }
         }
 

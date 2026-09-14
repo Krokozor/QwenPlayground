@@ -930,16 +930,56 @@ public partial class MainViewModel : ObservableObject {
 
         var manager = QwenPlayground.App.Mcp.McpService.Instance;
         var clients = manager?.Clients ?? new Dictionary<string, QwenPlayground.Core.Mcp.McpClient>();
+        var mcpShelfActive = EffectiveShelves().Contains(ToolGroup.Mcp);
 
         return settings.McpServers.Select(s =>
         {
             clients.TryGetValue(s.Name, out var client);
-            var address = s.Transport == "http"
-                ? s.Url
-                : (string.IsNullOrEmpty(s.Command) ? "" : System.IO.Path.GetFileName(s.Command));
+            var connected = client?.IsConnected ?? false;
+
+            // Status: active (shelf on + connected), inactive (shelf off), disconnected (no conn)
+            string status;
+            if (!connected) status = "disconnected";
+            else if (mcpShelfActive) status = "active";
+            else status = "inactive";
+
+            // Address: http → URL; stdio → command + args (or env port if present)
+            string address;
+            if (s.Transport == "http")
+            {
+                address = s.Url;
+            }
+            else
+            {
+                // stdio: show command + args, or env port for bridge servers
+                var cmd = string.IsNullOrEmpty(s.Command) ? "" :
+                    System.IO.Path.GetFileNameWithoutExtension(s.Command) + " " +
+                    string.Join(" ", s.Args);
+                // Check for port in env (e.g. BLENDER_MCP_PORT). FirstOrDefault на Dictionary
+                // возвращает struct KeyValuePair (никогда не null): без совпадения Value null —
+                // NRE на .Value (баг 2026-09-14: превью падало на stdio-сервере с пустым Env).
+                string? port = null;
+                if (s.Env is not null)
+                {
+                    foreach (var kv in s.Env)
+                    {
+                        if (kv.Key is not null && kv.Key.Contains("PORT", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(kv.Value))
+                        {
+                            port = kv.Value;
+                            break;
+                        }
+                    }
+                }
+                if (port is not null)
+                {
+                    cmd += $" → localhost:{port}";
+                }
+                address = cmd;
+            }
+
             return new ToolGroupIndex.McpServerRow(
                 s.Name,
-                client?.IsConnected ?? false,
+                status,
                 s.Transport,
                 address,
                 client?.Tools.Count ?? 0,
