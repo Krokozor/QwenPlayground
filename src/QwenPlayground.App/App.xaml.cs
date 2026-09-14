@@ -24,8 +24,12 @@ public partial class App : Application
         // Перед деплоем инструментов rebuild останавливает watchdog'а: тот держит
         // бинари launcher/ (Windows-лок), иначе сборка не смогла бы их обновить.
         SelfBuildService.PreDeployTools = WatchdogLauncher.StopWatchdog;
-        // Connect to MCP servers (non-blocking)
-        _ = Mcp.McpService.InitializeAsync();
+        // Connect to MCP servers (non-blocking), then register their tools
+        _ = Mcp.McpService.InitializeAsync().ContinueWith(_ =>
+        {
+            // MCP ready — tools will be registered by MainViewModel via McpToolRegistrar
+            System.Diagnostics.Debug.WriteLine("[MCP] Init complete, tools ready for registration.");
+        });
     }
 
     protected override void OnExit(ExitEventArgs e)

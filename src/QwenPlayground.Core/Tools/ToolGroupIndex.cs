@@ -34,12 +34,11 @@ public static class ToolGroupIndex
             "see what happened. Activate when the task involves a website: web automation, scraping, " +
             "inspecting a page, verifying UI in a real browser, debugging page behavior.",
 
-        [ToolGroup.CSharp] =
-            "Roslyn C# analysis over the workspace .NET solution — semantic, not just text search: find a " +
-            "symbol's definition, all references and callers, compile diagnostics without a build, " +
-            "file/namespace outline, class map (type hierarchy and relations). Activate when working with " +
-            "C# code: understanding a codebase, tracing call chains, impact analysis before refactoring, " +
-            "checking compile errors."
+        [ToolGroup.Mcp] =
+            "External MCP (Model Context Protocol) tool servers: Blender, HuggingFace, and other " +
+            "third-party integrations. Tools are namespaced as {server}_{tool} (e.g. blender_execute_code). " +
+            "See the 'MCP Servers' table below for connected servers and their capabilities. " +
+            "Activate when you need to interact with an external application or service via MCP.",
     };
 
     /// <summary>
@@ -47,7 +46,14 @@ public static class ToolGroupIndex
     /// Неактивные группы — «полный промпт» группы, активные — список тулов и подсказка
     /// деактивировать. Пусто, если нет не-core групп.
     /// </summary>
-    public static string Render(IReadOnlyCollection<ToolGroup> active, ToolRegistry registry)
+    /// <summary>
+    /// MCP server info for the table (populated by App layer, passed to Core).
+    /// </summary>
+    public sealed record McpServerRow(
+        string Name, bool Connected, string Transport, string Address, int ToolCount, string Description);
+
+    public static string Render(IReadOnlyCollection<ToolGroup> active, ToolRegistry registry,
+        IReadOnlyList<McpServerRow>? mcpServers = null)
     {
         var groups = Enum.GetValues<ToolGroup>().Where(g => g != ToolGroup.Core).OrderBy(g => g).ToList();
         if (groups.Count == 0)
@@ -84,6 +90,22 @@ public static class ToolGroupIndex
                 lines.Add($"| {name} | inactive | {description} |");
             }
         }
+
+        // MCP Servers table (separate from shelves): shown when MCP servers are configured.
+        if (mcpServers is { Count: > 0 })
+        {
+            lines.Add(string.Empty);
+            lines.Add("## MCP Servers");
+            lines.Add(string.Empty);
+            lines.Add("| name | status | transport | address | tools | description |");
+            lines.Add("|---|---|---|---|---|---|");
+            foreach (var s in mcpServers)
+            {
+                lines.Add($"| {s.Name} | {(s.Connected ? "connected" : "disconnected")} | " +
+                          $"{s.Transport} | {s.Address} | {s.ToolCount} | {s.Description} |");
+            }
+        }
+
         return string.Join('\n', lines);
     }
 }

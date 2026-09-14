@@ -98,7 +98,7 @@ public sealed class McpServerManager
     }
 
     /// <summary>
-    /// Get all tools from all connected servers, with namespaced names: mcp_{server}_{tool}.
+    /// Get all tools from all connected servers, with namespaced names: {server}_{tool}.
     /// </summary>
     public List<(string NamespacedName, McpToolInfo Tool, string ServerName)> GetAllTools()
     {
@@ -109,7 +109,7 @@ public sealed class McpServerManager
             {
                 foreach (var tool in client.Tools)
                 {
-                    var namespaced = $"mcp_{serverName}_{tool.Name}";
+                    var namespaced = $"{serverName}_{tool.Name}";
                     result.Add((namespaced, tool, serverName));
                 }
             }
@@ -118,17 +118,17 @@ public sealed class McpServerManager
     }
 
     /// <summary>
-    /// Call a tool by its namespaced name (mcp_{server}_{tool}).
+    /// Call a tool by its name ({server}_{tool}, e.g. "blender_execute_code").
     /// </summary>
-    public async Task<string> CallToolAsync(string namespacedName, System.Text.Json.Nodes.JsonObject arguments, CancellationToken ct = default)
+    public async Task<string> CallToolAsync(string toolName, System.Text.Json.Nodes.JsonObject arguments, CancellationToken ct = default)
     {
-        // Parse: mcp_{server}_{tool}
-        var parts = namespacedName.Split('_', 3);
-        if (parts.Length < 3)
-            throw new ArgumentException($"Invalid MCP tool name: {namespacedName}. Expected format: mcp_{{server}}_{{tool}}");
+        // Parse: {server}_{tool} — find the server prefix
+        var underscoreIdx = toolName.IndexOf('_');
+        if (underscoreIdx <= 0 || underscoreIdx == toolName.Length - 1)
+            throw new ArgumentException($"Invalid MCP tool name: {toolName}. Expected format: {{server}}_{{tool}}");
 
-        var serverName = parts[1];
-        var toolName = parts[2];
+        var serverName = toolName[..underscoreIdx];
+        var mcpToolName = toolName[(underscoreIdx + 1)..];
 
         McpClient client;
         lock (_lock)
@@ -137,6 +137,6 @@ public sealed class McpServerManager
                 throw new McpException(-1, $"MCP server '{serverName}' is not connected");
         }
 
-        return await client.CallToolAsync(toolName, arguments, ct);
+        return await client.CallToolAsync(mcpToolName, arguments, ct);
     }
 }

@@ -56,6 +56,40 @@ public sealed class ToolRegistry
         _definitions.Sort((a, b) => StringComparer.Ordinal.Compare(a.Name, b.Name));
     }
 
+    /// <summary>
+    /// Пытается зарегистрировать инструмент. Возвращает false при коллизии имени
+    /// (без исключения) — для MCP-тулов, где коллизия с built-in допустима (warn + skip).
+    /// </summary>
+    public bool TryRegister(ToolEntry entry)
+    {
+        if (!_tools.TryAdd(entry.Definition.Name, entry))
+            return false;
+        _definitions.Add(entry.Definition);
+        _definitions.Sort((a, b) => StringComparer.Ordinal.Compare(a.Name, b.Name));
+        return true;
+    }
+
+    /// <summary>Удалить инструмент по имени (для MCP: переподключение/отключение сервера).</summary>
+    public bool Unregister(string name)
+    {
+        if (!_tools.Remove(name))
+            return false;
+        _definitions.RemoveAll(d => d.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        return true;
+    }
+
+    /// <summary>Удалить все инструменты с указанным префиксом (например, "blender_").</summary>
+    public int UnregisterByPrefix(string prefix)
+    {
+        var toRemove = _definitions.Where(d => d.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
+        foreach (var def in toRemove)
+        {
+            _tools.Remove(def.Name);
+            _definitions.Remove(def);
+        }
+        return toRemove.Count;
+    }
+
     public IReadOnlyList<ToolDefinition> Definitions => _definitions;
 
     /// <summary>Определения одной группы (полки): Core — базовый набор, Browser/CSharp — активируемые.</summary>

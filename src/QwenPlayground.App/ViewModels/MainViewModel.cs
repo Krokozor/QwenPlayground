@@ -475,6 +475,12 @@ public partial class MainViewModel : ObservableObject {
         // Вкладка «Суммаризация»: ре-прогоны и редактирование резюме/слоёв/промптов.
         Summarization = new SummarizationViewModel(RunSummarizationCallAsync);
 
+        // MCP: register tools after initial connection completes (non-blocking).
+        _ = QwenPlayground.App.Mcp.McpService.Ready.ContinueWith(_ =>
+        {
+            System.Windows.Application.Current?.Dispatcher.Invoke(() => RegisterMcpTools());
+        }, TaskScheduler.Default);
+
         // Heartbeat: опрос wake/ и расписания. Период опроса фиксированный (20 с),
         // частота реальных пробуждений — HeartbeatIntervalMinutes; сигналы не ждут расписания.
         _heartbeat = new HeartbeatController(
@@ -863,7 +869,8 @@ public partial class MainViewModel : ObservableObject {
         // Индекс полок: pending-группы рисуются как активные (их тулзы реально ещё в промпте).
         // Вставляется ПЕРЕД слоями: системный промпт течёт в чат как
         // «кто я → какие инструменты → старая история → чуть новейшая → последняя → чат».
-        var index = ToolGroupIndex.Render(EffectiveShelves(), _toolRegistry);
+        var mcpRows = BuildMcpServerRows();
+        var index = ToolGroupIndex.Render(EffectiveShelves(), _toolRegistry, mcpRows);
         var beforeLayers = Combine(Combine(core, note), index.Length > 0 ? index : null);
         var final = Combine(beforeLayers, layersBlock.Length > 0 ? layersBlock : null);
         // Трекер кешированного промпта: изменился → KV-кеш пересоберётся (диагностика).
@@ -899,6 +906,45 @@ public partial class MainViewModel : ObservableObject {
         }
         var allow = allowed.ToHashSet(StringComparer.OrdinalIgnoreCase);
         return tools.Where(d => allow.Contains(d.Name)).ToList();
+    }
+
+    /// <summary>
+    /// Зарегистрировать MCP-тулы в реестре (вызывается после MCP init и при mcp_reload).
+    /// </summary>
+    internal void RegisterMcpTools()
+    {
+        var manager = QwenPlayground.App.Mcp.McpService.Instance;
+        if (manager is null) return;
+        var (registered, warnings) = QwenPlayground.App.Mcp.McpToolRegistrar.RegisterAll(_toolRegistry, manager);
+        System.Diagnostics.Debug.WriteLine($"[MCP] Registered {registered} tools.");
+        foreach (var w in warnings)
+            System.Diagnostics.Debug.WriteLine($"[MCP] WARNING: {w}");
+    }
+
+    /// <summary>Строки для таблицы MCP Servers в системном промпте.</summary>
+    private IReadOnlyList<ToolGroupIndex.McpServerRow> BuildMcpServerRows()
+    {
+        var settings = AppSettings.Get();
+        if (settings.McpServers.Count == 0)
+            return Array.Empty<ToolGroupIndex.McpServerRow>();
+
+        var manager = QwenPlayground.App.Mcp.McpService.Instance;
+        var clients = manager?.Clients ?? new Dictionary<string, QwenPlayground.Core.Mcp.McpClient>();
+
+        return settings.McpServers.Select(s =>
+        {
+            clients.TryGetValue(s.Name, out var client);
+            var address = s.Transport == "http"
+                ? s.Url
+                : (string.IsNullOrEmpty(s.Command) ? "" : System.IO.Path.GetFileName(s.Command));
+            return new ToolGroupIndex.McpServerRow(
+                s.Name,
+                client?.IsConnected ?? false,
+                s.Transport,
+                address,
+                client?.Tools.Count ?? 0,
+                string.IsNullOrEmpty(s.Description) ? "—" : s.Description);
+        }).ToList();
     }
 
     /// <summary>

@@ -14,18 +14,19 @@ namespace QwenPlayground.App.Tools;
 /// </summary>
 [Tool("activate_shelf", "Activate a tool group (shelf): adds its tools to your prompt starting next turn. " +
     "Available groups: browser (WebView2 web automation), csharp (Roslyn code analysis), " +
-    "desktop (mouse, keyboard, screenshots, window management). " +
+    "desktop (mouse, keyboard, screenshots, window management), " +
+    "mcp (external MCP tool servers: Blender, HuggingFace, and others — see MCP Servers table). " +
     "Activate when you need the group's capability. Deactivate with deactivate_shelf when done.")]
 public sealed class ActivateShelfTool : AgentTool
 {
-    [ToolParameter("Group to activate: 'browser', 'csharp', or 'desktop'", Required = true)]
+    [ToolParameter("Group to activate: 'browser', 'csharp', 'desktop', or 'mcp'", Required = true)]
     public string Group { get; set; } = string.Empty;
 
     public override Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
         if (!TryParseGroup(Group, out var group))
         {
-            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp, desktop.");
+            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp, desktop, mcp.");
         }
         if (context.SessionDir is null)
         {
@@ -89,17 +90,17 @@ public sealed class ActivateShelfTool : AgentTool
 [Tool("deactivate_shelf", "Schedule a tool group (shelf) for deactivation: its tools leave your prompt at the " +
     "next natural system-prompt change (compaction/session switch), not immediately — this avoids an extra " +
     "KV-cache rebuild. Until then the group's tools remain available. Re-activating the group cancels the " +
-    "scheduled deactivation. Use when you no longer need the group's capability. Groups: browser, csharp, desktop.")]
+    "scheduled deactivation. Use when you no longer need the group's capability. Groups: browser, csharp, desktop, mcp.")]
 public sealed class DeactivateShelfTool : AgentTool
 {
-    [ToolParameter("Group to deactivate: 'browser', 'csharp', or 'desktop'", Required = true)]
+    [ToolParameter("Group to deactivate: 'browser', 'csharp', 'desktop', or 'mcp'", Required = true)]
     public string Group { get; set; } = string.Empty;
 
     public override Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
         if (!ActivateShelfTool.TryParseGroup(Group, out var group))
         {
-            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp, desktop.");
+            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp, desktop, mcp.");
         }
         if (context.SessionDir is null)
         {

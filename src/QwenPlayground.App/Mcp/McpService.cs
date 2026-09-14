@@ -10,22 +10,38 @@ public static class McpService
 {
     public static McpServerManager? Instance { get; private set; }
 
+    /// <summary>Completes when initial MCP connection is done (success or failure).</summary>
+    public static Task Ready { get; private set; } = Task.CompletedTask;
+
     public static async Task InitializeAsync()
     {
-        Instance = new McpServerManager();
-        await Instance.ConnectAllAsync();
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Ready = tcs.Task;
+        try
+        {
+            Instance = new McpServerManager();
+            await Instance.ConnectAllAsync();
 
-        var clients = Instance.Clients;
-        if (clients.Count > 0)
-        {
-            var tools = Instance.GetAllTools();
-            System.Diagnostics.Debug.WriteLine(
-                $"[MCP] Connected {clients.Count} server(s), {tools.Count} tool(s): " +
-                string.Join(", ", tools.Select(t => t.NamespacedName)));
+            var clients = Instance.Clients;
+            if (clients.Count > 0)
+            {
+                var tools = Instance.GetAllTools();
+                System.Diagnostics.Debug.WriteLine(
+                    $"[MCP] Connected {clients.Count} server(s), {tools.Count} tool(s): " +
+                    string.Join(", ", tools.Select(t => t.NamespacedName)));
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine("[MCP] No servers connected.");
+            }
         }
-        else
+        catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine("[MCP] No servers connected.");
+            System.Diagnostics.Debug.WriteLine($"[MCP] Init failed: {ex}");
+        }
+        finally
+        {
+            tcs.TrySetResult();
         }
     }
 

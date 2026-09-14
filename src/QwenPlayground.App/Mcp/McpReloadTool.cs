@@ -54,6 +54,15 @@ public sealed class McpReloadTool : AgentTool
         }
         if (connected.Count > 0) result.AppendLine($"Newly connected: {string.Join(", ", connected)}");
         if (failed.Count > 0) result.AppendLine($"Failed: {string.Join("; ", failed)}");
+
+        // Re-register MCP tools in the tool registry (names/schemas may have changed)
+        try
+        {
+            var vm = (QwenPlayground.App.ViewModels.MainViewModel?)System.Windows.Application.Current?.MainWindow?.DataContext;
+            vm?.RegisterMcpTools();
+        }
+        catch { }
+
         return result.ToString().TrimEnd();
     }
 }

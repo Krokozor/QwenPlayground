@@ -28,4 +28,7 @@ public sealed class McpServerConfig
     // ── http transport ──
     /// <summary>HTTP endpoint URL (http only), e.g. "http://localhost:9876".</summary>
     public string Url { get; set; } = string.Empty;
+
+    /// <summary>Human-readable description of what this server does (shown in MCP table).</summary>
+    public string Description { get; set; } = string.Empty;
 }
