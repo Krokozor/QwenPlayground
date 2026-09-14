@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using QwenPlayground.Core.Mcp;
 using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Templates;
 
@@ -145,4 +146,19 @@ public sealed class AppSettings
     public int MemoryMaxFactsPerCompaction { get; set; } = 5;
     /// <summary>Максимальная длина записи дневника (diary.md).</summary>
     public int MemoryDiaryMaxEntryLength { get; set; } = 3000;
+
+    /// <summary>
+    /// Показывать ли оверлей-курсор Qwen на экране при работе desktop-инструментов.
+    /// Отключить, если курсор мешает. Нарисованный курсор на скриншотах (для агента)
+    /// работает независимо от этой настройки.
+    /// </summary>
+    public bool DesktopCursorOverlay { get; set; } = true;
+
+    // ── MCP (Model Context Protocol) ────────────────────────────────────────────────
+
+    /// <summary>
+    /// MCP-серверы для подключения к сторонним инструментам (Blender, Unity, и т.д.).
+    /// Каждый сервер expose'ит свои тулы, которые становятся доступны агенту.
+    /// </summary>
+    public List<McpServerConfig> McpServers { get; set; } = new();
 }

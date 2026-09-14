@@ -1,4 +1,5 @@
 using System.Reflection;
+using QwenPlayground.App.Desktop;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Tools;
 
@@ -12,18 +13,19 @@ namespace QwenPlayground.App.Tools;
 /// иначе агент не узнает, что именно изменилось в его промпте.
 /// </summary>
 [Tool("activate_shelf", "Activate a tool group (shelf): adds its tools to your prompt starting next turn. " +
-    "Available groups: browser (WebView2 web automation), csharp (Roslyn code analysis). " +
+    "Available groups: browser (WebView2 web automation), csharp (Roslyn code analysis), " +
+    "desktop (mouse, keyboard, screenshots, window management). " +
     "Activate when you need the group's capability. Deactivate with deactivate_shelf when done.")]
 public sealed class ActivateShelfTool : AgentTool
 {
-    [ToolParameter("Group to activate: 'browser' or 'csharp'", Required = true)]
+    [ToolParameter("Group to activate: 'browser', 'csharp', or 'desktop'", Required = true)]
     public string Group { get; set; } = string.Empty;
 
     public override Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
         if (!TryParseGroup(Group, out var group))
         {
-            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp.");
+            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp, desktop.");
         }
         if (context.SessionDir is null)
         {
@@ -87,17 +89,17 @@ public sealed class ActivateShelfTool : AgentTool
 [Tool("deactivate_shelf", "Schedule a tool group (shelf) for deactivation: its tools leave your prompt at the " +
     "next natural system-prompt change (compaction/session switch), not immediately — this avoids an extra " +
     "KV-cache rebuild. Until then the group's tools remain available. Re-activating the group cancels the " +
-    "scheduled deactivation. Use when you no longer need the group's capability. Groups: browser, csharp.")]
+    "scheduled deactivation. Use when you no longer need the group's capability. Groups: browser, csharp, desktop.")]
 public sealed class DeactivateShelfTool : AgentTool
 {
-    [ToolParameter("Group to deactivate: 'browser' or 'csharp'", Required = true)]
+    [ToolParameter("Group to deactivate: 'browser', 'csharp', or 'desktop'", Required = true)]
     public string Group { get; set; } = string.Empty;
 
     public override Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
         if (!ActivateShelfTool.TryParseGroup(Group, out var group))
         {
-            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp.");
+            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp, desktop.");
         }
         if (context.SessionDir is null)
         {
@@ -114,6 +116,11 @@ public sealed class DeactivateShelfTool : AgentTool
         // смене промпта (компакция/смена сессии/слои), батчингом с неизбежным rebuild'ом.
         // Пока группа в промпте — тулзы группы по-прежнему доступны.
         state.MarkPending(group);
+
+        // Desktop: hide the cursor overlay — user is done with desktop control.
+        if (group == ToolGroup.Desktop)
+            DesktopOverlay.Hide();
+
         return Task.FromResult($"Group '{Group}' scheduled for deactivation — its tools leave your prompt " +
                                 $"at the next natural system-prompt change (compaction/session switch). " +
                                 $"Until then the tools remain available: " +

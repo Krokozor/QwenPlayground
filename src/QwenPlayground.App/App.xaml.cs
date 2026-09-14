@@ -24,6 +24,8 @@ public partial class App : Application
         // Перед деплоем инструментов rebuild останавливает watchdog'а: тот держит
         // бинари launcher/ (Windows-лок), иначе сборка не смогла бы их обновить.
         SelfBuildService.PreDeployTools = WatchdogLauncher.StopWatchdog;
+        // Connect to MCP servers (non-blocking)
+        _ = Mcp.McpService.InitializeAsync();
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -31,6 +33,8 @@ public partial class App : Application
         // Маркер чистого завершения — до выхода процесса: watchdog отличает
         // «пользователь закрыл» от «умерло посреди ничего».
         WatchdogLauncher.MarkClean();
+        // MCP: disconnect all servers
+        try { Mcp.McpService.ShutdownAsync().GetAwaiter().GetResult(); } catch { }
         base.OnExit(e);
     }
 }

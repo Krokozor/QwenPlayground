@@ -21,7 +21,7 @@ public sealed class SetSettingTool : AgentTool
     [ToolParameter("AppSettings property name to change, e.g. MaxTokens, Endpoint, ReasoningEffort, Temperature. See get_settings for the full list.", Required = true)]
     public string Name { get; set; } = string.Empty;
 
-    [ToolParameter("New value as a string: a number, true/false, an enum name (XHigh/Medium/Low), or text.", Required = true)]
+    [ToolParameter("New value as a string: a number, true/false, an enum name (XHigh/Medium/Low), or text. For complex types (lists, objects) pass a JSON string.", Required = true)]
     public string Value { get; set; } = string.Empty;
 
     public override Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
@@ -54,6 +54,26 @@ public sealed class SetSettingTool : AgentTool
         if (targetType == typeof(double)) return double.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
         if (targetType == typeof(bool)) return bool.Parse(value);
         if (targetType.IsEnum) return Enum.Parse(targetType, value, ignoreCase: true);
+
+        // Complex types (List<T>, custom classes, etc.) — deserialize as JSON
+        if (IsComplexType(targetType))
+        {
+            return System.Text.Json.JsonSerializer.Deserialize(value, targetType)
+                ?? throw new FormatException($"JSON deserialization to {targetType.Name} returned null.");
+        }
+
         return Convert.ChangeType(value, targetType, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static bool IsComplexType(Type type)
+    {
+        var t = Nullable.GetUnderlyingType(type) ?? type;
+        return !t.IsPrimitive
+            && t != typeof(string)
+            && t != typeof(decimal)
+            && t != typeof(DateTime)
+            && t != typeof(TimeSpan)
+            && t != typeof(Guid)
+            && !t.IsEnum;
     }
 }

@@ -26,5 +26,11 @@ public enum ToolGroup
     Browser = 1,
 
     /// <summary>Roslyn: символы, ссылки, callers, диагностика, outline, class map.</summary>
-    CSharp = 2
+    CSharp = 2,
+
+    /// <summary>Рабочий стол: мышь, клавиатура, скриншоты, окна (Win32 P/Invoke).</summary>
+    Desktop = 3,
+
+    /// <summary>MCP: подключение к сторонним инструментам (Blender, Unity, и т.д.).</summary>
+    Mcp = 4
 }

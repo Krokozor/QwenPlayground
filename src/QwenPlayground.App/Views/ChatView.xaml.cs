@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using QwenPlayground.App.Desktop;
 using QwenPlayground.App.ViewModels;
 
 namespace QwenPlayground.App.Views;
@@ -18,6 +19,20 @@ public partial class ChatView : UserControl
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         MessagesScroll.ScrollChanged += OnScrollChanged;
+
+        // Desktop cursor position indicator
+        DesktopOverlay.PositionChanged += UpdateDesktopCursorPos;
+        Unloaded += (_, _) => DesktopOverlay.PositionChanged -= UpdateDesktopCursorPos;
+    }
+
+    private void UpdateDesktopCursorPos()
+    {
+        if (DesktopCursorPos is null) return;
+        DesktopCursorPos.Text = $"({DesktopOverlay.AgentX}, {DesktopOverlay.AgentY})";
+        DesktopCursorPos.Visibility =
+            (DesktopOverlay.AgentX != 0 || DesktopOverlay.AgentY != 0)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)

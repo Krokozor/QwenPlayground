@@ -198,6 +198,11 @@
 
             <views:MemorySettingsView />
 
+            <!-- ── MCP-серверы ──────────────────────────────────────────────────── -->
+            <Expander Header="MCP-серверы (внешние инструменты)" IsExpanded="True" Margin="0,4,0,0">
+                <views:McpSettingsView Margin="0,4,0,2" />
+            </Expander>
+
             <!-- ── Профили чатов: ЕДИНСТВЕННОЕ место редактирования пресетов ─────── -->
             <Expander Header="Профили чатов (config/chat-profiles.json)" IsExpanded="True" Margin="0,4,0,0">
                 <views:ProfilesEditorView DataContext="{Binding Profiles}" Margin="0,4,0,2" />
