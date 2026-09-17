@@ -8,6 +8,9 @@ namespace QwenPlayground.Core.Tests;
 /// Реколл (RecallAfterTurnAsync/RecallLiveAsync) ходит на компаньон-модели и покрывается
 /// смоуком (harness), а не юнит-тестом.
 /// </summary>
+// Коллекция memory-settings: сериализация с другими классами, мутирующими
+// AppSettings.MemoryEnabled (глобальный синглтон, xUnit крутит классы параллельно).
+[Collection("memory-settings")]
 public sealed class MemorySurfacerTests
 {
     [Fact]

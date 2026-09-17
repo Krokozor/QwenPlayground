@@ -28,8 +28,10 @@ namespace QwenPlayground.App.ViewModels;
 
 public partial class MainViewModel : ObservableObject {
     private static readonly string SessionsRoot = ChatSessions.Root;
-    // Жизненный цикл сессий (текущий id, список, миграция, «последняя открытая»).
-    private readonly ChatSessions _sessions = new();
+    // Жизненный цикл сессий (Core): текущая сессия, переключение/создание/удаление,
+    // история + ключи профилей, инвариант «flush драфта старой → restore драфта новой».
+    // Создаётся в ctor (нужен _draft); реакции UI — через событие SessionChanged.
+    private readonly SessionController _sessionController;
     // Динамический системный промпт main-агента (identity+layers+trajectory), кэш по mtime.
     private readonly InjectedIdentity _identity = new();
     private readonly ExternalToolsNote _externalTools = new();
@@ -42,7 +44,7 @@ public partial class MainViewModel : ObservableObject {
     // Кэш промпта, детект KV-rebuild и батчинг staged-деактиваций — внутри модуля.
     private readonly SystemPromptAssembler _promptAssembler;
     /// <summary>Каталог текущей сессии: у каждой сессии своя папка sessions/&lt;id&gt;/ (как у main-агента).</summary>
-    private string SessionDir() => _sessions.DirectoryFor(_sessions.CurrentId);
+    private string SessionDir() => _sessionController.DirectoryFor(_sessionController.CurrentId);
     private readonly MemoryLayerStore _layerStore = new();
     private CancellationTokenSource? _cancellation;
     // Владелец фоновой работы: «запустил и забыл» с гарантией, что исключение не умрёт в тишине.
@@ -413,14 +415,11 @@ public partial class MainViewModel : ObservableObject {
     public ObservableCollection<PendingAttachment> PendingAttachments { get; } = new();
 
     // ── Профили чата (config/chat-profiles.json): назначение кусков текущей сессии ───
-
-    /// <summary>Ключи кусков профиля этой сессии; null = кусок default. Живут в SessionData.</summary>
-    private string? _samplerKey;
-    private string? _promptKey;
-    private string? _stateBlockKey;
+    // Ключи кусков живут в SessionController (перистируются в SessionData), VM читает их
+    // через контроллер.
 
     /// <summary>main-сессия управляется идентичностью — настройка чата для неё закрыта.</summary>
-    public bool IsMainSession => _sessions.CurrentId == MainAgent.SessionId;
+    public bool IsMainSession => _sessionController.CurrentId == MainAgent.SessionId;
 
     /// <summary>
     /// Редактор статичных профилей чата — ЕДИНСТВЕННОЕ место правки пресетов, живёт во
@@ -443,8 +442,8 @@ public partial class MainViewModel : ObservableObject {
         _background = new BackgroundWork(status => StatusText = status);
         TurnsPanel = new TurnPanel(_background.Turns);
         _promptAssembler = new SystemPromptAssembler(
-            () => _sessions.CurrentId,
-            () => _promptKey,
+            () => _sessionController.CurrentId,
+            () => _sessionController.PromptKey,
             SessionDir,
             _identity,
             _externalTools,
@@ -482,7 +481,7 @@ public partial class MainViewModel : ObservableObject {
         _memorySurfacer,
         ct => _pipeline.CountNextTokensAsync(ct),
         GetEffectiveContextSizeAsync,
-        () => _sessions.CurrentId,
+        () => _sessionController.CurrentId,
         new ContextBackupStore(ChatSessions.Root),
         new ContextMaintenance.Ui(
         status => StatusText = status,
@@ -507,9 +506,12 @@ public partial class MainViewModel : ObservableObject {
         _draft = new DraftKeeper(
         () => InputText,
         text => InputText = text,
-        () => _sessions.CurrentId,
+        () => _sessionController.CurrentId,
         new SessionDraftStore(ChatSessions.Root),
         () => DraftSaveIntervalSeconds);
+        // Сессии: после драфта (Load пользуется _draft), до EnsureMainSession/RestoreLastSession.
+        _sessionController = new SessionController(_log, _draft, _memorySurfacer);
+        _sessionController.SessionChanged += OnSessionChanged;
         // Таймер — за UI (Core-класс без таймера): интервал перечитывается на каждом
         // тике, поэтому смена в настройках действует без рестарта (как раньше).
         _draftTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(_draft.IntervalSeconds) };
@@ -658,7 +660,7 @@ public partial class MainViewModel : ObservableObject {
     /// <summary>Снимок «что происходило» для записей CrashLog (вызывается синхронно, без блокировок).</summary>
     private string BuildCrashContext() {
         var sb = new StringBuilder();
-        sb.AppendLine($"session: {_sessions.CurrentId}");
+        sb.AppendLine($"session: {_sessionController.CurrentId}");
         sb.AppendLine($"chat FSM: {_chatState.Current}; generating: {IsGenerating}");
         // QwenPlayground.Core.Runtime.TurnState: вложенный класс TurnState хода затеняет имя.
         var active = _background.Turns.Turns
@@ -757,32 +759,13 @@ public partial class MainViewModel : ObservableObject {
 
     /// <summary>
     /// Сессия main-агента — сессия по умолчанию: грузим её из sessions/main/chat.json,
-    /// иначе создаём. Идентичность (main-agent.md) и слои памяти в историю не пишутся —
-    /// они собираются в системный промпт при каждом рендере (InjectedIdentity).
+    /// иначе начинаем с чистого разговора. Логика — в SessionController; здесь только
+    /// обновление списка сессий (вид).
     /// </summary>
     private void EnsureMainSession() {
-        var sw = Stopwatch.StartNew();
-        var data = _sessions.EnsureMain();
-
-        if (data is not null) {
-            StartupTrace.Log($"EnsureMainSession: loaded {data.Messages.Count} messages ({sw.ElapsedMilliseconds}ms)");
-            _log.ReplaceAll(StripBakedSystem(data.Messages));
-            _log.SetNextMessageId(data.NextMessageId);
-        }
-        else {
-            StartupTrace.Log($"EnsureMainSession: created empty ({sw.ElapsedMilliseconds}ms)");
-            _log.Clear();
-        }
-        SaveCurrent();
-        StartupTrace.Log($"EnsureMainSession: saved ({sw.ElapsedMilliseconds}ms total)");
+        _sessionController.EnsureMain();
+        RefreshSessions();
     }
-
-    /// <summary>
-    /// У старой main-сессии system-сообщение — запечённая идентичность (+старое резюме).
-    /// Теперь идентичность собирается динамически, поэтому снимаем её из истории.
-    /// </summary>
-    private static List<ChatMessage> StripBakedSystem(IReadOnlyList<ChatMessage> messages) =>
-    messages.Count > 0 && messages[0].Role == ChatRole.System ? messages.Skip(1).ToList() : messages.ToList();
 
     /// <summary>
     /// Flush-векторизация памяти: факты без слоёв или со старой LayersVersion классифицируются
@@ -856,11 +839,12 @@ public partial class MainViewModel : ObservableObject {
 
     partial void OnSelectedSessionChanged(SessionInfo? value) {
         OnPropertyChanged(nameof(CanDeleteSelectedSession));
-        if (value is null || value.Id == _sessions.CurrentId || IsGenerating) 
+        if (value is null || value.Id == _sessionController.CurrentId || IsGenerating) 
             return;
         
-        LoadSession(value.Id);
-        RefreshShelfUi(); // полки per-session — меню следует за выбранной сессией
+        if (_sessionController.Load(value.Id))
+            StatusText = string.Empty;
+        // Реакции вида (список/превью/полки) — в OnSessionChanged (событие контроллера).
     }
 
     [RelayCommand]
@@ -872,15 +856,8 @@ public partial class MainViewModel : ObservableObject {
             SaveCurrent();        
 
         _log.Clear();
-        _sessions.StartNew();
-        _samplerKey = null;
-        _promptKey = null;
-        _stateBlockKey = null;
-        OnPropertyChanged(nameof(IsMainSession));
-        RefreshSessions();
-        SelectedSession = null;
-        RefreshPromptPreview();
-        RefreshShelfUi(); // свежая сессия стартует без полок (по дефолту всё выключено)
+        _sessionController.StartNew();
+        // Реакции вида (список/выбор/превью/полки) — в OnSessionChanged (событие контроллера).
     }    
     private CancellationTokenSource? _settingsSaveDebounce;
     /// <summary>
@@ -948,44 +925,8 @@ public partial class MainViewModel : ObservableObject {
         if (confirm.ShowDialog() != true)
             return;
 
-        if (_sessions.Delete(SelectedSession.Id)) {
-            // Удалили текущую: ChatSessions уже переключился на свежую пустую.
-            _log.Clear();
-        }
-
-        RefreshSessions();
-        RefreshPromptPreview();
-        RefreshShelfUi();
-        _sessions.PersistCurrentId();
-    }
-
-    private bool LoadSession(string id) {
-        var sw = Stopwatch.StartNew();
-        // ПЕРЕД сменой: выгрести текст текущей (старой) сессии в ЕЁ драфт — иначе
-        // набранный за последние секунды черновик потеряется при переключении.
-        _draft.Flush();
-        var data = _sessions.Load(id);
-        if (data is null) {
-            StartupTrace.Log($"LoadSession({id}): not found ({sw.ElapsedMilliseconds}ms)");
-            return false;
-        }
-        StartupTrace.Log($"LoadSession({id}): parsed {data.Messages.Count} messages ({sw.ElapsedMilliseconds}ms)");
-
-        _log.ReplaceAll(id == MainAgent.SessionId ? StripBakedSystem(data.Messages) : data.Messages);
-        _log.SetNextMessageId(data.NextMessageId);
-        _samplerKey = data.SamplerKey;
-        _promptKey = data.PromptKey;
-        _stateBlockKey = data.StateBlockKey;
-        // Смена сессии: surfaced-пул памяти и мусорка анонсов — транзитное состояние
-        // прошлой сессии, не тащим его в новую (иначе чужие заметки просочатся в state-блок).
-        _memorySurfacer.Clear();
-        AnnouncementBoard.Clear();
-        // ПОСЛЕ смены: восстановить драфт НОВОЙ сессии в окошко (у каждой свой черновик).
-        _draft.Restore();
-        OnPropertyChanged(nameof(IsMainSession));
-        StatusText = string.Empty;
-        RefreshPromptPreview();
-        return true;
+        _sessionController.Delete(SelectedSession.Id);
+        // Реакции вида (список/превью/полки) — в OnSessionChanged (событие контроллера).
     }
 
     // ── Профили чата: резолверы хода и диалог настройки (шестерёнка) ────────────────
@@ -1114,15 +1055,13 @@ public partial class MainViewModel : ObservableObject {
             OrderedKeys(profiles.Samplers.Keys),
             OrderedKeys(profiles.Prompts.Keys),
             OrderedKeys(profiles.StateBlocks.Keys),
-            _samplerKey, _promptKey, _stateBlockKey)
+            _sessionController.SamplerKey, _sessionController.PromptKey, _sessionController.StateBlockKey)
         { Owner = System.Windows.Application.Current.MainWindow };
         // Пресеты редактируются в ЕДИНСТВЕННОМ месте — вкладка «Настройки»; диалог закрываем.
         dialog.GoToSettings = () => SelectedTabIndex = SettingsTabIndex;
         if (dialog.ShowDialog() == true) {
-            _samplerKey = dialog.SelectedSamplerKey;
-            _promptKey = dialog.SelectedPromptKey;
-            _stateBlockKey = dialog.SelectedStateBlockKey;
-            SaveCurrent(); // редкое событие — пишем сразу, выбор не теряется при закрытии
+            _sessionController.ApplyProfileKeys(
+                dialog.SelectedSamplerKey, dialog.SelectedPromptKey, dialog.SelectedStateBlockKey);
             RefreshPromptPreview();
             StatusText = "Настройка чата применена: действует со следующего хода.";
         }
@@ -1132,35 +1071,37 @@ public partial class MainViewModel : ObservableObject {
         keys.OrderBy(k => k == ChatProfileSet.DefaultKey ? 0 : 1).ThenBy(k => k, StringComparer.Ordinal).ToList();
 
     /// <summary>
-    /// Восстановить последнюю открытую сессию (из settings.json). Если её нет, она равна
-    /// main или была удалена — остаёмся на main-агенте (дефолт).
+    /// Восстановить последнюю открытую сессию (из settings.json). Логика — в
+    /// SessionController; реакции вида — в OnSessionChanged.
     /// </summary>
     private void RestoreLastSession() {
-        var lastId = S.LastSessionId ?? _sessions.LastOpenedId;
-        if (string.IsNullOrEmpty(lastId) || lastId == _sessions.CurrentId) 
-            return;        
-        
-        if (LoadSession(lastId))
-            RefreshSessions(); // CurrentId уже переехал — синхронизируем SelectedSession, иначе селектор покажет main
-        else
-            _sessions.PersistCurrentId(); // последняя сессия пропала — фиксируем main, чтобы не пытаться снова
+        _sessionController.RestoreLast();
     }
 
     public void SaveCurrent() {
-        _log.AssignPendingIds();
-        _sessions.SaveCurrent(_log, _log.NextMessageId,
-            samplerKey: _samplerKey, promptKey: _promptKey, stateBlockKey: _stateBlockKey);
-        RefreshSessions();
+        _sessionController.SaveCurrent();
+        RefreshSessions(); // заголовок/время в списке могли измениться
     }
 
     private void RefreshSessions() {
-        _sessions.RefreshList();
+        _sessionController.RefreshList();
         Sessions.Clear();
-        foreach (var info in _sessions.List) {
+        foreach (var info in _sessionController.List) {
             Sessions.Add(info);
         }
 
-        SelectedSession = Sessions.FirstOrDefault(s => s.Id == _sessions.CurrentId);
+        SelectedSession = Sessions.FirstOrDefault(s => s.Id == _sessionController.CurrentId);
+    }
+
+    /// <summary>
+    /// Сессия сменилась (событие SessionController): обновить вид — флаг main, список +
+    /// выбор (селектор следует за CurrentId), превью, меню полок (полки per-session).
+    /// </summary>
+    private void OnSessionChanged() {
+        OnPropertyChanged(nameof(IsMainSession));
+        RefreshSessions();
+        RefreshPromptPreview();
+        RefreshShelfUi();
     }
 
     private void RebuildMessageViews() {
@@ -1555,11 +1496,11 @@ public partial class MainViewModel : ObservableObject {
             var multimodal = await MultimodalContext.BuildAsync(SessionDir(), Endpoint, _serverProps, _cancellation.Token);
             // Профиль чата: три независимых куска из статичного хранилища (default = как раньше).
             // main-агент ведётся идентичностью — промпт-кусок и отключение state-блока на него не действуют.
-            var isMain = _sessions.CurrentId == MainAgent.SessionId;
+            var isMain = _sessionController.CurrentId == MainAgent.SessionId;
             var profiles = ChatProfiles.Get();
-            var sampler = profiles.ResolveSampler(_samplerKey);
-            var prompt = profiles.ResolvePrompt(_promptKey);
-            var stateEnabled = isMain || profiles.ResolveStateBlock(_stateBlockKey).Enabled;
+            var sampler = profiles.ResolveSampler(_sessionController.SamplerKey);
+            var prompt = profiles.ResolvePrompt(_sessionController.PromptKey);
+            var stateEnabled = isMain || profiles.ResolveStateBlock(_sessionController.StateBlockKey).Enabled;
             var toolsAllowed = agentic && (isMain || prompt.Tools);
             await foreach (var agentEvent in loop.RunAsync(new AgentLoopRequest {
                 Conversation = _log,
@@ -1679,7 +1620,7 @@ public partial class MainViewModel : ObservableObject {
         turn.Raw.Append(text);
         turn.CurrentAssistant.AppendStreamChunk(text);
         _memorySurfacer.MaybeFireLiveRecall(turn.Agentic, text, turn.Raw, turn.Continued is not null,
-        _log, _sessions.CurrentId == MainAgent.SessionId,
+        _log, _sessionController.CurrentId == MainAgent.SessionId,
         CompanionEndpoint, _cancellation?.Token ?? CancellationToken.None);
     }
     private void OnAssistantMessage(TurnState turn, ChatMessage message) {
@@ -1699,7 +1640,7 @@ public partial class MainViewModel : ObservableObject {
             var token = _cancellation?.Token ?? CancellationToken.None;
             _background.Queue("реколл памяти", () =>
             _memorySurfacer.RecallAfterTurnAsync(
-            conversation, _sessions.CurrentId == MainAgent.SessionId, companion, token));
+            conversation, _sessionController.CurrentId == MainAgent.SessionId, companion, token));
         }
     }
     private void OnToolStarted(TurnState turn, string name, JsonObject arguments) {

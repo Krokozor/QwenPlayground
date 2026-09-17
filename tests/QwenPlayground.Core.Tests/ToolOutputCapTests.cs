@@ -10,6 +10,9 @@ namespace QwenPlayground.Core.Tests;
 /// Капы размера вывода инструментов: grep/read_file/memory_list не должны возвращать
 /// простыню, съедающую контекст модели (см. refactoring.md, changelog 2026-08-22).
 /// </summary>
+// Коллекция memory-settings: сериализация с другими классами, мутирующими
+// AppSettings.MemoryEnabled (глобальный синглтон, xUnit крутит классы параллельно).
+[Collection("memory-settings")]
 public sealed class ToolOutputCapTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "qpw_captest_" + Guid.NewGuid().ToString("N"));

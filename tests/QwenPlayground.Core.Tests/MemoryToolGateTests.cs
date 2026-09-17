@@ -12,6 +12,9 @@ namespace QwenPlayground.Core.Tests;
 /// соответствующие тулы), но не саму запись факта. Мутации MemoryEnabled — только in-memory
 /// (не через Update), чтобы тест не писал в общий settings.json, который читает приложение.
 /// </summary>
+// Коллекция memory-settings: сериализация с другими классами, мутирующими
+// AppSettings.MemoryEnabled (глобальный синглтон, xUnit крутит классы параллельно).
+[Collection("memory-settings")]
 public sealed class MemoryToolGateTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "qpw_memgate_" + Guid.NewGuid().ToString("N"));

@@ -275,6 +275,38 @@ NekoBot). План: вырезать только то, что имеет сво
 модуль 3 — фасад `Main` (Core): композиционный корень + оркестрация хода (FSM, бюджет,
 AgentLoop, profiles, restart) с событиями; VM остаётся протокол-адаптером.
 
+### 2026-09-17 (49) — Этап 2, модуль 2: SessionController (Core/Sessions)
+- **`SessionController`** (Core/Sessions, новый) — жизненный цикл сессий: EnsureMain/
+  Load/StartNew/Delete/RestoreLast/SaveCurrent/ApplyProfileKeys/RefreshList. Наружу —
+  свойства (CurrentId, ключи профилей, List) + событие `SessionChanged`. Внутри
+  (непрозрачно): инвариант переключения «flush драфта СТАРОЙ → загрузка → ключи
+  профилей → очистка транзитного состояния (surfaced-пул + AnnouncementBoard) →
+  restore драфта НОВОЙ», StripBakedSystem, персистенция. Шов для тестов — sessionsRoot.
+- **MainViewModel** — VM больше не владеет ключами профилей и логикой сессий:
+  LoadSession/EnsureMainSession-тела/RestoreLastSession-тело удалены, NewSession/
+  DeleteSession — команды-обёртки (DeleteSession оставляет только ConfirmWindow — UI),
+  `OnSessionChanged` (подписка на событие) делает все реакции вида в одном месте
+  (INPC IsMainSession + RefreshSessions + RefreshPromptPreview + RefreshShelfUi)
+  вместо четырёх копий последовательностей. VM −~150 строк (1768 → ~1610).
+- **Попутный фикс**: удаление ТЕКУЩЕЙ сессии сбрасывало профиль-ключи не полностью —
+  новая пустая сессия наследовала профиль удалённой (ChatSessions.StartNew не трогал
+  поля VM). Теперь Delete текущей = лог чист + ключи null (как у NewSession).
+- **Тесты**: `SessionControllerTests` (11 кейсов: драфты при переключении, очистка
+  surfaced-пула, сброс/персистенция ключей профилей, событие, unknown-session).
+- **Гонка тестов (инцидент)**: первый прогон гейта упал на 5 чужих тестах (MemoryNag,
+  memory_list, SimilarPairs) — мой тест бэкапил/возвращал `AppSettings.MemoryEnabled`,
+  а xUnit крутит классы параллельно: бэкап поймал чужой транзитный false и закрепл
+  его как «окружение». Фикс: `[Collection("memory-settings")]` на всех классах,
+  мутирующих/зависящих от MemoryEnabled (SessionController, MemorySurfacer,
+  MemoryToolGate, ToolOutputCap, StateBlockBuilder) — сериализация.
+- Сборка 20260917-100836 success (366 тестов зелёные), приложение проверено живым.
+- **Урок (владелец)**: не тестировать сессионные пути кликами в собственном UI —
+  агент резидентный, его непрерывность = история main-сессии; «+» в тулбаре чата
+  переключит сессию, и следующий ход пойдёт в пустой контекст.
+**Дальше**: модуль 3 — фасад `Main` (Core): композиционный корень + оркестрация хода
+(FSM, бюджет, AgentLoop, profiles, restart) с событиями AgentEvent; VM остаётся
+протокол-адаптером (пузыри в ObservableCollection + команды).
+
 ### 2026-09-16 (46) — Полки в UI: кнопка 🗄 + меню со статусами on/pending/off
 Запрос владельца: включить нужные группы инструментов заранее, до первого промпта — тем же
 механизмом, что у тулов агента (вкл — сразу, выкл — при следующем удобном случае). По

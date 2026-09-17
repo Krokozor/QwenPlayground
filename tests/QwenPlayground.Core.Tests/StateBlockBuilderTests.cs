@@ -10,6 +10,9 @@ namespace QwenPlayground.Core.Tests;
 /// Снапшот самосостояния агента: инварианты полей блока на подставных данных.
 /// BuildJournal в тестовой среде недоступен (нет развёрнутого run/) — BuildId/Status null.
 /// </summary>
+// Коллекция memory-settings: PendingPairs-тест зависит от окружного AppSettings.MemoryEnabled,
+// который другие классы мутируют (xUnit крутит классы параллельно — сериализуемся).
+[Collection("memory-settings")]
 public sealed class StateBlockBuilderTests
 {
     private readonly ServerProps _serverProps = new();
