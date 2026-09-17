@@ -308,6 +308,32 @@ AgentLoop, profiles, restart) с событиями; VM остаётся про�
 (FSM, бюджет, AgentLoop, profiles, restart) с событиями AgentEvent; VM остаётся
 протокол-адаптером (пузыри в ObservableCollection + команды).
 
+### 2026-09-17 (50) — Этап 2, модуль 3: TurnPipeline (Core/Agent) — оркестрация хода
+- **`TurnPipeline`** (Core/Agent, новый) — домен хода: бюджет-проверка ДО FSM (ошибка →
+  статус + сохранение истории, ход не стартует), переходы FSM (Idle→Generating→Idle,
+  порядок «сначала FSM, потом флаг» сохранён), запуск AgentLoop (профили, тулы,
+  state-блок, бюджет-гард, мультимодальность), CTS, рестарт в новую сборку.
+  Наружу: `RunTurnAsync(continueLastAssistant, onEvent) → TurnOutcome`, `Cancel()`,
+  `ActiveToken`. Вид — sink событий (`Action<AgentEvent>`) + итог (Canceled/Error/
+  BudgetFailed/Agentic): куда показать ошибку (пузырь или статус) решает VM.
+- **Шов `runLoop`** (конструктор): по умолчанию реальный цикл (AgentLoop строит
+  LLM-клиент сам), в тестах — скриптованные события. 8 тестов: бюджет-сбой (статус +
+  сейв + FSM не тронут), доставка событий, отмена, ошибка, continue (бюджет пропускается,
+  флаг в запросе), состав запроса (каталог сессии, conversation, state-блок main),
+  тулы main-сессии, ActiveToken.
+- **MainViewModel** — GenerateWithBudgetAsync/GenerateCoreAsync (тело ~110 строк) →
+  тонкий адаптер: TurnState (вид) + `_turns.RunTurnAsync(..., e => DispatchEvent(...))` +
+  разбор outcome (отмена → CommitCanceledPartial, ошибка → пузырь/статус). Удалены:
+  `RestartInto` (ушёл в пайплайн с делегатом `shutdownApp` — Core не знает про WPF),
+  `ParseEffort`, поле `_cancellation` (→ `_turns.Cancel()`/`ActiveToken`). VM:
+  1709 → ~1580 строк.
+- Сборка 20260917-113439 success (374 теста зелёные), приложение проверено живым
+  (текущий ход идёт через новый пайплайн: пузыри, статус, TurnsPanel работают).
+**Дальше**: модуль 4 — композиционный корень: конструктор VM (~150 строк графа
+сервисов) переезжает в фасад `Main` (Core), который владеет TurnPipeline/
+SessionController/assembler'ами; VM остаётся протокол-адаптером. Этап 3 —
+ShelfTools→событие + ARCHITECTURE.md.
+
 ### 2026-09-16 (46) — Полки в UI: кнопка 🗄 + меню со статусами on/pending/off
 Запрос владельца: включить нужные группы инструментов заранее, до первого промпта — тем же
 механизмом, что у тулов агента (вкл — сразу, выкл — при следующем удобном случае). По

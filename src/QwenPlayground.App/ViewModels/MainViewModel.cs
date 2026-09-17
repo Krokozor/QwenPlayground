@@ -46,7 +46,9 @@ public partial class MainViewModel : ObservableObject {
     /// <summary>Каталог текущей сессии: у каждой сессии своя папка sessions/&lt;id&gt;/ (как у main-агента).</summary>
     private string SessionDir() => _sessionController.DirectoryFor(_sessionController.CurrentId);
     private readonly MemoryLayerStore _layerStore = new();
-    private CancellationTokenSource? _cancellation;
+    // Оркестрация хода (Core): бюджет, FSM, AgentLoop, профили, отмена, рестарт.
+    // VM — sink событий (пузыри) + решение, куда показать ошибку.
+    private readonly TurnPipeline _turns;
     // Владелец фоновой работы: «запустил и забыл» с гарантией, что исключение не умрёт в тишине.
     private readonly BackgroundWork _background;
 
@@ -512,6 +514,20 @@ public partial class MainViewModel : ObservableObject {
         // Сессии: после драфта (Load пользуется _draft), до EnsureMainSession/RestoreLastSession.
         _sessionController = new SessionController(_log, _draft, _memorySurfacer);
         _sessionController.SessionChanged += OnSessionChanged;
+        // Ход: после сессий (пользуется их ключами/каталогом) и maintenance (бюджет-гард).
+        _turns = new TurnPipeline(
+            _log,
+            _chatState,
+            _toolRegistry,
+            _stateBlocks,
+            _maintenance,
+            _serverProps,
+            _sessionController,
+            _promptAssembler,
+            _memorySurfacer,
+            status => StatusText = status,
+            generating => IsGenerating = generating,
+            () => System.Windows.Application.Current?.Shutdown());
         // Таймер — за UI (Core-класс без таймера): интервал перечитывается на каждом
         // тике, поэтому смена в настройках действует без рестарта (как раньше).
         _draftTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(_draft.IntervalSeconds) };
@@ -784,7 +800,7 @@ public partial class MainViewModel : ObservableObject {
 
         try {
             var endpoint = CompanionEndpoint;
-            var token = _cancellation?.Token ?? CancellationToken.None;
+            var token = _turns.ActiveToken;
             var store = new MemoryStore();
             var processed = await MemoryClassifier.FlushAsync(store, endpoint, AppSettings.Get().MemoryFlushBudget, token);
 
@@ -833,7 +849,7 @@ public partial class MainViewModel : ObservableObject {
         var userMessage = ChatMessage.User(prompt);
         _log.Add(userMessage);
         Messages.Add(MessageViewModel.FromMessage("user", userMessage));
-        await GenerateWithBudgetAsync(continueLastAssistant: false);
+        await GenerateAsync();
         SaveCurrent();
     }
 
@@ -1036,11 +1052,6 @@ public partial class MainViewModel : ObservableObject {
             System.Diagnostics.Debug.WriteLine($"[MCP] WARNING: {w}");
     }
 
-    /// <summary>Усилие размышления из профиля («XHigh»/«Medium»/«Low»); пустое/мусорное — из настроек.</summary>
-    private static ReasoningEffort? ParseEffort(string text) =>
-        !string.IsNullOrWhiteSpace(text) && Enum.TryParse<ReasoningEffort>(text.Trim(), ignoreCase: true, out var parsed)
-            ? parsed
-            : null;
 
     /// <summary>
     /// Шестерёнка у панели сессий: назначить куски профиля текущему чату. main-агент
@@ -1184,7 +1195,7 @@ public partial class MainViewModel : ObservableObject {
     private bool CanSend() => !IsBusy && (InputText.Trim().Length > 0 || PendingAttachments.Count > 0) && Endpoint.Trim().Length > 0;
 
     [RelayCommand(CanExecute = nameof(IsGenerating))]
-    private void Cancel() => _cancellation?.Cancel();
+    private void Cancel() => _turns.Cancel();
 
     /// <summary>
     /// Очистка текущего разговора — программный доступ (Harness). UI-кнопка «Очистить»
@@ -1439,44 +1450,18 @@ public partial class MainViewModel : ObservableObject {
         }
     }
     private Task GenerateAsync(bool continueLastAssistant = false) =>
-    GenerateWithBudgetAsync(continueLastAssistant);
-    private async Task GenerateWithBudgetAsync(bool continueLastAssistant) {
-        // Бюджет-проверка идёт ДО try/catch в GenerateCoreAsync и до перевода FSM: падение здесь
-        // (сервер недоступен, /tokenize не вернул точное число) раньше оставляло ход в тишине —
-        // fire-and-forget задача (heartbeat/wake) гасла без следа, а добавленное user-сообщение
-        // «висело» несохранённым. Показываем ошибку и сохраняем историю.
-        if (!continueLastAssistant) {
-            try {
-                await _maintenance.EnsureBudgetAsync(CancellationToken.None);
-            }
-            catch (OperationCanceledException) {
-                throw;
-            }
-            catch (Exception exception) {
-                StatusText = $"ошибка проверки бюджета контекста: {exception.Message}";
-                SaveCurrent();
-                return;
-            }
-        }
-        // Режим всегда агентный (тумблер режимов убран из UI, 2026-08-22): инструменты
-        // доступны, если задан проект.
-        var agentic = ProjectRoot.Trim().Length > 0;
-        if (agentic) {
-            Directory.CreateDirectory(ProjectRoot);
-        }
-        await GenerateCoreAsync(agentic, continueLastAssistant);
-    }
+    GenerateCoreAsync(continueLastAssistant);
     /// <summary>Реальный n_ctx сервера (кэш), иначе настроенный ContextSize.</summary>
     private async Task<int> GetEffectiveContextSizeAsync() {
         await FetchServerPropsAsync();
         return EffectiveContextSize;
     }
     /// <summary>
-    /// Единый путь генерации (всегда агентный: тумблер режимов убран 2026-08-22).
-    /// allowToolExecution/toolDefinitions зависят от того, задан ли ProjectRoot:
-    /// без проекта ход идёт как обычный чат — инструменты не рекламируются и не выполняются.
+    /// Ход: доменная оркестрация (бюджет, FSM, AgentLoop, профили, отмена, рестарт) — в
+    /// TurnPipeline; здесь — только состояние вида (пузыри) и решение, куда показать ошибку.
     /// </summary>
-    private async Task GenerateCoreAsync(bool agentic, bool continueLastAssistant) {
+    private async Task GenerateCoreAsync(bool continueLastAssistant) {
+        var agentic = S.ProjectRoot.Trim().Length > 0;
         var continued = continueLastAssistant && _log.Count > 0 &&
         _log[^1].Role == ChatRole.Assistant
         ? _log[^1]
@@ -1487,78 +1472,24 @@ public partial class MainViewModel : ObservableObject {
             turn.CurrentAssistant = Messages[^1];
             turn.Raw.Append(continued.ToRawOutput());
         }
-        // FSM: Idle → Generating
-        _chatState.Transition(ChatState.Generating);
-        IsGenerating = true;
-        _cancellation = new CancellationTokenSource();
-        try {
-            var loop = new AgentLoop(_toolRegistry);
-            var multimodal = await MultimodalContext.BuildAsync(SessionDir(), Endpoint, _serverProps, _cancellation.Token);
-            // Профиль чата: три независимых куска из статичного хранилища (default = как раньше).
-            // main-агент ведётся идентичностью — промпт-кусок и отключение state-блока на него не действуют.
-            var isMain = _sessionController.CurrentId == MainAgent.SessionId;
-            var profiles = ChatProfiles.Get();
-            var sampler = profiles.ResolveSampler(_sessionController.SamplerKey);
-            var prompt = profiles.ResolvePrompt(_sessionController.PromptKey);
-            var stateEnabled = isMain || profiles.ResolveStateBlock(_sessionController.StateBlockKey).Enabled;
-            var toolsAllowed = agentic && (isMain || prompt.Tools);
-            await foreach (var agentEvent in loop.RunAsync(new AgentLoopRequest {
-                Conversation = _log,
-                OnFactSaved = item => _memorySurfacer.SurfaceOwnWrite(item.Id, item.Content),
-                ContinueLastAssistant = continued is not null,
-                AllowToolExecution = toolsAllowed,
-                ToolDefinitions = toolsAllowed ? _promptAssembler.ToolsFor(prompt.AllowedTools) : Array.Empty<ToolDefinition>(),
-                Generation = S.ToGenerationOptions(sampler),
-                MaxIterations = S.ResolveMaxIterations(sampler),
-                // Nag самопроверки живёт ВНУТРИ state-блока — без блока nag'ать некуда.
-                SanityCheckInterval = stateEnabled ? S.ResolveSanityCheckInterval(sampler) : 0,
-                ReasoningEffort = ParseEffort(prompt.ReasoningEffort),
-                StateProvider = stateEnabled ? BuildStateBlock : null,
-                SystemPromptProvider = _ => ResolveSystemPrompt(),
-                ToolExecutor = async (name, args, ctx, ct) => {
-                    // Менеджмент памяти сбрасывает mem_nag: модель задела memory_* — значит занималась.
-                    if (name.StartsWith("memory_", StringComparison.Ordinal)) {
-                        _memorySurfacer.OnMemoryToolUsed();
-                    }
-                    return await _toolRegistry.ExecuteDetailedAsync(name, args, ctx, ct);
-                },
-                // FSM: Generating → Compacting → Generating (между итерациями). Точный размер
-                // промпта — у сервера (/tokenize); решение «сжимать» и само сжатие — в ContextMaintenance.
-                ContextBudgetGuard = ct => _maintenance.EnsureBudgetAsync(ct),
-                Multimodal = multimodal,
-                SessionDir = SessionDir(),
-                CancellationToken = _cancellation.Token
-            })) {
-                DispatchEvent(turn, agentEvent);
-            }
+        var outcome = await _turns.RunTurnAsync(continueLastAssistant, e => DispatchEvent(turn, e));
+        if (outcome.BudgetFailed) {
+            // Бюджет не прошёл — статус и сохранение истории уже сделаны пайплайном.
+            return;
         }
-        catch (OperationCanceledException) {
+        if (outcome.Canceled) {
             // Хвост стрима мог не успеть опубликоваться (троттлинг) — финализируем вид до разбора.
             turn.CurrentAssistant?.FlushStreaming();
             CommitCanceledPartial(turn.Continued, turn.CurrentAssistant, turn.Raw.ToString());
         }
-        catch (Exception exception) {
+        else if (outcome.Error is { } exception) {
             // В single-режиме исторически показываем ошибку прямо в пузыре ответа.
-            if (!agentic && turn.CurrentAssistant is not null) {
+            if (!outcome.Agentic && turn.CurrentAssistant is not null) {
                 turn.CurrentAssistant.Content = $"[ошибка] {exception.Message}";
             }
             else {
                 StatusText = $"ошибка: {exception.Message}";
             }
-        }
-        finally {
-            _cancellation.Dispose();
-            _cancellation = null;
-            // FSM: Generating → Idle (если ещё не в RestartPending).
-            // Сначала FSM, потом IsGenerating=false: уведомление CanExecuteChanged должно
-            // стрельнуть, когда IsBusy уже false, иначе кнопка отката останется серой.
-            if (_chatState.Current == ChatState.Generating) {
-                _chatState.Transition(ChatState.Idle);
-            }
-            IsGenerating = false;
-        }
-        if (agentic && SelfBuildService.ConsumeRestartRequest() is { } restartBuildId) {
-            RestartInto(restartBuildId);
         }
     }
     /// <summary>Состояние одного хода генерации: мутации обработчиков событий собраны здесь.</summary>
@@ -1621,7 +1552,7 @@ public partial class MainViewModel : ObservableObject {
         turn.CurrentAssistant.AppendStreamChunk(text);
         _memorySurfacer.MaybeFireLiveRecall(turn.Agentic, text, turn.Raw, turn.Continued is not null,
         _log, _sessionController.CurrentId == MainAgent.SessionId,
-        CompanionEndpoint, _cancellation?.Token ?? CancellationToken.None);
+        CompanionEndpoint, _turns.ActiveToken);
     }
     private void OnAssistantMessage(TurnState turn, ChatMessage message) {
         turn.CurrentAssistant ??= AddAssistantView();
@@ -1637,7 +1568,7 @@ public partial class MainViewModel : ObservableObject {
         if (turn.Agentic) {
             var conversation = _log;
             var companion = CompanionEndpoint;
-            var token = _cancellation?.Token ?? CancellationToken.None;
+            var token = _turns.ActiveToken;
             _background.Queue("реколл памяти", () =>
             _memorySurfacer.RecallAfterTurnAsync(
             conversation, _sessionController.CurrentId == MainAgent.SessionId, companion, token));
@@ -1660,19 +1591,6 @@ public partial class MainViewModel : ObservableObject {
         turn.PendingTool.Source = toolMessage;
         turn.PendingTool.LoadArtifacts(SessionDir());
         turn.PendingTool = null;
-    }
-    private void RestartInto(string buildId) {
-        SaveCurrent();
-        // Launcher в pointer-режиме (pid + buildId): current.txt = buildId, старт из run/<id>.
-        // Старые версии приложения передают только pid — Launcher тогда работает в legacy-режиме.
-        var launcher = Path.Combine(SelfBuildPaths.LauncherDir, "QwenPlayground.Launcher.exe");
-        Process.Start(new ProcessStartInfo {
-            FileName = launcher,
-            Arguments = $"{Environment.ProcessId} {buildId}",
-            UseShellExecute = false,
-            CreateNoWindow = true
-        });
-        System.Windows.Application.Current.Shutdown();
     }
     private void CommitCanceledPartial(ChatMessage? continued, MessageViewModel? currentAssistant, string raw) {
         if (currentAssistant is null || raw.Trim().Length == 0) {
