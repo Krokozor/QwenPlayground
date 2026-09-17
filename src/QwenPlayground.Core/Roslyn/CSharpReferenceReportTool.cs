@@ -97,14 +97,15 @@ public sealed class CSharpReferenceReportTool : AgentTool
                      .Where(m => MatchesKind(m, Kinds)))
         {
             var locations = await FindSourceLocationsAsync(member, solution, ct);
-            var declaration = member.Locations.FirstOrDefault(l => l.IsInSource);
-            var firstUse = locations.FirstOrDefault(l => !IsSameLocation(l, declaration));
             var row = new ReportRow
             {
                 Name = member.Name,
                 Kind = KindName(member),
-                Refs = Math.Max(0, locations.Count - 1), // декларацию не считаем
-                FirstUse = FormatLocation(firstUse),
+                // FindReferencesAsync в этой версии Roslyn возвращает только
+                // ИСПОЛЬЗОВАНИЯ (декларация в locations не входит) — счётчик
+                // «без декларации» получается по построению, как в VS CodeLens.
+                Refs = locations.Count,
+                FirstUse = FormatLocation(locations.FirstOrDefault()),
                 Note = BuildNote(member),
             };
             // XAML-кроссчек для нулей: WPF-биндинг не виден Roslyn как C#-ссылка.
@@ -153,14 +154,12 @@ public sealed class CSharpReferenceReportTool : AgentTool
             foreach (var type in types)
             {
                 var locations = await FindSourceLocationsAsync(type, solution, ct);
-                var declaration = type.Locations.FirstOrDefault(l => l.IsInSource);
-                var firstUse = locations.FirstOrDefault(l => !IsSameLocation(l, declaration));
                 rows.Add(new ReportRow
                 {
                     Name = type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
                     Kind = "type",
-                    Refs = Math.Max(0, locations.Count - 1),
-                    FirstUse = FormatLocation(firstUse),
+                    Refs = locations.Count, // только использования (декларация не в locations)
+                    FirstUse = FormatLocation(locations.FirstOrDefault()),
                     Note = BuildNote(type),
                 });
             }

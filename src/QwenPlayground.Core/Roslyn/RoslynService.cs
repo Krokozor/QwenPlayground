@@ -68,6 +68,30 @@ public sealed class RoslynService
         }
     }
 
+    /// <summary>
+    /// Применить externally-изменённый снапшот к живому workspace (инструменты
+    /// rename/move). Вызывать ПОСЛЕ записи файлов на диск: _loadedAt=Now не даст
+    /// следующему GetSolutionAsync делать лишний инкрементальный проход
+    /// (файлы новее _loadedAt, но текст уже применён).
+    /// </summary>
+    public async Task ApplyChangesAsync(Solution solution, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            if (_workspace is not null)
+            {
+                _workspace.TryApplyChanges(solution);
+            }
+            _solution = solution;
+            _loadedAt = DateTime.Now;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private async Task OpenAsync(CancellationToken cancellationToken)
     {
         EnsureLocator();
