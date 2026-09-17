@@ -48,6 +48,9 @@ public static class PromptCatalog
             ## Задача
             - [one or two brief sentences: what the user was trying to accomplish; quote verbatim where the exact wording matters, or "(none)"]
 
+            ## Обсуждения
+            - [brainstorming of ideas with the user, if any: what was discussed, what decisions were made and what they were based on, or "(none)"]
+            
             ## Контекст
             - [constraints, agreements, important technical facts and assumptions about the project/environment, or "(none)"]
 
