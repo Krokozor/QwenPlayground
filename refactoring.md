@@ -250,6 +250,31 @@ MainViewModel (ChatLog, FSM, сессии, генерация, heartbeat-мар�
 VM худеет до MVVM-адаптера. **Этап 3**: утечка ShelfTools→DesktopOverlay.Hide() через
 событие, ARCHITECTURE.md обновить под новую карту.
 
+### 2026-09-17 (48) — Этап 2, модуль 1: SystemPromptAssembler (Core/Agent)
+Владелец отклонил partial-классы («не инкапсуляция, а нарезка на удобочитаемые куски»):
+критерий — модуль с ограниченным наружу API, внутренности непрозрачны (как сервисы
+NekoBot). План: вырезать только то, что имеет свою границу, каждый шаг — отдельный
+модуль + сборка + тесты + коммит.
+- **`SystemPromptAssembler`** (Core/Agent, новый) — сборка системного промпта сессии и
+  множества тулов. Наружу — 4 метода: `ResolveSystemPrompt()`, `ToolsFor(allowed)`,
+  `EffectiveShelves()`, `DeactivateUnusedShelves(conversation)`. Внутри (непрозрачно):
+  кэш промпта, детект KV-rebuild, батчинг staged-деактиваций полок, MCP-строки,
+  Combine. Зависимости — через 6 конструкторных параметров (Func'и + сервисы).
+- **MainViewModel** — тонкая обёртка: `ResolveSystemPrompt()` = ассемблер +
+  `RefreshShelfUi()` (UI-состояние остаётся в VM); `onCompacted` →
+  `DeactivateUnusedShelves(_log)` + RefreshShelfUi; PromptPipeline получает
+  `activeShelves: () => _promptAssembler.EffectiveShelves()`; GenerateCore —
+  `_promptAssembler.ToolsFor(...)`. Удалено ~190 строк (кэш-поля, Combine,
+  ShelfFilteredTools, BuildMcpServerRows, EffectiveShelves, DeactivateUnusedShelves).
+- Инвариант «превью и ход совпадают» теперь по построению: оба пути — один ассемблер.
+- Сборка 20260917-091355 success (тесты зелёные), приложение проверено живым (чат +
+  превью промпта рендерятся). Коммит 4a4446b, запушен.
+**Дальше**: модуль 2 — `SessionController` (Core/Sessions): жизненный цикл сессий
+(EnsureMain/Load/New/Delete/RestoreLast/SaveCurrent + ключи профилей + инвариант
+«flush драфта старой → restore драфта новой» + очистка транзитного состояния памяти);
+модуль 3 — фасад `Main` (Core): композиционный корень + оркестрация хода (FSM, бюджет,
+AgentLoop, profiles, restart) с событиями; VM остаётся протокол-адаптером.
+
 ### 2026-09-16 (46) — Полки в UI: кнопка 🗄 + меню со статусами on/pending/off
 Запрос владельца: включить нужные группы инструментов заранее, до первого промпта — тем же
 механизмом, что у тулов агента (вкл — сразу, выкл — при следующем удобном случае). По
