@@ -380,6 +380,59 @@ ShelfTools→событие + ARCHITECTURE.md.
   MainViewModel: 1943 → 1469 строк; все сервисы — в Core-модулях с ограниченными
   поверхнями; обратных утечек App→Core нет.
 
+### 2026-09-17 (53) — Расширение полки c#: reference_report, rename, move_type (T1–T4)
+Запрос владельца: «у меня ощущение что у тебя недостаток простых инструментов» — исследование
+внутренних связей кода (счётчики ссылок, как VS CodeLens: «половина класса — публичные
+аксессоры с 0 ссылок; сложный класс, а ссылок 1») и безопасное редактирование (страх
+regex-массовых замен — инцидент с MoE-моделью, стёршей переносы в файле на 2к строк;
+«перед переименованием надо проверять коллизии имён»). T5 (сложность методов) отклонён
+владельцем: «не очень хорошая метрика». Идея владельца: «некоторые инструменты по дефолту
+могли сохранять отчёты о своей работе как файлы» — реализовано в T1 (`saveDetail`).
+- **T4 ArchitectureGuardTests** (3 теста): Core.csproj под тестом — TFM без «-windows»,
+  нет WindowsDesktop.App/UseWPF/UseWindowsForms, нет ProjectReference на App. Граница
+  слоёв структурная (TFM), тест страхует от «добротного» ретаргетинга.
+- **T1 csharp_reference_report**: пакетный CodeLens. Режимы `members`/`types`, фильтры
+  access/kinds/maxRefs/minRefs/limit, `saveDetail` → `reports/reference_report_<type>.md`
+  (короткий отчёт — в ответ, полный — в файл). Ноль ссылок = кандидат, не доказательство:
+  XAML-кроссчек помечает `[XAML:]`, `[Tool]`-члены — «via reflection», кавек про
+  делегатную индирекцию. Счётчик = использования (декларация не входит — см. урок ниже,
+  семантика совпадает с VS CodeLens).
+- **T2 csharp_rename**: ядро `CSharpRenameCore` — чистая функция Solution→Outcome
+  (internal, тестируется на in-memory AdhocWorkspace); тул — тонкая обёртка
+  (Shared-солюшен → ядро → запись на диск → `RoslynService.ApplyChangesAsync` — новый
+  публичный метод: TryApplyChanges + `_loadedAt=Now`). Безопасность: пробный rename
+  применяется в памяти, затронутые проекты компилируются, дифф ошибок до/после →
+  коллизии (CS0102 и др.) отменяются, ничего не сохраняется. Ключевые слова —
+  `SyntaxFacts.GetKeywordKind` + `IsReservedKeyword` (контекстуальные легальны).
+  Неоднозначность (одноимённые символы) → список кандидатов + disambiguation по file/line.
+  Декларация переименовывается явно (токен имени через FindNode — span декларации
+  начинается с модификатора). 7 тестов.
+- **T3 csharp_move_type**: ядро `CSharpMoveTypeCore` (те же приёмы). v1: только top-level
+  (вложенные/partial — честный отказ), usings переезжают консервативно (все из
+  исходного файла), квалификаторы `OldNs.Type` → `NewNs.Type` текстом с проверкой границ,
+  `+using NewNs` файлам с неквалифицированными ссылками, `RemoveNode(KeepNoTrivia)`.
+  8 тестов.
+- **Уроки Roslyn 5.6** (версия заметно отличается от «классической» — на это ушло
+  большинство времени; API прощупывалось рефлексией-пробниками + XML-доками):
+  нет `Document.SaveAsync` (запись — File.WriteAllText + ApplyChangesAsync),
+  `Solution.GetDocument(string)`, `SyntaxFacts.IsKeyword(string)`, `ProjectId.Create()`
+  (→ `CreateNewId`), `GetDescendantNodes` (→ `DescendantNodes`), `FieldDeclarationSyntax.
+  Declarators` (→ `Declaration.Variables`, у декларатора `Identifier` вместо `Name`),
+  `ITypeSymbol.IsPartial` (→ по синтаксису), `Usings()` (→ ChildNodes),
+  `GetUnescapedText` (→ `Name.ToString()` — GetText() тащит trailing trivia: баг
+  `oldNamespace='Ns1\n'` пойман отладкой). **`FindReferencesAsync` возвращает только
+  использования, без декларации** (и «семью» символа отдельными ReferencedSymbol —
+  дедуп по позиции). In-memory документы: `FilePath` пуст, `Location.path` = cwd+имя →
+  маппинг по identity синтаксического дерева. `AddProject(projectId, name, assemblyName,
+  languageName)` — язык на ЧЕТВЁРТОМ месте.
+- **Доки локально**: NuGet-пакеты шьют XML-доки (`~/.nuget/packages/microsoft.
+  codeanalysis.*.xml`) — интернет для API-справок не нужен (в дереве — ADSL+VPN).
+- Сборка 20260917-201458 success (400 тестов зелёные). Коммиты f02a257 (T4+T1),
+  3c82126 (T2), c6102e7 (T3) — все запушены.
+- **Дальше**: фидбэк от использования инструментов в отдельном чате (план владельца);
+  при необходимости — расширение полки (выборочно: move-члена, delete-члена с проверкой
+  мёртвости через reference_report).
+
 ### 2026-09-16 (46) — Полки в UI: кнопка 🗄 + меню со статусами on/pending/off
 Запрос владельца: включить нужные группы инструментов заранее, до первого промпта — тем же
 механизмом, что у тулов агента (вкл — сразу, выкл — при следующем удобном случае). По
