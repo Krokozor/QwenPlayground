@@ -53,6 +53,31 @@
             <!-- Настройка чата: назначение кусков профиля (семплер / промпт / state-блок) -->
             <Button Content="&#9881;" Command="{Binding OpenChatTuningCommand}" Padding="8,0" Margin="0,0,12,0"
                     ToolTip="Настройка чата: семплер, промпт, state-блок (профили из config/chat-profiles.json). Для main-сессии не действует." />
+            <!-- Полки (группы инструментов): тот же механизм, что и у тулов агента
+                 activate/deactivate_shelf. Отметка — немедленная активация, снятие — staged
+                 (снимется при ближайшей естественной смене промпта). Состояние per-session.
+                 Меню — отдельный UserControl (ShelfMenu) в собственном Popup, не ContextMenu:
+                 дефолтный Aero2-шаблон ContextMenu рендерил артефакт (белый блок слева), а
+                 отдельный контрол проще инспектировать и править. -->
+            <Button x:Name="ShelfButton" Padding="8,0" Margin="0,0,12,0" Click="ShelfButton_Click"
+                    ToolTip="Полки (группы инструментов): отметка — сразу, снятие — при следующей смене промпта. По умолчанию всё выключено.">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#x1F5C4;" FontSize="14" />
+                    <TextBlock Text="{Binding ShelfCount}" Margin="5,0,0,0" FontSize="11" Foreground="#648CFF"
+                               VerticalAlignment="Center"
+                               Visibility="{Binding HasActiveShelves, Converter={StaticResource BoolToVis}}" />
+                </StackPanel>
+            </Button>
+            <!-- Попап меню: закрывается на любой клик вне (StaysOpen=False), DataContext
+                 наследует от тулбара (MainViewModel). -->
+            <Popup x:Name="ShelfPopup" PlacementTarget="{Binding ElementName=ShelfButton}"
+                   Placement="Bottom" VerticalOffset="2" StaysOpen="False"
+                   AllowsTransparency="True" PopupAnimation="Fade" Closed="ShelfPopup_Closed">
+                <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1" CornerRadius="4" Padding="3" Margin="8">
+                    <views:ShelfMenu DataContext="{Binding}" />
+                </Border>
+            </Popup>
             <Button Content="&#9200;" Command="{Binding WakeNowCommand}" ToolTip="Разбудить main-агента: wake-сигнал или heartbeat вне расписания"
                     Padding="8,0" Margin="0,0,4,0" />
             <Button Content="Сжать" Command="{Binding CompactCommand}" Padding="12,2" Margin="0,0,4,0" />

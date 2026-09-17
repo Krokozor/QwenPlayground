@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Settings;
 
 namespace QwenPlayground.Core.Probes;
@@ -136,22 +137,28 @@ public static class LlmProbeClient
         {
             var remaining = Math.Max(1,
                 (int)(UnavailableCooldownSeconds - (DateTime.UtcNow - _lastFailureUtc).TotalSeconds));
+            DiagnosticsLog.Log($"probe: fail-fast (circuit open, retry in ~{remaining}s)");
             throw new CompanionUnavailableException(remaining);
         }
+        DiagnosticsLog.Log($"probe: POST {url} begin");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var response = await SharedHttp.PostAsync(url, content, cancellationToken);
             response.EnsureSuccessStatusCode();
             RecordSuccess();
+            DiagnosticsLog.Log($"probe: POST {url} done ({sw.ElapsedMilliseconds}ms)");
             return response;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            DiagnosticsLog.Log($"probe: POST {url} canceled ({sw.ElapsedMilliseconds}ms)");
             throw; // Stop/отмена — не «недоступность соседа», breaker не трогаем.
         }
-        catch (Exception)
+        catch (Exception exception)
         {
             RecordFailure(); // таймаут / соединение / HTTP-ошибка → сосед, вероятно, мёртв.
+            DiagnosticsLog.Log($"probe: POST {url} FAILED ({sw.ElapsedMilliseconds}ms): {exception.Message}");
             throw;
         }
     }

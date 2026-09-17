@@ -2,9 +2,11 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json.Nodes;
 using QwenPlayground.Core.Chat;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.MetaInfo;
 using QwenPlayground.Core.SelfBuild;
+using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Settings;
 using QwenPlayground.Core.Templates;
 using QwenPlayground.Core.Tools;
@@ -77,15 +79,19 @@ public sealed class AgentLoop
         IReadOnlyList<string>? multimodalData = null;
 
         var bound = maxIterations > 0 ? maxIterations : int.MaxValue;
+        DiagnosticsLog.Log($"AgentLoop: begin (maxIterations={maxIterations}, endpoint={endpoint})");
         for (var iteration = 0; iteration < bound; iteration++)
         {
+            DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1} begin");
             // Бюджет контекста: результат инструментов предыдущей итерации (иногда огромный —
             // файлы, картинки) уже лежит в conversation. Следующий рендер будет больше последнего
             // запроса, поэтому проверяем/сжимаем ДО рендера — иначе переполнение окна ударит
             // при отправке следующего сообщения (сервер вернёт 400).
             if (contextBudgetGuard is not null)
             {
+                DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: context budget guard begin");
                 await contextBudgetGuard(cancellationToken);
+                DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: context budget guard done");
             }
 
             string prompt;
@@ -139,12 +145,16 @@ public sealed class AgentLoop
             }
 
             var raw = new StringBuilder(continued?.ToRawOutput() ?? string.Empty);
-
+            DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: render done ({prompt.Length} chars), stream begin");
+            var streamStart = System.Diagnostics.Stopwatch.StartNew();
+            var chunkCount = 0;
             await foreach (var chunk in client.StreamAsync(prompt, generation, multimodalData, cancellationToken))
             {
                 raw.Append(chunk);
+                chunkCount++;
                 yield return new TokenEvent(chunk);
             }
+            DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: stream done ({raw.Length} chars, {chunkCount} chunks, {streamStart.ElapsedMilliseconds}ms)");
 
             var message = continued ?? QwenOutputParser.ParseAssistant(raw.ToString());
             // Префилл не входит в ответ модели — снапшот пришиваем явно: блок, который
@@ -188,11 +198,13 @@ public sealed class AgentLoop
                 if (nagOnNoToolCall && nags < maxNags)
                 {
                     nags++;
+                    DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: no tool calls, nag {nags}/{maxNags}");
                     var nag = ChatMessage.User(nagText ?? DefaultNagText);
                     conversation.Add(nag);
                     yield return new NagEvent(nag.Content);
                     continue;
                 }
+                DiagnosticsLog.Log($"AgentLoop: done (no tool calls, {iteration + 1} iterations)");
                 yield return new AgentDoneEvent();
                 yield break;
             }
@@ -232,10 +244,13 @@ public sealed class AgentLoop
             foreach (var call in toolCalls)
             {
                 var arguments = call.Arguments as JsonObject ?? new JsonObject();
+                DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: tool call '{call.Name}' begin");
+                var toolStart = System.Diagnostics.Stopwatch.StartNew();
                 yield return new ToolCallStartedEvent(call.Name, arguments);
                 var execution = toolExecutor is not null
                     ? await toolExecutor(call.Name, arguments, toolContext, cancellationToken)
                     : await _tools.ExecuteDetailedAsync(call.Name, arguments, toolContext, cancellationToken);
+                DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: tool call '{call.Name}' done ({toolStart.ElapsedMilliseconds}ms, result {execution.Text.Length} chars)");
                 var toolMessage = ChatMessage.Tool(execution.Text);
                 conversation.Add(toolMessage);
                 // Финализация: результат уже добавлен в разговор и получил стабильный ID —
@@ -246,7 +261,12 @@ public sealed class AgentLoop
                 {
                     await execution.Tool.FinalizeAsync(toolContext, toolMessage.Id, cancellationToken);
                 }
-                yield return new ToolCallFinishedEvent(call.Name, execution.Text, toolMessage);
+                // Автокаппинг: большой tool-вывод → полный в attachments/ сообщения, в
+                // сообщении остаётся превью + <attachment>. Контекст не раздувается, данные
+                // не теряются (read_file чтобы увидеть весь вывод). read_file с явным
+                // offset/limit — осознанный запрос, не каппим (модель знает размер).
+                CapToolOutput(toolMessage, execution.Text, sessionDir, call.Name, arguments);
+                yield return new ToolCallFinishedEvent(call.Name, toolMessage.Content, toolMessage);
 
                 if (call.Name == "sanity_check")
                 {
@@ -266,6 +286,56 @@ public sealed class AgentLoop
         if (maxIterations > 0)
         {
             yield return new AgentErrorEvent($"reached iteration limit ({maxIterations})");
+        }
+    }
+
+    /// <summary>
+    /// Автокаппинг tool-вывода: если текст больше порога (8 КБ), полный вывод сохраняется в
+    /// attachments/ папки артефактов сообщения, а в сообщении остаётся превью (~2 КБ, по
+    /// границе строки) + тег &lt;attachment path&gt;. Контекст не раздувается, данные не
+    /// теряются (read_file чтобы увидеть весь вывод). Никогда не бросает: сбой каппинга не
+    /// ломает ход — вывод остаётся как есть.
+    /// </summary>
+    private static void CapToolOutput(ChatMessage toolMessage, string text, string? sessionDir, string toolName, JsonObject? arguments)
+    {
+        // read_file с явным offset/limit — осознанный запрос (модель знает размер), не каппим.
+        // Без offset/limit (весь файл) — каппим (safety net). Прочие тулы — каппим.
+        var hasOffset = arguments?.TryGetPropertyValue("offset", out _) ?? false;
+        var hasLimit = arguments?.TryGetPropertyValue("limit", out _) ?? false;
+        if (toolName == "read_file" && (hasOffset || hasLimit))
+        {
+            return;
+        }
+        const int threshold = 8 * 1024;
+        if (text.Length <= threshold || string.IsNullOrWhiteSpace(sessionDir))
+        {
+            return;
+        }
+        try
+        {
+            var store = new MessageMetaStore(sessionDir);
+            var full = store.AddTextArtifact(toolMessage.Id, "output.txt", text);
+            // Путь относительно корня workspace (read_file ожидает такой).
+            var wsRoot = SelfBuildPaths.WorkspaceRoot;
+            var rel = full.StartsWith(wsRoot, StringComparison.OrdinalIgnoreCase)
+                ? full[wsRoot.Length..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                : full;
+            const int preview = 2 * 1024;
+            var cut = Math.Min(preview, text.Length);
+            var lastNewline = text.LastIndexOf('\n', cut);
+            if (lastNewline > preview / 2)
+            {
+                cut = lastNewline;
+            }
+            var lines = text.Split('\n').Length;
+            toolMessage.Content = text[..cut]
+                + $"\n\n[Output truncated — full ({text.Length / 1024}KB, {lines} lines) attached.]"
+                + $"\n<attachment path=\"{rel}\">";
+            DiagnosticsLog.Log($"AgentLoop: tool output capped (msg {toolMessage.Id}, {text.Length} chars → {rel})");
+        }
+        catch (Exception exception)
+        {
+            DiagnosticsLog.Log($"AgentLoop: tool output capping failed (msg {toolMessage.Id}): {exception.Message}");
         }
     }
 }

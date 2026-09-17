@@ -1,3 +1,5 @@
+using QwenPlayground.Core.Crash;
+
 namespace QwenPlayground.Core.Runtime;
 
 /// <summary>
@@ -71,10 +73,15 @@ public sealed class TurnEntry
         Changed();
     }
 
-    /// <summary>Дописать этап в журнал (например, «компакция», «стрим 2/5»).</summary>
+    /// <summary>
+    /// Дописать этап в журнал (например, «компакция», «стрим 2/5»).
+    /// Зеркалится в diag-лог: журнал живёт в памяти/UI и теряется при зависании,
+    /// а в файле видно, на каком этапе хода процесс остановился.
+    /// </summary>
     public void Log(string stage)
     {
         _journal.Add(stage);
+        DiagnosticsLog.Log($"turn '{Name}': {stage}");
         Changed();
     }
 

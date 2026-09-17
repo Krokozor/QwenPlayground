@@ -83,9 +83,15 @@ public sealed class HeartbeatController : IAppService
         _timer?.Stop();
     }
 
+    private int _tickCount;
+
     /// <summary>Один тик опроса: busy гасит всё, flush памяти бежит всегда при свободном чате.</summary>
     public void Tick()
     {
+        if (++_tickCount <= 3)
+        {
+            QwenPlayground.Core.Crash.StartupTrace.Log($"heartbeat tick #{_tickCount} (busy={_isBusy()})");
+        }
         // Страж процесса: живость watchdog'а проверяем ДО busy-гашения — она не зависит
         // от занятости чата (иначе долгая генерация = слепое пятно по своему стражу).
         _watchdogGuard?.Invoke();

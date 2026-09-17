@@ -32,29 +32,20 @@ public sealed class ActivateShelfTool : AgentTool
         {
             return Task.FromResult("Error: no session in this context — cannot activate a shelf.");
         }
-        var state = new ShelfState(context.SessionDir);
-        var active = state.Load();
-        var wasPending = state.LoadPending().Contains(group);
-        if (active.Contains(group) && !wasPending)
+        // Единая логика с UI-меню (ShelfState.Activate): немедленная активация,
+        // пере-активация отменяет отложенную деактивацию.
+        var result = new ShelfState(context.SessionDir).Activate(group);
+        return result switch
         {
-            return Task.FromResult($"Group '{Group}' is already active. Its tools are in your prompt: " +
-                                    $"{GroupToolNames(group)}.");
-        }
-        // Пере-активация отменяет отложенную деактивацию: группа понадобилась снова →
-        // решение на выключение откатывается, rebuild не происходит (группа и так в промпте).
-        state.UnmarkPending(group);
-        if (!active.Contains(group))
-        {
-            active.Add(group);
-            state.Save(active);
-        }
-        if (wasPending)
-        {
-            return Task.FromResult($"Group '{Group}' re-activated — the pending deactivation is canceled. " +
-                                    $"Its tools stay in your prompt: {GroupToolNames(group)}. No prompt change.");
-        }
-        return Task.FromResult($"Group '{Group}' activated — its tools join your prompt next turn: " +
-                                $"{GroupToolNames(group)}. System prompt changed (KV-cache rebuild).");
+            ShelfResult.AlreadyActive => Task.FromResult(
+                $"Group '{Group}' is already active. Its tools are in your prompt: {GroupToolNames(group)}."),
+            ShelfResult.Reactivated => Task.FromResult(
+                $"Group '{Group}' re-activated — the pending deactivation is canceled. " +
+                $"Its tools stay in your prompt: {GroupToolNames(group)}. No prompt change."),
+            _ => Task.FromResult(
+                $"Group '{Group}' activated — its tools join your prompt next turn: " +
+                $"{GroupToolNames(group)}. System prompt changed (KV-cache rebuild)."),
+        };
     }
 
     internal static bool TryParseGroup(string name, out ToolGroup group) =>
@@ -106,17 +97,17 @@ public sealed class DeactivateShelfTool : AgentTool
         {
             return Task.FromResult("Error: no session in this context — cannot deactivate a shelf.");
         }
+        // Staged-деактивация (единая логика с UI-меню, ShelfState.Deactivate): не снимаем
+        // группу сразу (это создало бы собственный rebuild системного промпта). Помечаем к
+        // снятию — группа уйдёт при ближайшей ЕСТЕСТВЕННОЙ смене промпта (компакция/смена
+        // сессии/слои), батчингом с неизбежным rebuild'ом. Пока группа в промпте — тулзы
+        // группы по-прежнему доступны.
         var state = new ShelfState(context.SessionDir);
-        var active = state.Load();
-        if (!active.Contains(group))
+        var result = state.Deactivate(group);
+        if (result == ShelfResult.NotActive)
         {
             return Task.FromResult($"Group '{Group}' is not active.");
         }
-        // Staged-деактивация: не снимаем группу сразу (это создало бы собственный rebuild
-        // системного промпта). Помечаем к снятию — группа уйдёт при ближайшей ЕСТЕСТВЕННОЙ
-        // смене промпта (компакция/смена сессии/слои), батчингом с неизбежным rebuild'ом.
-        // Пока группа в промпте — тулзы группы по-прежнему доступны.
-        state.MarkPending(group);
 
         // Desktop: hide the cursor overlay — user is done with desktop control.
         if (group == ToolGroup.Desktop)

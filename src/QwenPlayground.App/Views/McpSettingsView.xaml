@@ -100,6 +100,18 @@
                                          ToolTip="HTTP-адрес MCP-сервера" />
                             </Grid>
 
+                            <!-- Row 2b: Description -->
+                            <Grid Margin="0,2,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Style="{StaticResource McpLabel}" Text="описание" />
+                                <TextBox Grid.Column="1" Style="{StaticResource McpField}"
+                                         Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="Краткое описание (видно в таблице MCP Servers в промпте)" />
+                            </Grid>
+
                             <!-- Row 3: Status (after test) -->
                             <TextBlock Margin="0,6,0,0" FontSize="11" TextWrapping="Wrap"
                                        Text="{Binding StatusText}"

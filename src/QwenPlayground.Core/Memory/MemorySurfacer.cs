@@ -1,5 +1,7 @@
 using System.Text;
 using QwenPlayground.Core.Chat;
+using QwenPlayground.Core.Crash;
+using QwenPlayground.Core.MetaInfo;
 using QwenPlayground.Core.Settings;
 
 namespace QwenPlayground.Core.Memory;
@@ -19,7 +21,7 @@ namespace QwenPlayground.Core.Memory;
 /// Также владеет нагом менеджмента памяти: периодически дёргает модель заняться дедупом
 /// (сбрасывается, когда модель сама задела memory_*-инструмент).
 /// </summary>
-public sealed class MemorySurfacer
+public sealed class MemorySurfacer : IStateAnnouncer
 {
     private readonly List<SurfacedMemory> _surfaced = new();
     private bool _recallInFlight;
@@ -40,12 +42,30 @@ public sealed class MemorySurfacer
     private static int TopX => AppSettings.Get().RecallTopX;
     private static double MinScore => AppSettings.Get().RecallMinScore;
 
-    /// <summary>Наг для state-блока (null, пока не наступил интервал; память выключена — всегда null).</summary>
+    /// <summary>
+    /// Наг для state-блока (null, пока не наступил интервал; память выключена — всегда null).
+    /// Текст — это заметка на «доске сообщений» (note=) блока, а не отдельное поле:
+    /// mem_nag вынесен в доску, чтобы блок оставался свободным для произвольных кусков.
+    /// </summary>
     public string? MemoryNag => AppSettings.Get().MemoryEnabled
+        && AppSettings.Get().MemoryNagEnabled
         && _iterationsSinceMemoryMgmt >= MemoryMgmtNagInterval
         ? "If you finished the current stage, do memory management: call memory_list to spot duplicates " +
           "and memory_merge / memory_delete to consolidate. Otherwise ignore this."
         : null;
+
+    /// <summary>
+    /// Анонсер доски сообщений state-блока (метка "memory"). Единственный текущий анонс —
+    /// наг менеджмента памяти (мастер-переключатель и интервал учитывает <see cref="MemoryNag"/>).
+    /// </summary>
+    public IReadOnlyList<StateAnnounce> GetAnnounces()
+    {
+        if (MemoryNag is not { } nag)
+        {
+            return [];
+        }
+        return [new StateAnnounce { Label = "memory", Messages = [nag], Source = this }];
+    }
 
     /// <summary>Всплывшие факты для state-блока (правило стабильности применено; память выключена — пусто).</summary>
     public IReadOnlyList<SurfacedMemory> GetSurfacedForStateBlock()
@@ -146,10 +166,13 @@ public sealed class MemorySurfacer
             return;
         }
         _recallInFlight = true;
+        DiagnosticsLog.Log($"recall: begin (context {context.Length} chars, confirmed={startsConfirmed})");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var hits = await MemoryRecall.RecallAsync(
                 context, new MemoryStore(), endpoint, TopX, MinScore, rerank: true, cancellationToken);
+            DiagnosticsLog.Log($"recall: done ({sw.ElapsedMilliseconds}ms, {hits.Count} hits)");
             lock (_surfaced)
             {
                 foreach (var hit in hits)
@@ -171,9 +194,10 @@ public sealed class MemorySurfacer
         catch (OperationCanceledException)
         {
         }
-        catch
+        catch (Exception exception)
         {
             // реколл — не критичный путь
+            DiagnosticsLog.Log($"recall: FAILED ({sw.ElapsedMilliseconds}ms): {exception.Message}");
         }
         finally
         {

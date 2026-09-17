@@ -1,0 +1,54 @@
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="QwenPlayground.App.Views.ShelfMenu"
+             Background="Transparent">
+    <!-- Состояние и команды приходят из DataContext (MainViewModel, задаётся в ChatView).
+         Каждая полка — отдельный MenuItem: имя + статус (вкл/pending/выкл, цветной),
+         описание — в тултипе. Чекбокс = «on» (активна и не помечена на снятие). -->
+    <StackPanel>
+        <MenuItem IsCheckable="True" IsChecked="{Binding BrowserShelf.IsOn, Mode=OneWay}"
+                  Command="{Binding ToggleShelfCommand}" CommandParameter="Browser"
+                  ToolTip="{Binding BrowserShelf.Description}">
+            <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Browser" />
+                    <TextBlock Text="{Binding BrowserShelf.StatusText}" Margin="8,0,0,0" FontSize="11"
+                               Foreground="{Binding BrowserShelf.StatusBrush}" />
+                </StackPanel>
+            </MenuItem.Header>
+        </MenuItem>
+        <MenuItem IsCheckable="True" IsChecked="{Binding CSharpShelf.IsOn, Mode=OneWay}"
+                  Command="{Binding ToggleShelfCommand}" CommandParameter="CSharp"
+                  ToolTip="{Binding CSharpShelf.Description}">
+            <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="CSharp" />
+                    <TextBlock Text="{Binding CSharpShelf.StatusText}" Margin="8,0,0,0" FontSize="11"
+                               Foreground="{Binding CSharpShelf.StatusBrush}" />
+                </StackPanel>
+            </MenuItem.Header>
+        </MenuItem>
+        <MenuItem IsCheckable="True" IsChecked="{Binding DesktopShelf.IsOn, Mode=OneWay}"
+                  Command="{Binding ToggleShelfCommand}" CommandParameter="Desktop"
+                  ToolTip="{Binding DesktopShelf.Description}">
+            <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Desktop" />
+                    <TextBlock Text="{Binding DesktopShelf.StatusText}" Margin="8,0,0,0" FontSize="11"
+                               Foreground="{Binding DesktopShelf.StatusBrush}" />
+                </StackPanel>
+            </MenuItem.Header>
+        </MenuItem>
+        <MenuItem IsCheckable="True" IsChecked="{Binding McpShelf.IsOn, Mode=OneWay}"
+                  Command="{Binding ToggleShelfCommand}" CommandParameter="Mcp"
+                  ToolTip="{Binding McpShelf.Description}">
+            <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Mcp" />
+                    <TextBlock Text="{Binding McpShelf.StatusText}" Margin="8,0,0,0" FontSize="11"
+                               Foreground="{Binding McpShelf.StatusBrush}" />
+                </StackPanel>
+            </MenuItem.Header>
+        </MenuItem>
+    </StackPanel>
+</UserControl>

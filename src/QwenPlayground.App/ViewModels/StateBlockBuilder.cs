@@ -10,7 +10,8 @@ namespace QwenPlayground.App.ViewModels;
 
 /// <summary>
 /// Сборка state-блока — снапшота «что агент знает о себе прямо сейчас»: msg_id, время,
-/// фактический контекст (cur/max), последняя сборка, всплывшие воспоминания, наг'ы.
+/// фактический контекст (cur/max), последняя сборка, всплывшие воспоминания и доска
+/// сообщений (анонсеры: pull-интерфейс + статичная мусорка).
 /// Блок свежий на каждом рендере; парсер привязывает его к ответу, так что в истории
 /// у каждого хода свой снапшот и модель видит эволюцию своего статуса.
 ///
@@ -23,13 +24,19 @@ public sealed class StateBlockBuilder
     /// <summary>Кэш последней записи journal.json развёрнутого run/ (читается на каждом рендере).</summary>
     private static FileDependentCache<BuildJournalEntry?>? _lastBuildCache;
 
+    /// <summary>
+    /// Глобальный кап доски сообщений: доска — вспомогательный канал, не должна съесть
+    /// контекст. Бюджет на источник — ответственность анонсера, общий потолок — билдера.
+    /// </summary>
+    private const int MaxNotes = 5;
+
     private readonly Action _assignPendingIds;
     private readonly Func<int> _nextMessageId;
     private readonly Func<int> _effectiveContextSize;
     private readonly ServerProps _serverProps;
     private readonly Func<IReadOnlyList<ChatMessage>> _conversation;
     private readonly Func<IReadOnlyList<SurfacedMemory>> _surfaced;
-    private readonly Func<string?> _memoryNag;
+    private readonly IReadOnlyList<IStateAnnouncer> _announcers;
     private readonly Func<IReadOnlyList<PendingPair>> _pendingPairs;
 
     public StateBlockBuilder(
@@ -39,7 +46,7 @@ public sealed class StateBlockBuilder
         ServerProps serverProps,
         Func<IReadOnlyList<ChatMessage>> conversation,
         Func<IReadOnlyList<SurfacedMemory>> surfaced,
-        Func<string?> memoryNag,
+        IReadOnlyList<IStateAnnouncer> announcers,
         Func<IReadOnlyList<PendingPair>>? pendingPairs = null)
     {
         _assignPendingIds = assignPendingIds;
@@ -48,7 +55,7 @@ public sealed class StateBlockBuilder
         _serverProps = serverProps;
         _conversation = conversation;
         _surfaced = surfaced;
-        _memoryNag = memoryNag;
+        _announcers = announcers;
         _pendingPairs = pendingPairs ?? (() => []);
     }
 
@@ -96,12 +103,29 @@ public sealed class StateBlockBuilder
             {
                 state.SimilarPairs.Add(new StateBlock.MemoryPair(pair.A, pair.B));
             }
+        }
 
-            // Наг менеджмента памяти: модель в обсессии не займётся дедупом сама — периодически дёргаем.
-            if (_memoryNag() is { } nag)
+        // Доска сообщений: анонсеры (pull — состояние на момент рендера) + мусорка (push,
+        // дрейнится BoardAnnouncer). Формат строки «метка: сообщение»; метка — кто говорит.
+        // Глобальный кап, чтобы доска не съедала контекст.
+        var notes = new List<string>(MaxNotes);
+        foreach (var announcer in _announcers)
+        {
+            foreach (var announce in announcer.GetAnnounces())
             {
-                state.MemoryNag = nag;
+                foreach (var message in announce.Messages)
+                {
+                    if (string.IsNullOrWhiteSpace(message))
+                    {
+                        continue;
+                    }
+                    notes.Add($"{announce.Label}: {ToSingleLine(message, 200)}");
+                }
             }
+        }
+        foreach (var note in notes.Take(MaxNotes))
+        {
+            state.AddNote(note);
         }
 
         return state;

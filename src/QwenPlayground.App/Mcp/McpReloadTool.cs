@@ -55,13 +55,33 @@ public sealed class McpReloadTool : AgentTool
         if (connected.Count > 0) result.AppendLine($"Newly connected: {string.Join(", ", connected)}");
         if (failed.Count > 0) result.AppendLine($"Failed: {string.Join("; ", failed)}");
 
-        // Re-register MCP tools in the tool registry (names/schemas may have changed)
+        // Re-register MCP tools in the tool registry (names/schemas may have changed).
+        // Инструмент исполняется из agent-потока — регистрация на UI-потоке (Dispatcher),
+        // иначе ToolRegistry мутируется параллельно с UI.
         try
         {
-            var vm = (QwenPlayground.App.ViewModels.MainViewModel?)System.Windows.Application.Current?.MainWindow?.DataContext;
-            vm?.RegisterMcpTools();
+            var app = System.Windows.Application.Current;
+            if (app is not null)
+            {
+                var vm = app.MainWindow?.DataContext as QwenPlayground.App.ViewModels.MainViewModel;
+                if (vm is not null)
+                {
+                    app.Dispatcher.Invoke(() => vm.RegisterMcpTools());
+                }
+                else
+                {
+                    result.AppendLine("WARNING: MainWindow.DataContext is not MainViewModel — tools NOT re-registered.");
+                }
+            }
+            else
+            {
+                result.AppendLine("WARNING: Application.Current is null — tools NOT re-registered.");
+            }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            result.AppendLine($"WARNING: MCP tool re-registration failed: {ex.Message}");
+        }
 
         return result.ToString().TrimEnd();
     }

@@ -357,7 +357,7 @@ public sealed class BrowserFindTool : BrowserToolBase
 [Tool("browser_download", "Wait for the next file download to complete and return its path + size. " +
                           "Files are saved to the workspace's downloads/ folder, so you can read them with other tools " +
                           "(read_file, webfetch no — file tools). Click the download link/button FIRST, then call this. " +
-                          "Returns: 'Downloaded: <path> (<size> bytes)' or a timeout message if nothing was downloaded.")]
+                          "Returns: 'Downloaded: <path> (<size> bytes)' or a timeout message if nothing was downloaded.", ToolGroup.Browser)]
 public sealed class BrowserDownloadTool : BrowserToolBase
 {
     [ToolParameter("Timeout in ms (default 30000, max 120000)", Required = false)]
@@ -372,7 +372,7 @@ public sealed class BrowserDownloadTool : BrowserToolBase
 
 [Tool("browser_upload", "Upload a file from disk into an <input type=\"file\"> element (via CDP DOM.setFileInputFiles — " +
                         "trusted, the site cannot tell it apart from a real file selection). " +
-                        "Returns: confirmation + screenshot.")]
+                        "Returns: confirmation + screenshot.", ToolGroup.Browser)]
 public sealed class BrowserUploadTool : BrowserToolBase
 {
     [ToolParameter("CSS selector of the <input type=\"file\"> element", Required = true)]
@@ -395,7 +395,7 @@ public sealed class BrowserUploadTool : BrowserToolBase
                        "Does NOT navigate away from the current page. Returns: HTTP status + body (capped at 50KB). " +
                        "Use for: API endpoints of the current site, pages that require login. " +
                        "Cross-origin requests may fail with CORS — for OTHER domains use webfetch or browser_navigate. " +
-                       "Returns: text result + screenshot.")]
+                       "Returns: text result + screenshot.", ToolGroup.Browser)]
 public sealed class BrowserFetchTool : BrowserToolBase
 {
     [ToolParameter("URL to fetch (absolute, or relative to the current page)", Required = true)]

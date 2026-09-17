@@ -17,42 +17,56 @@ public sealed class MemoryAddTool : AgentTool
     [ToolParameter("The fact to remember. Self-contained: it must make sense without the conversation context.", Required = true)]
     public string Content { get; set; } = string.Empty;
 
+    private readonly string? _directory;
+
+    public MemoryAddTool()
+    {
+    }
+
+    /// <summary>Инъекция каталога памяти — для тестов (боевой путь использует дефолт воркспейса).</summary>
+    public MemoryAddTool(string? directory) => _directory = directory;
+
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
-        if (!AppSettings.Get().MemoryEnabled)
-        {
-            return MemoryToolGate.DisabledMessage;
-        }
+        // memory_add — базовый инструмент-«записка»: работает ВСЕГДА, независимо от
+        // мастер-переключателя памяти. Выкл памяти гасит «умную» часть (реколл/слои/дедуп),
+        // но не саму запись факта.
         var content = Content.Trim();
         if (content.Length == 0)
         {
             return "memory_add: the fact is empty — describe what to remember.";
         }
-        var store = new MemoryStore();
+        var store = new MemoryStore(_directory);
         var item = store.Add(content, source: "agent");
         context.OnFactSaved?.Invoke(item);
 
-        // Классификация другой моделью. Короткий таймаут: латентность пробы не должна
-        // платиться ходом агента; сбой — тоже не ошибка сохранения (Flush догонит).
-        try
+        // Классификация другой моделью — только когда память включена. Выкл — факт
+        // сохраняется без слоёв БЕЗ ожидания 8-секундного таймаута (компаньон, скорее
+        // всего, недоступен — ровно поэтому память и выключена). Короткий таймаут:
+        // латентность пробы не должна платиться ходом агента; сбой — не ошибка сохранения.
+        if (AppSettings.Get().MemoryEnabled)
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(8));
-            await MemoryClassifier.EnrichAsync(
-                item, AppSettings.Get().CompanionEndpoint, cancellationToken: timeout.Token);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch
-        {
-            // классификация недоступна — факт остаётся без слоёв, это штатно
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(TimeSpan.FromSeconds(8));
+                await MemoryClassifier.EnrichAsync(
+                    item, AppSettings.Get().CompanionEndpoint, cancellationToken: timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch
+            {
+                // классификация недоступна — факт остаётся без слоёв, это штатно
+            }
+
+            if (item.HasSemanticLayers)
+            {
+                store.Update(item);
+            }
         }
 
-        if (item.HasSemanticLayers)
-        {
-            store.Update(item);
-        }
         return $"Memory saved: {item.Id} (memories/{item.Id}.json). Index updated." +
                (item.HasSemanticLayers
                    ? $" Filed as: {MemoryClassifier.TopName(item.CategoryLayers)} {MemoryClassifier.TopEmojiOf(item.EmojiLayers)}."

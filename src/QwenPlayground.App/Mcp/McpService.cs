@@ -1,3 +1,4 @@
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Mcp;
 
 namespace QwenPlayground.App.Mcp;
@@ -19,8 +20,10 @@ public static class McpService
         Ready = tcs.Task;
         try
         {
+            StartupTrace.Log("MCP init: begin (background)");
             Instance = new McpServerManager();
             await Instance.ConnectAllAsync();
+            StartupTrace.Log("MCP init: ConnectAllAsync done");
 
             var clients = Instance.Clients;
             if (clients.Count > 0)

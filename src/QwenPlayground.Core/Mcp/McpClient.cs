@@ -5,6 +5,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using QwenPlayground.Core.Crash;
 
 namespace QwenPlayground.Core.Mcp;
 
@@ -150,6 +151,8 @@ public sealed class McpClient : IAsyncDisposable
     private async Task<JsonObject?> SendRequestAsync(string method, JsonObject @params, CancellationToken ct)
     {
         int id = _nextId++;
+        DiagnosticsLog.Log($"MCP '{Name}': {method} begin");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var request = new JsonObject
         {
             ["jsonrpc"] = "2.0",
@@ -159,6 +162,7 @@ public sealed class McpClient : IAsyncDisposable
         };
 
         var response = await SendAsync(request, ct);
+        DiagnosticsLog.Log($"MCP '{Name}': {method} done ({sw.ElapsedMilliseconds}ms)");
         if (response is null) return null;
 
         if (response["error"] is JsonObject error)

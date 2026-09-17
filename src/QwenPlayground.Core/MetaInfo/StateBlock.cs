@@ -7,7 +7,9 @@ namespace QwenPlayground.Core.MetaInfo;
 /// State-блок: open-close блок служебной информации, который приложение вставляет
 /// в начало think-блока КАЖДОГО assistant-сообщения (и префиллит в генерацию).
 /// Это снапшот статуса на момент генерации: msg_id, время, контекст cur/max, сборка,
-/// nag — всё, что является «системной информацией на данный момент».
+/// nag и доска сообщений (note=) — всё, что является «системной информацией на данный
+/// момент». Доска — произвольные однострочные анонсы из разных частей приложения
+/// (см. <see cref="IStateAnnouncer"/> и <see cref="AnnouncementBoard"/>).
 ///
 /// Блок ПЕРСИСТИРУЕТСЯ с сообщением: AgentLoop пришивает префилленный блок в
 /// message.StateBlock (ответ модели его не содержит), шаблон рендерит его в начале
@@ -20,6 +22,7 @@ namespace QwenPlayground.Core.MetaInfo;
 ///   time=2026-08-17 13:15:26
 ///   context=12345/32768
 ///   build=20260817-102607:success
+///   note=memory: займись дедупом
 ///   </state>
 /// Класс — единственный владелец блока: сборка (объект + WithNag), собственный рендер
 /// (ToString), разбор (Parse), извлечение из текста (SplitLeading). Старые сообщения
@@ -59,6 +62,22 @@ public sealed class StateBlock
 
     /// <summary>Напоминание про sanity_check при долгой работе без самопроверки (nag).</summary>
     public string? Nag { get; set; }
+
+    /// <summary>
+    /// Свободная «доска сообщений»: произвольные куски, которые разные части приложения
+    /// пушат в блок (наг дедупа, статусы, заметки). Рендерится строкой note=… после nag;
+    /// парсер собирает их обратно в список (повторяющееся поле).
+    /// </summary>
+    public List<string> Notes { get; set; } = new();
+
+    /// <summary>Добавляет заметку на доску (пустые игнорируются).</summary>
+    public void AddNote(string? note)
+    {
+        if (!string.IsNullOrWhiteSpace(note))
+        {
+            Notes.Add(note);
+        }
+    }
 
     public sealed record MemoryPair(string A, string B);
 
@@ -121,6 +140,11 @@ public sealed class StateBlock
         }
         AppendField("mem_nag", MemoryNag);
         AppendField("nag", Nag);
+        // Доска сообщений: свободные заметки после служебных полей (одна строка на заметку).
+        foreach (var note in Notes)
+        {
+            AppendField("note", note);
+        }
 
         if (!first)
         {
@@ -267,6 +291,10 @@ public sealed class StateBlock
                     break;
                 case "nag":
                     state.Nag = value;
+                    any = true;
+                    break;
+                case "note":
+                    state.Notes.Add(value);
                     any = true;
                     break;
             }

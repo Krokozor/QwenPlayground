@@ -71,6 +71,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="сколько всплывает (Top-X)"
                                ToolTip="Сколько самых релевантных фактов реколл возвращает (до rerank'а)." />
@@ -97,9 +98,13 @@
                     <TextBox Grid.Row="4" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
                              local:NumField.Min="0" local:NumField.IsInteger="True"
                              Text="{Binding MemoryLiveRecallIntervalSec, UpdateSourceTrigger=PropertyChanged}" />
-                    <TextBlock Grid.Row="5" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="наг дедупа: рендеров"
-                               ToolTip="Сколько рендеров подряд без memory_*-инструмента, прежде чем напомнить агенту про дедуп." />
-                    <TextBox Grid.Row="5" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                    <TextBlock Grid.Row="5" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="наг дедупа"
+                               ToolTip="Включить периодическое напоминание агенту про дедуп памяти (заметка на доске сообщений state-блока)." />
+                    <CheckBox Grid.Row="5" Grid.Column="1" IsChecked="{Binding MemoryNagEnabled}" Margin="0,3" VerticalAlignment="Center"
+                              ToolTip="Вкл — агент периодически получает заметку о дедупе (через «рендеров» ниже). Выкл — напоминаний нет, дубликатами занимаетесь вы сами." />
+                    <TextBlock Grid.Row="6" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="наг дедупа: рендеров"
+                               ToolTip="Сколько рендеров подряд без memory_*-инструмента, прежде чем напомнить агенту про дедуп (если наг включён)." />
+                    <TextBox Grid.Row="6" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
                              local:NumField.Min="0" local:NumField.IsInteger="True"
                              Text="{Binding MemoryNagIntervalRenders, UpdateSourceTrigger=PropertyChanged}" />
                 </Grid>

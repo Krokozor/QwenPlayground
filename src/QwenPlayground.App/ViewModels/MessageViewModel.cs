@@ -228,9 +228,19 @@ public partial class MessageViewModel : ObservableObject
             return;
         }
         var store = new MessageMetaStore(sessionDir);
+        // Мультимодальные вложения (прямо в msg_<id>/) — превью в UI.
         foreach (var path in store.GetArtifacts(Source.Id))
         {
             Attachments.Add(new MessageAttachment(Path.GetFileName(path), path));
+        }
+        // Анонсируемые (не мультимодальные) вложения — в подпапке attachments/ (чип, не превью).
+        var attachmentsDir = Path.Combine(store.ArtifactsDir(Source.Id), "attachments");
+        if (Directory.Exists(attachmentsDir))
+        {
+            foreach (var path in Directory.GetFiles(attachmentsDir))
+            {
+                Attachments.Add(new MessageAttachment(Path.GetFileName(path), path));
+            }
         }
         HasAttachments = Attachments.Count > 0;
     }

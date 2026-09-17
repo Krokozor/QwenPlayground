@@ -1,5 +1,6 @@
 using System.IO;
 using QwenPlayground.Core.Memory;
+using QwenPlayground.Core.Settings;
 using QwenPlayground.Core.Tools;
 using QwenPlayground.Core.Tools.Builtins;
 
@@ -130,6 +131,9 @@ public sealed class ToolOutputCapTests : IDisposable
     [Fact]
     public async Task MemoryList_TruncatesWithRemainingCount()
     {
+        // Тул гейтится мастер-переключателем памяти — в тесте включаем явно,
+        // иначе список не соберётся («Memory is disabled»).
+        AppSettings.Update(s => s.MemoryEnabled = true);
         var store = new MemoryStore(_dir);
         for (var i = 0; i < 205; i++)
         {

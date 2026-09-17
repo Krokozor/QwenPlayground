@@ -92,6 +92,33 @@ public partial class ChatView : UserControl
         _stickToBottom = e.VerticalOffset + e.ViewportHeight >= e.ExtentHeight - 8;
     }
 
+    private bool _shelfMenuOpen;
+
+    /// <summary>
+    /// Кнопка 🗄: открыть/закрыть меню полок (Popup). Перед открытием перечитываем
+    /// shelves.json — агент мог сам переключить полки, пока меню было закрыто.
+    /// Popup сам закрывается на любой клик вне (StaysOpen=False) — включая клик по самой
+    /// кнопке, — поэтому «было открыто» ведём отдельно: иначе повторный клик закроет и
+    /// тут же снова откроет меню.
+    /// </summary>
+    private void ShelfButton_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel?.RefreshShelfUi();
+        if (ShelfPopup is null)
+        {
+            return;
+        }
+        if (_shelfMenuOpen)
+        {
+            _shelfMenuOpen = false; // Popup уже закрылся на press
+            return;
+        }
+        _shelfMenuOpen = true;
+        ShelfPopup.IsOpen = true;
+    }
+
+    private void ShelfPopup_Closed(object sender, System.EventArgs e) => _shelfMenuOpen = false;
+
     /// <summary>Ctrl+V: если в буфере картинка — вкладываем её (текстовую вставку не трогаем).</summary>
     private void OnInputPreviewKeyDown(object sender, KeyEventArgs e)
     {

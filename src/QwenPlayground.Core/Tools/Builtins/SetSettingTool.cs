@@ -36,6 +36,15 @@ public sealed class SetSettingTool : AgentTool
         try
         {
             var converted = ConvertValue(prop.PropertyType, Value.Trim());
+
+            // Validate MCP server configs before applying
+            if (Name.Trim().Equals("McpServers", StringComparison.OrdinalIgnoreCase) && converted is not null)
+            {
+                var validationError = ValidateMcpServers(converted);
+                if (validationError is not null)
+                    return Task.FromResult(validationError);
+            }
+
             var old = prop.GetValue(settings);
             prop.SetValue(settings, converted);
             AppSettings.Save();
@@ -75,5 +84,36 @@ public sealed class SetSettingTool : AgentTool
             && t != typeof(TimeSpan)
             && t != typeof(Guid)
             && !t.IsEnum;
+    }
+
+    /// <summary>Validate MCP server configs: name format, uniqueness, transport.</summary>
+    private static string? ValidateMcpServers(object servers)
+    {
+        if (servers is not System.Collections.IEnumerable enumerable || servers is string)
+            return "Error: McpServers must be a JSON array of server objects.";
+
+        var nameRegex = new System.Text.RegularExpressions.Regex("^[a-z][a-z0-9_]*$");
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var obj in enumerable)
+        {
+            if (obj is not QwenPlayground.Core.Mcp.McpServerConfig server)
+                return "Error: each MCP server entry must be a valid McpServerConfig object.";
+
+            if (string.IsNullOrEmpty(server.Name))
+                return "Error: MCP server with empty name. Name must match ^[a-z][a-z0-9_]*$.";
+            if (!nameRegex.IsMatch(server.Name))
+                return $"Error: MCP server name '{server.Name}' is invalid. Must match ^[a-z][a-z0-9_]*$ (lowercase letter first, then lowercase/digits/underscores).";
+            if (!seen.Add(server.Name))
+                return $"Error: duplicate MCP server name '{server.Name}'. Names must be unique.";
+            if (server.Transport != "stdio" && server.Transport != "http")
+                return $"Error: MCP server '{server.Name}' has invalid transport '{server.Transport}'. Must be 'stdio' or 'http'.";
+            if (server.Transport == "stdio" && string.IsNullOrEmpty(server.Command))
+                return $"Error: MCP server '{server.Name}' uses stdio but has no Command.";
+            if (server.Transport == "http" && string.IsNullOrEmpty(server.Url))
+                return $"Error: MCP server '{server.Name}' uses http but has no Url.";
+        }
+
+        return null;
     }
 }

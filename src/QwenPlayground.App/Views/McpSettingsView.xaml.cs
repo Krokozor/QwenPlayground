@@ -49,7 +49,8 @@ public partial class McpSettingsView : UserControl
             Name = $"server_{_servers.Count + 1}",
             Enabled = true,
             Transport = "http",
-            Url = "http://localhost:9876"
+            Url = "http://localhost:9876",
+            Description = ""
         };
         _servers.Add(new McpServerViewModel(config));
         SaveServers();
@@ -144,6 +145,12 @@ public partial class McpSettingsView : UserControl
         {
             get => Config.Url;
             set { Config.Url = value; Save(); Raise(); }
+        }
+
+        public string Description
+        {
+            get => Config.Description;
+            set { Config.Description = value; Save(); Raise(); }
         }
 
         public string ArgsText

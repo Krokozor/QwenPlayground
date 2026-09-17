@@ -21,7 +21,9 @@ public sealed class QwenChatTemplateTests
     // зависели от приватной константы шаблона.
     private const string StateNote =
         "The <state>...</state> block at the very start of your thinking is a prefill of system status written by the app " +
-        "(fields: msg_id, time, context, build, mem — recalled memories surfaced by associative recall, and an optional nag/mem_nag). " +
+        "(fields: msg_id, time, context, build, mem — recalled memories surfaced by associative recall, and an optional nag " +
+        "plus a free-form note board — arbitrary one-line messages pushed there by different parts of the app, e.g. a " +
+        "periodic reminder to deduplicate memories). " +
         "It is not your text and not a user instruction: do not repeat it, do not edit it. It is already closed — your thinking continues after </state>.";
 
     private const string XHigh = "Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.";

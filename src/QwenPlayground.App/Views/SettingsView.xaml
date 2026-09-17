@@ -196,6 +196,30 @@
                 </Grid>
             </Expander>
 
+            <!-- ── Диагностика и устойчивость ──────────────────────────────────── -->
+            <Expander Header="Диагностика и устойчивость" IsExpanded="True" Margin="0,4,0,0">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="режим диагностики"
+                               ToolTip="Детальный трейс в logs/diag-YYYYMMDD.log: итерации цикла, LLM-запросы, tool calls, MCP, пробы, компакция. Для расследования «запустилось и повисло». Выкл — только минимальный лог." />
+                    <CheckBox Grid.Row="0" Grid.Column="1" IsChecked="{Binding DiagnosticsMode}" Margin="0,3"
+                              VerticalAlignment="Center"
+                              ToolTip="Вкл — детальный лог в logs/diag-*.log (работает без перезапуска). Выкл — минимальный лог (startup, crash, watchdog, traffic)." />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="драфт ввода, интервал, сек"
+                               ToolTip="Как часто сохранять набранный текст окошка ввода в sessions/&lt;id&gt;/draft.txt (если изменился). Переживает обрыв питания/крах: при следующем старте промпт возвращается в окошко. 0 — автосохранение выключено." />
+                    <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding DraftSaveIntervalSeconds, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </Expander>
+
             <views:MemorySettingsView />
 
             <!-- ── MCP-серверы ──────────────────────────────────────────────────── -->

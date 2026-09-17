@@ -6,6 +6,24 @@ using QwenPlayground.Core.Serialization;
 namespace QwenPlayground.Core.Tools;
 
 /// <summary>
+/// Результат операции активации/деактивации полки. Общая логика у тулов агента
+/// (activate_shelf/deactivate_shelf) и UI-меню — различается только подача результата.
+/// </summary>
+public enum ShelfResult
+{
+    /// <summary>Полка активирована: тулзы группы попадут в промпт со следующего запроса.</summary>
+    Activated,
+    /// <summary>Полка уже активна — ничего не изменилось.</summary>
+    AlreadyActive,
+    /// <summary>Полка пере-активирована: отложенная деактивация отменена, промпт не меняется.</summary>
+    Reactivated,
+    /// <summary>Полка помечена на staged-деактивацию: уйдёт при ближайшей естественной смене промпта.</summary>
+    Deactivated,
+    /// <summary>Полка не активна — деактивировать нечего.</summary>
+    NotActive,
+}
+
+/// <summary>
 /// Активные полки (группы инструментов) сессии: файл shelves.json в каталоге сессии.
 /// Состояние инструментов — часть состояния сессии: каждая сессия имеет свой набор активных
 /// полок (main — sessions/main, остальные — sessions/&lt;id&gt;). Активация/деактивация меняет
@@ -58,6 +76,44 @@ public sealed class ShelfState
         {
             SavePending(pending);
         }
+    }
+
+    /// <summary>
+    /// Активировать полку (немедленно): добавить в active и отменить отложенную деактивацию,
+    /// если она была. Единая точка для тула агента и UI-меню (семантика — см. <see cref="ToolGroup"/>).
+    /// </summary>
+    public ShelfResult Activate(ToolGroup group)
+    {
+        var active = Load();
+        var wasPending = LoadPending().Contains(group);
+        if (active.Contains(group) && !wasPending)
+        {
+            return ShelfResult.AlreadyActive;
+        }
+        // Пере-активация отменяет отложенную деактивацию: группа понадобилась снова →
+        // решение на выключение откатывается, rebuild не происходит (группа и так в промпте).
+        UnmarkPending(group);
+        if (!active.Contains(group))
+        {
+            active.Add(group);
+            Save(active);
+        }
+        return wasPending ? ShelfResult.Reactivated : ShelfResult.Activated;
+    }
+
+    /// <summary>
+    /// Деактивировать полку (staged): пометить к снятию при ближайшей естественной смене
+    /// системного промпта (компакция/смена сессии/слои) — группа остаётся в промпте до того
+    /// момента, тулзы группы по-прежнему доступны. Идемпотентно.
+    /// </summary>
+    public ShelfResult Deactivate(ToolGroup group)
+    {
+        if (!Load().Contains(group))
+        {
+            return ShelfResult.NotActive;
+        }
+        MarkPending(group);
+        return ShelfResult.Deactivated;
     }
 
     /// <summary>

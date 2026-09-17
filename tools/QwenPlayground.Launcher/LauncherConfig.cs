@@ -110,6 +110,13 @@ public sealed class LauncherConfig
                     DownloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
                     ExtractTo = SelfBuildPaths.ExternalDirName + "/ffmpeg",
                     BinPath = SelfBuildPaths.ExternalDirName + "/ffmpeg/bin/ffmpeg.exe"
+                },
+                ["poppler"] = new ToolConfig
+                {
+                    Version = "26.09.0",
+                    DownloadUrl = "https://github.com/oschwartz10612/poppler-windows/releases/download/v26.09.0-0/Release-26.09.0-0.zip",
+                    ExtractTo = SelfBuildPaths.ExternalDirName + "/poppler",
+                    BinPath = SelfBuildPaths.ExternalDirName + "/poppler/poppler-26.09.0/Library/bin/pdftotext.exe"
                 }
             }
         };

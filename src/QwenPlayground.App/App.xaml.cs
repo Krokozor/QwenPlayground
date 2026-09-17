@@ -1,4 +1,5 @@
 using System.Windows;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.SelfBuild;
 
 namespace QwenPlayground.App;
@@ -18,18 +19,24 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        StartupTrace.Log("App.OnStartup: begin");
         // Страж процесса: если мы умрём мимо managed-обработчиков (нативный краш),
         // watchdog запишет смерть в общий crash-лог — картина не останется по кускам.
         WatchdogLauncher.TryStart();
+        StartupTrace.Log("App.OnStartup: watchdog started");
         // Перед деплоем инструментов rebuild останавливает watchdog'а: тот держит
         // бинари launcher/ (Windows-лок), иначе сборка не смогла бы их обновить.
         SelfBuildService.PreDeployTools = WatchdogLauncher.StopWatchdog;
+        SelfBuildService.PostDeployTools = WatchdogLauncher.TryStart;
         // Connect to MCP servers (non-blocking), then register their tools
+        StartupTrace.Log("App.OnStartup: MCP init launched (fire-and-forget)");
         _ = Mcp.McpService.InitializeAsync().ContinueWith(_ =>
         {
             // MCP ready — tools will be registered by MainViewModel via McpToolRegistrar
+            StartupTrace.Log("App.OnStartup: MCP init finished");
             System.Diagnostics.Debug.WriteLine("[MCP] Init complete, tools ready for registration.");
         });
+        StartupTrace.Log("App.OnStartup: done");
     }
 
     protected override void OnExit(ExitEventArgs e)

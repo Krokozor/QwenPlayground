@@ -1,3 +1,4 @@
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Mcp;
 using QwenPlayground.Core.Settings;
 
@@ -28,12 +29,16 @@ public sealed class McpServerManager
         var settings = AppSettings.Get();
         foreach (var config in settings.McpServers.Where(s => s.Enabled))
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            StartupTrace.Log($"MCP connect: '{config.Name}' begin ({config.Transport})");
             try
             {
                 await ConnectAsync(config, ct);
+                StartupTrace.Log($"MCP connect: '{config.Name}' done ({sw.ElapsedMilliseconds}ms)");
             }
             catch (Exception ex)
             {
+                StartupTrace.Log($"MCP connect: '{config.Name}' FAILED ({sw.ElapsedMilliseconds}ms): {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"[MCP] Failed to connect to '{config.Name}': {ex}");
                 // Also write to a log file for debugging
                 try

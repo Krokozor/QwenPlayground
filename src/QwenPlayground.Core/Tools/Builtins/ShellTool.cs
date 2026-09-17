@@ -73,11 +73,9 @@ public sealed class ShellTool : AgentTool
         }
 
         var text = output.ToString();
-        const int cap = 8000;
-        if (text.Length > cap)
-        {
-            text = text[..cap] + "\n... (output truncated)";
-        }
+        // Полный вывод уходит в AgentLoop, где автокаппинг (CapToolOutput) при >8 КБ сохраняет
+        // его в attachments/ сообщения и оставляет превью. Здесь не каппим: иначе полный
+        // вывод теряется до того, как автокаппинг успеет его сохранить.
         return $"exit code: {process.ExitCode}\n{text}";
     }
 }

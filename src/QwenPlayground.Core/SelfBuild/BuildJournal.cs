@@ -16,6 +16,9 @@ public sealed class BuildJournalEntry
     public string? BuildLogPath { get; set; }
     public string? GateLogPath { get; set; }
     public int? GateExitCode { get; set; }
+    // Свежий крах новой сборки при провале старта (handshake): последняя свежая запись
+    // logs/last-crash.log — чтобы в отчёте об откате сразу видно, в какой строке упало.
+    public string? CrashExcerpt { get; set; }
 }
 
 public static class BuildJournal
@@ -47,7 +50,7 @@ public static class BuildJournal
         Save(runRoot, entries);
     }
 
-    public static void UpdateLast(string runRoot, string status, string? failureReason)
+    public static void UpdateLast(string runRoot, string status, string? failureReason, string? crashExcerpt = null)
     {
         var entries = Load(runRoot);
         if (entries.Count == 0)
@@ -56,6 +59,7 @@ public static class BuildJournal
         }
         entries[^1].Status = status;
         entries[^1].FailureReason = failureReason;
+        entries[^1].CrashExcerpt = crashExcerpt;
         Save(runRoot, entries);
     }
 

@@ -1,6 +1,7 @@
 using System.IO;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Sessions;
@@ -101,12 +102,15 @@ public sealed class ContextMaintenance
 
     private async Task RunAsync(bool fromAgentLoop)
     {
+        DiagnosticsLog.Log($"compaction: begin (fromAgentLoop={fromAgentLoop}, messages={_conversation.Count})");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var effective = await _effectiveSize();
         var keepRatio = ParseKeepRatio(AppSettings.Get().CompactKeepRatio);
         var boundary = ContextCompactor.FindCompactionBoundary(_conversation, keepRatio, effective);
         if (boundary == 0)
         {
             _ui.SetStatus("нечего сжимать");
+            DiagnosticsLog.Log($"compaction: nothing to compact ({sw.ElapsedMilliseconds}ms)");
             return;
         }
         _surfacer.Clear(); // всплывшие воспоминания выпадают из контекста на суммаризации
@@ -144,10 +148,12 @@ public sealed class ContextMaintenance
         catch (Exception exception)
         {
             _ui.SetStatus($"ошибка сжатия: {exception.Message}");
+            DiagnosticsLog.Log($"compaction: FAILED ({sw.ElapsedMilliseconds}ms): {exception.Message}");
         }
         finally
         {
             _preview.End();
+            DiagnosticsLog.Log($"compaction: done ({sw.ElapsedMilliseconds}ms, boundary={boundary})");
             // FSM: Compacting → Idle (ручная) или → Generating (авто между итерациями).
             // Сначала FSM, потом SetGenerating(false): уведомление CanExecuteChanged должно
             // стрельнуть, когда IsBusy уже false, иначе кнопка отката останется серой.
@@ -268,6 +274,7 @@ public sealed class ContextMaintenance
     /// <summary>Очередной этап конвейера: заголовок-разделитель в превью + подпись в статусе.</summary>
     private void BeginStage(string stage)
     {
+        DiagnosticsLog.Log($"compaction: stage '{stage}' begin");
         _preview.NewStage(stage);
         _ui.SetStatus("сжатие: " + stage + "...");
     }

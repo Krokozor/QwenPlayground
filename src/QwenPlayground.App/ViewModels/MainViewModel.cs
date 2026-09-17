@@ -6,8 +6,11 @@ using System.Text.Json.Nodes;
 using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using QwenPlayground.App.Desktop;
+using QwenPlayground.App.Tools;
 using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Heartbeat;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.MetaInfo;
@@ -52,6 +55,8 @@ public partial class MainViewModel : ObservableObject {
     private readonly ChatInteraction _interaction;
     // Жизненный цикл: реестр стартуемых/останавливаемых сервисов.
     private readonly AppLifecycle _lifecycle;
+    // Драфт окошка ввода: автосохранение в sessions/<id>/draft.txt (переживает обрыв питания).
+    private readonly DraftKeeper _draft;
     private readonly ChatStateMachine _chatState = new();
     // Сжатие контекста и бюджет-обслуживание (домен вынесен; FSM-контракт — см. класс).
     private readonly ContextMaintenance _maintenance;
@@ -194,6 +199,25 @@ public partial class MainViewModel : ObservableObject {
         get => S.PushOnRebuild;
         set => Set(S.PushOnRebuild, value, (s, v) => s.PushOnRebuild = v);
     }
+
+    /// <summary>
+    /// Режим диагностики: детальный трейс в logs/diag-YYYYMMDD.log. Включается без
+    /// перезапуска (DiagnosticsLog.SetEnabled) — сразу видно, где процесс стоит.
+    /// </summary>
+    public bool DiagnosticsMode {
+        get => S.DiagnosticsMode;
+        set {
+            Set(S.DiagnosticsMode, value, (s, v) => s.DiagnosticsMode = v);
+            DiagnosticsLog.SetEnabled(value);
+            DiagnosticsLog.Log($"diagnostics mode {(value ? "ON" : "OFF")} (UI)");
+        }
+    }
+
+    /// <summary>Интервал автосохранения драфта окошка ввода (сек). 0 = выключено.</summary>
+    public int DraftSaveIntervalSeconds {
+        get => S.DraftSaveIntervalSeconds;
+        set => Set(S.DraftSaveIntervalSeconds, value, (s, v) => s.DraftSaveIntervalSeconds = v);
+    }
     public string PushRepo {
         get => S.PushRepo;
         set => Set(S.PushRepo, value, (s, v) => s.PushRepo = v);
@@ -277,6 +301,10 @@ public partial class MainViewModel : ObservableObject {
     public int MemoryLiveRecallIntervalSec {
         get => S.MemoryLiveRecallIntervalSec;
         set => Set(S.MemoryLiveRecallIntervalSec, value, (s, v) => s.MemoryLiveRecallIntervalSec = v);
+    }
+    public bool MemoryNagEnabled {
+        get => S.MemoryNagEnabled;
+        set => Set(S.MemoryNagEnabled, value, (s, v) => s.MemoryNagEnabled = v);
     }
     public int MemoryNagIntervalRenders {
         get => S.MemoryNagIntervalRenders;
@@ -399,6 +427,7 @@ public partial class MainViewModel : ObservableObject {
     private int _selectedTabIndex;
 
     public MainViewModel() {
+        StartupTrace.Log("MainViewModel ctor: begin");
         // Композиционный корень главного чата: граф сервисов собирается здесь (единственное
         // место, знающее порядок). Цикла pipeline⇄stateBlocks больше нет — кэш серверных
         // фактов живёт в ServerProps, оба читают его независимо.
@@ -409,6 +438,8 @@ public partial class MainViewModel : ObservableObject {
         _serviceLlm = new ServiceCompletionClient(
         () => Endpoint,
         () => BuildOptions(ServiceCompletionClient.MaxTokens));
+        // Доска сообщений state-блока: pull-анонсеры (состояние на момент рендера) +
+        // BoardAnnouncer — дрейн статичной мусорки (push из кода без интерфейса).
         _stateBlocks = new StateBlockBuilder(
         _log.AssignPendingIds,
         () => _log.NextMessageId,
@@ -416,7 +447,7 @@ public partial class MainViewModel : ObservableObject {
         _serverProps,
         () => _log,
         () => _memorySurfacer.GetSurfacedForStateBlock(),
-        () => _memorySurfacer.MemoryNag,
+        [_memorySurfacer, new BoardAnnouncer()],
         () => _pairsStore.Pending);
         _pipeline = new PromptPipeline(
         () => _log,
@@ -451,6 +482,16 @@ public partial class MainViewModel : ObservableObject {
 
         // Жизненный цикл: единая точка старта/остановки сервисов (закрытие — LIFO, без бросков).
         _lifecycle = new AppLifecycle(status => StatusText = status);
+        // Драфт окошка ввода: создаём ДО EnsureMainSession/RestoreLastSession — они идут
+        // через LoadSession, которая пользуется _draft (Flush/Restore). Регистрация здесь,
+        // запуск таймера — в StartAll (в конце конструктора).
+        _draft = new DraftKeeper(
+        () => InputText,
+        text => InputText = text,
+        () => _sessions.CurrentId,
+        new SessionDraftStore(ChatSessions.Root),
+        () => DraftSaveIntervalSeconds);
+        _lifecycle.Register(_draft);
 
         Messages.CollectionChanged += (_, _) => {
             RerollCommand.NotifyCanExecuteChanged();
@@ -461,8 +502,14 @@ public partial class MainViewModel : ObservableObject {
         // Вложения к следующему сообщению: SendCommand.canexec меняется (можно отправить
         // и картинку без текста) + чипсы в UI.
         PendingAttachments.CollectionChanged += (_, _) => SendCommand.NotifyCanExecuteChanged();
+        StartupTrace.Log("MainViewModel ctor: EnsureMainSession");
         EnsureMainSession();
+        StartupTrace.Log("MainViewModel ctor: RestoreLastSession");
         RestoreLastSession();
+        // Восстановить драфт ТЕКУЩЕЙ сессии (main или последней открытой) в окошко ввода:
+        // переживает обрыв питания/крах — набранный промпт возвращается.
+        _draft.Restore();
+        StartupTrace.Log("MainViewModel ctor: RefreshPromptPreview (startup)");
         RefreshPromptPreview();
 
         // Вкладка «Диагностика»: стекло в состояние FSM, бюджет контекста, сборки, память.
@@ -476,9 +523,47 @@ public partial class MainViewModel : ObservableObject {
         Summarization = new SummarizationViewModel(RunSummarizationCallAsync);
 
         // MCP: register tools after initial connection completes (non-blocking).
+        // Dispatch на UI-поток (ToolRegistry — общий с UI). Если MainWindow ещё не
+        // создан (редкий гонок) — ретрай через DispatcherTimer, пока не появится.
         _ = QwenPlayground.App.Mcp.McpService.Ready.ContinueWith(_ =>
         {
-            System.Windows.Application.Current?.Dispatcher.Invoke(() => RegisterMcpTools());
+            StartupTrace.Log("MCP: Ready fired (background thread)");
+            var app = System.Windows.Application.Current;
+            if (app is null)
+            {
+                StartupTrace.Log("MCP: Application.Current is null, cannot register.");
+                System.Diagnostics.Debug.WriteLine("[MCP] Application.Current is null, cannot register.");
+                return;
+            }
+            void TryRegister(int attempt)
+            {
+                var vm = app.MainWindow?.DataContext as MainViewModel;
+                if (vm is null)
+                {
+                    if (attempt < 20)
+                    {
+                        StartupTrace.Log($"MCP: MainWindow not ready (attempt {attempt}), retrying.");
+                        System.Diagnostics.Debug.WriteLine($"[MCP] MainWindow not ready (attempt {attempt}), retrying.");
+                        var timer = new System.Windows.Threading.DispatcherTimer
+                            { Interval = TimeSpan.FromMilliseconds(250) };
+                        timer.Tick += (_, _) => { timer.Stop(); TryRegister(attempt + 1); };
+                        timer.Start();
+                    }
+                    else
+                    {
+                        StartupTrace.Log("MCP: MainWindow never appeared, MCP tools NOT registered.");
+                        System.Diagnostics.Debug.WriteLine("[MCP] MainWindow never appeared, MCP tools NOT registered.");
+                    }
+                    return;
+                }
+                StartupTrace.Log("MCP: RegisterMcpTools begin (UI thread)");
+                var sw = Stopwatch.StartNew();
+                vm.RegisterMcpTools();
+                StartupTrace.Log($"MCP: RegisterMcpTools done ({sw.ElapsedMilliseconds}ms)");
+            }
+            StartupTrace.Log("MCP: Dispatcher.Invoke dispatched");
+            app.Dispatcher.Invoke(() => TryRegister(1));
+            StartupTrace.Log("MCP: Dispatcher.Invoke returned");
         }, TaskScheduler.Default);
 
         // Heartbeat: опрос wake/ и расписания. Период опроса фиксированный (20 с),
@@ -501,7 +586,9 @@ public partial class MainViewModel : ObservableObject {
         // обновлён и записан, остаётся перерисовать биндинг. Событие может прийти из
         // agent-потока → маришализуем на Dispatcher (см. OnSettingsChangedExternally).
         SettingsStore<AppSettings>.Changed += OnSettingsChangedExternally;
+        StartupTrace.Log("MainViewModel ctor: lifecycle StartAll");
         _lifecycle.StartAll();
+        StartupTrace.Log("MainViewModel ctor: done");
 
         // Саморебилд индикатор v2
         var lastBuild = StateBlockBuilder.LastBuild();
@@ -567,7 +654,7 @@ public partial class MainViewModel : ObservableObject {
         foreach (var entry in unannounced) {
             var outcome = entry.Status == "success"
             ? $"[перезапуск] сборка {entry.Id} успешно запущена."
-            : $"[перезапуск] сборка {entry.Id} провалилась ({entry.FailureReason}). Выполнен откат на предыдущую версию.";
+            : BuildRestartFailureMessage(entry);
             if (_log.Count > 0 && _log[^1].Role == ChatRole.Tool) {
                 _log[^1].Content += "\n" + outcome;
             }
@@ -582,14 +669,32 @@ public partial class MainViewModel : ObservableObject {
         RebuildMessageViews();
         SaveCurrent();
     }
+
+    /// <summary>
+    /// Сообщение о провале рестарта: причина + (если есть) свежий крах новой сборки —
+    /// чтобы сразу было видно, в какой строке упало, без копания в logs/last-crash.log.
+    /// </summary>
+    private static string BuildRestartFailureMessage(BuildJournalEntry entry) {
+        var sb = new StringBuilder();
+        sb.Append($"[перезапуск] сборка {entry.Id} провалилась ({entry.FailureReason}). Выполнен откат на предыдущую версию.");
+        if (!string.IsNullOrWhiteSpace(entry.CrashExcerpt)) {
+            sb.Append("\n\n");
+            sb.Append(entry.CrashExcerpt);
+        }
+        return sb.ToString();
+    }
     public void ResumePendingChain() {
+        var sw = Stopwatch.StartNew();
+        StartupTrace.Log($"ResumePendingChain: begin (busy={_chatState.IsBusy}, messages={_log.Count}, last={(_log.Count > 0 ? _log[^1].Role.ToString() : "none")})");
         AnnounceRestarts();
         // Гвард по FSM, а не по IsGenerating: при Compacting/Awaiting* второй ход
         // бросил бы InvalidOperationException внутри Transition.
 
         if (!_chatState.IsBusy && _log.Count > 0 && _log[^1].Role == ChatRole.Tool) {
+            StartupTrace.Log("ResumePendingChain: starting tool-chain continuation");
             _background.Queue("продолжение цепочки tool", () => GenerateAsync());
         }
+        StartupTrace.Log($"ResumePendingChain: done ({sw.ElapsedMilliseconds}ms)");
     }
 
     /// <summary>
@@ -609,16 +714,20 @@ public partial class MainViewModel : ObservableObject {
     /// они собираются в системный промпт при каждом рендере (InjectedIdentity).
     /// </summary>
     private void EnsureMainSession() {
+        var sw = Stopwatch.StartNew();
         var data = _sessions.EnsureMain();
 
         if (data is not null) {
+            StartupTrace.Log($"EnsureMainSession: loaded {data.Messages.Count} messages ({sw.ElapsedMilliseconds}ms)");
             _log.ReplaceAll(StripBakedSystem(data.Messages));
             _log.SetNextMessageId(data.NextMessageId);
         }
         else {
+            StartupTrace.Log($"EnsureMainSession: created empty ({sw.ElapsedMilliseconds}ms)");
             _log.Clear();
         }
         SaveCurrent();
+        StartupTrace.Log($"EnsureMainSession: saved ({sw.ElapsedMilliseconds}ms total)");
     }
 
     /// <summary>
@@ -704,6 +813,7 @@ public partial class MainViewModel : ObservableObject {
             return;
         
         LoadSession(value.Id);
+        RefreshShelfUi(); // полки per-session — меню следует за выбранной сессией
     }
 
     [RelayCommand]
@@ -723,6 +833,7 @@ public partial class MainViewModel : ObservableObject {
         RefreshSessions();
         SelectedSession = null;
         RefreshPromptPreview();
+        RefreshShelfUi(); // свежая сессия стартует без полок (по дефолту всё выключено)
     }    
     private CancellationTokenSource? _settingsSaveDebounce;
     /// <summary>
@@ -797,19 +908,33 @@ public partial class MainViewModel : ObservableObject {
 
         RefreshSessions();
         RefreshPromptPreview();
+        RefreshShelfUi();
         _sessions.PersistCurrentId();
     }
 
     private bool LoadSession(string id) {
+        var sw = Stopwatch.StartNew();
+        // ПЕРЕД сменой: выгрести текст текущей (старой) сессии в ЕЁ драфт — иначе
+        // набранный за последние секунды черновик потеряется при переключении.
+        _draft.Flush();
         var data = _sessions.Load(id);
-        if (data is null) 
-            return false;        
+        if (data is null) {
+            StartupTrace.Log($"LoadSession({id}): not found ({sw.ElapsedMilliseconds}ms)");
+            return false;
+        }
+        StartupTrace.Log($"LoadSession({id}): parsed {data.Messages.Count} messages ({sw.ElapsedMilliseconds}ms)");
 
         _log.ReplaceAll(id == MainAgent.SessionId ? StripBakedSystem(data.Messages) : data.Messages);
         _log.SetNextMessageId(data.NextMessageId);
         _samplerKey = data.SamplerKey;
         _promptKey = data.PromptKey;
         _stateBlockKey = data.StateBlockKey;
+        // Смена сессии: surfaced-пул памяти и мусорка анонсов — транзитное состояние
+        // прошлой сессии, не тащим его в новую (иначе чужие заметки просочатся в state-блок).
+        _memorySurfacer.Clear();
+        AnnouncementBoard.Clear();
+        // ПОСЛЕ смены: восстановить драфт НОВОЙ сессии в окошко (у каждой свой черновик).
+        _draft.Restore();
         OnPropertyChanged(nameof(IsMainSession));
         StatusText = string.Empty;
         RefreshPromptPreview();
@@ -822,6 +947,84 @@ public partial class MainViewModel : ObservableObject {
     /// Единый с превью и ходом источник системного промпта: main-сессия — динамическая
     /// идентичность, специализированная — кусок-промпт из статичного хранилища профилей.
     /// </summary>
+    // ── Полки в UI (кнопка 🗄 в тулбаре чата) ─────────────────────────────────────
+    // Тот же механизм, что и у тулов агента: состояние — sessions/<id>/shelves.json,
+    // активация немедленная, деактивация staged (снимется при ближайшей естественной
+    // смене промпта). Состояние меню синхронизируется из файла: при открытии меню,
+    // смене сессии, переключении и на каждый запрос (ResolveSystemPrompt — подхватывает
+    // изменения тулами агента).
+    private readonly ShelfUiState[] _shelfUi =
+    {
+        new(ToolGroup.Browser, "WebView2-браузер: навигация, клики, ввод текста, скриншоты, JS, консоль и сетевые логи"),
+        new(ToolGroup.CSharp, "Анализ кода Roslyn: символы, ссылки, диагностика, outline, class map"),
+        new(ToolGroup.Desktop, "Рабочий стол: мышь, клавиатура, скриншоты, окна"),
+        new(ToolGroup.Mcp, "Инструменты управления MCP (mcp_status, mcp_reload) и тулы подключённых MCP-серверов"),
+    };
+
+    public ShelfUiState BrowserShelf => _shelfUi[0];
+    public ShelfUiState CSharpShelf => _shelfUi[1];
+    public ShelfUiState DesktopShelf => _shelfUi[2];
+    public ShelfUiState McpShelf => _shelfUi[3];
+
+    private int _shelfCount;
+    /// <summary>Сколько полок реально в промпте (on + pending) — счётчик на кнопке «🗄 N».</summary>
+    public int ShelfCount {
+        get => _shelfCount;
+        private set {
+            if (_shelfCount == value) return;
+            _shelfCount = value;
+            OnPropertyChanged(nameof(ShelfCount));
+            OnPropertyChanged(nameof(HasActiveShelves));
+        }
+    }
+    public bool HasActiveShelves => ShelfCount > 0;
+
+    /// <summary>
+    /// Переключить полку из UI-меню — тот же вход, что и у тулов агента (ShelfState.Activate/
+    /// Deactivate): отметка → немедленная активация (отменяет pending), снятие → staged-
+    /// деактивация. Направление — по состоянию чекбокса («on» = активна И не помечена):
+    /// on → помечаем к снятию; off/pending → активируем (pending-группа всё ещё в active,
+    /// смотреть только на active нельзя — иначе повторный клик по pending снова пометит её).
+    /// </summary>
+    [RelayCommand]
+    private void ToggleShelf(string? group) {
+        if (!ActivateShelfTool.TryParseGroup(group ?? string.Empty, out var g))
+            return;
+        var state = new ShelfState(SessionDir());
+        var isOn = state.Load().Contains(g) && !state.LoadPending().Contains(g);
+        var result = isOn ? state.Deactivate(g) : state.Activate(g);
+        // Desktop: полка ушла в pending — скрываем оверлей курсора (как тул агента).
+        if (g == ToolGroup.Desktop && state.LoadPending().Contains(g))
+            DesktopOverlay.Hide();
+        Debug.WriteLine($"[shelf-cache] UI: {g} → {result}");
+        RefreshShelfUi();
+    }
+
+    /// <summary>
+    /// Синхронизировать состояние меню полок с shelves.json текущей сессии. Dispatcher-safe:
+    /// вызывается из UI (смена сессии, переключение, открытие меню) и из agent loop
+    /// (ResolveSystemPrompt на каждый запрос — подхватывает переключения тулами агента).
+    /// </summary>
+    public void RefreshShelfUi() {
+        void Do() {
+            var shelf = new ShelfState(SessionDir());
+            var active = shelf.Load();
+            var pending = shelf.LoadPending();
+            var count = 0;
+            foreach (var s in _shelfUi) {
+                var inPrompt = active.Contains(s.Group) || pending.Contains(s.Group);
+                s.Refresh(active.Contains(s.Group), pending.Contains(s.Group));
+                if (inPrompt) count++;
+            }
+            ShelfCount = count;
+        }
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+            dispatcher.BeginInvoke(Do);
+        else
+            Do();
+    }
+
     private string? _cachedSystemPrompt;
     // Base-промпт (без индекса полок) — для детекта ЕСТЕСТВЕННОЙ смены промпта: именно она
     // меняется при компакции/смене сессии/слоях. С её сменой батчим staged-деактивации.
@@ -880,6 +1083,8 @@ public partial class MainViewModel : ObservableObject {
             System.Diagnostics.Debug.WriteLine(
                 $"[shelf-cache] системный промпт изменился (KV-кеш rebuild), длина={final?.Length ?? 0}");
         }
+        // Меню полок подхватывает изменения (в т.ч. тулами агента в этом же запросе).
+        RefreshShelfUi();
         return final;
     }
 
@@ -1029,6 +1234,7 @@ public partial class MainViewModel : ObservableObject {
         shelf.Save(active);
         System.Diagnostics.Debug.WriteLine(
             $"[shelf-cache] авто-выключение после компакции: {string.Join(", ", unused)}");
+        RefreshShelfUi(); // меню должно показать снятые полки
     }
 
     /// <summary>Усилие размышления из профиля («XHigh»/«Medium»/«Low»); пустое/мусорное — из настроек.</summary>
@@ -1100,13 +1306,21 @@ public partial class MainViewModel : ObservableObject {
     }
 
     private void RebuildMessageViews() {
+        var sw = Stopwatch.StartNew();
+        var count = _log.Count;
         var sessionDir = SessionDir();
         Messages.Clear();
+        var added = 0;
         foreach (var message in _log) {
             var view = MessageViewModel.FromMessage(RoleName(message), message);
             view.LoadArtifacts(sessionDir);
             Messages.Add(view);
+            added++;
+            if (added % 50 == 0) {
+                StartupTrace.Log($"RebuildMessageViews: {added}/{count} added ({sw.ElapsedMilliseconds}ms)");
+            }
         }
+        StartupTrace.Log($"RebuildMessageViews: done {added} messages ({sw.ElapsedMilliseconds}ms)");
     }
 
     private static string RoleName(ChatMessage message) => message.Role.ToString().ToLowerInvariant();
@@ -1114,33 +1328,58 @@ public partial class MainViewModel : ObservableObject {
     private async Task SendAsync() {
         var text = InputText.Trim();
         InputText = string.Empty;
+        // Текст отправлен (стал сообщением) — драфт удаляем, чтобы не восстанавливать
+        // отправленное при следующем старте.
+        _draft.ClearOnSend();
         var userMessage = ChatMessage.User(text);
         _log.Add(userMessage); // ID присваивается здесь же — до копирования вложений
-        var userView = MessageViewModel.FromMessage("user", userMessage);
-        Messages.Add(userView);
         var attachments = PendingAttachments.ToList();
         PendingAttachments.Clear();
         var metaStore = new MessageMetaStore(SessionDir());
         var failedAttachments = new List<string>();
+        var announcedPaths = new List<string>();
 
         foreach (var attachment in attachments) {
             try {
-                metaStore.AddArtifact(userMessage.Id, attachment.FullPath);
+                if (attachment.IsImage) {
+                    // Мультимодальное: копируем в artifacts/msg_<id>/ (рендер добавит маркер + base64).
+                    metaStore.AddArtifact(userMessage.Id, attachment.FullPath);
+                } else {
+                    // Анонсируемое (не мультимодальное): копируем в attachments/ и анонсируем
+                    // тегом <attachment> в сообщении — я читаю файл через read_file.
+                    announcedPaths.Add(metaStore.AddFileArtifact(userMessage.Id, attachment.FullPath));
+                }
             }
             catch {
-                // файл не прочитался — пропускаем вложение, но сообщаем: иначе картинка
-                // молча не доедет до модели и ход пройдёт «вслепую»
+                // файл не прочитался — пропускаем вложение, но сообщаем: иначе оно молча
+                // не доедет и ход пройдёт «вслепую»
                 failedAttachments.Add(attachment.Name);
             }
+        }
+
+        // Анонсируем немультимодальные вложения в конце сообщения (путь — относительно workspace).
+        if (announcedPaths.Count > 0) {
+            var tags = string.Join("\n", announcedPaths.Select(p => $"<attachment path=\"{ToWorkspaceRelative(p)}\">"));
+            userMessage.Content = (userMessage.Content + "\n" + tags).Trim();
         }
 
         if (failedAttachments.Count > 0) {
             StatusText = $"вложение не прикреплено: {string.Join(", ", failedAttachments)}";
         }
 
+        var userView = MessageViewModel.FromMessage("user", userMessage);
         userView.LoadArtifacts(SessionDir());
+        Messages.Add(userView);
         await GenerateAsync();
         SaveCurrent();
+    }
+
+    /// <summary>Путь относительно корня workspace (для read_file и тега &lt;attachment&gt;).</summary>
+    private static string ToWorkspaceRelative(string path) {
+        var wsRoot = SelfBuildPaths.WorkspaceRoot;
+        return path.StartsWith(wsRoot, StringComparison.OrdinalIgnoreCase)
+            ? path[wsRoot.Length..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            : path;
     }
 
     private bool CanSend() => !IsBusy && (InputText.Trim().Length > 0 || PendingAttachments.Count > 0) && Endpoint.Trim().Length > 0;
@@ -1258,33 +1497,13 @@ public partial class MainViewModel : ObservableObject {
         };
         if (dialog.ShowDialog() != true) 
             return;
-        
-        var builder = new StringBuilder(InputText);
+        // Все файлы — во вложения. Картинки уходят мультимодально (маркер + base64 в рендере),
+        // остальные (txt, pdf, ...) — как анонсируемые аттачменты (attachments/ + тег
+        // <attachment> в сообщении), я читаю их через read_file. Текст в ввод больше не
+        // вставляется: не раздувает сообщение и не обрезает крупные файлы.
         foreach (var file in dialog.FileNames) {
-            // Картинки (и прочие бинарники) в текст не читаем — это даёт мусор в сообщении.
-            // Их кладём во вложения: при отправке копируются в artifacts/msg_<id>/ и уходят
-            // как multimodal_data (маркер + base64), модель их увидит как изображение.
-            if (IsBinaryFile(file)) {
-                PendingAttachments.Add(new PendingAttachment(Path.GetFileName(file), file));
-                continue;
-            }
-            string content;
-            try {
-                content = File.ReadAllText(file);
-            }
-            catch {
-                continue;
-            }
-            const int cap = 20000;
-            if (content.Length > cap) {
-                content = content[..cap] + "\n... (обрезано)";
-            }
-            if (builder.Length > 0) {
-                builder.Append('\n');
-            }
-            builder.Append("[файл: ").Append(Path.GetFileName(file)).Append("]\n").Append(content).Append('\n');
+            PendingAttachments.Add(new PendingAttachment(Path.GetFileName(file), file));
         }
-        InputText = builder.ToString();
     }
     [RelayCommand(CanExecute = nameof(CanInteract))]
     private void RemoveAttachment(PendingAttachment? attachment) {
@@ -1404,13 +1623,20 @@ public partial class MainViewModel : ObservableObject {
     /// спрашивает сервер.
     /// </summary>
     private int EffectiveContextSize => Math.Min(ContextSize, _serverProps.NContext ?? ContextSize);
+    private int _previewRenderCount;
     private void RefreshPromptPreview() {
+        var sw = Stopwatch.StartNew();
         try {
             var preview = _pipeline.RenderForPreview();
             PromptPreview = preview.Length == 0 ? "(пусто)" : preview;
+            _previewRenderCount++;
+            if (_previewRenderCount <= 10 || _previewRenderCount % 50 == 0 || sw.ElapsedMilliseconds > 500) {
+                StartupTrace.Log($"RefreshPromptPreview #{_previewRenderCount}: {preview.Length} chars ({sw.ElapsedMilliseconds}ms)");
+            }
         }
         catch (Exception exception) {
             PromptPreview = $"[не удалось отрендерить: {exception.Message}]";
+            StartupTrace.Log($"RefreshPromptPreview #{++_previewRenderCount}: FAILED ({exception.Message})");
         }
     }
     private Task GenerateAsync(bool continueLastAssistant = false) =>

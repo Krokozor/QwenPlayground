@@ -107,7 +107,13 @@ public sealed class AppSettings
     public int MemoryLiveRecallMinTokens { get; set; } = 400;
     /// <summary>Пауза между live-реколлами, секунд.</summary>
     public int MemoryLiveRecallIntervalSec { get; set; } = 10;
-    /// <summary>Рендеров без memory_* до nag'а про менеджмент памяти.</summary>
+    /// <summary>
+    /// Напоминать ли агенту про дедуп памяти (mem_nag в state-блоке). Дефолт false —
+    /// владелец работает с дубликатами сам; вкл, если хочется, чтобы модель периодически
+    /// чистила память сама. Интервал — <see cref="MemoryNagIntervalRenders"/>.
+    /// </summary>
+    public bool MemoryNagEnabled { get; set; } = false;
+    /// <summary>Рендеров без memory_* до nag'а про менеджмент памяти (когда включён).</summary>
     public int MemoryNagIntervalRenders { get; set; } = 15;
     /// <summary>Сколько фактов возвращает реколл (Top-X до rerank'а).</summary>
     public int RecallTopX { get; set; } = 3;
@@ -153,6 +159,22 @@ public sealed class AppSettings
     /// работает независимо от этой настройки.
     /// </summary>
     public bool DesktopCursorOverlay { get; set; } = true;
+
+    /// <summary>
+    /// Режим диагностики: детальный лог в logs/diag-YYYYMMDD.log (итерации цикла,
+    /// LLM-запросы, tool calls, MCP, пробы, компакция). Дефолт false — минимальный лог.
+    /// Включается из Настроек, set_setting, или правкой settings.json извне + перезапуск.
+    /// См. <see cref="QwenPlayground.Core.Crash.DiagnosticsLog"/>.
+    /// </summary>
+    public bool DiagnosticsMode { get; set; } = false;
+
+    /// <summary>
+    /// Интервал автосохранения драфта окошка ввода (сек). Каждые N секунд, если текст
+    /// изменился, он пишется в sessions/&lt;id&gt;/draft.txt — переживает обрыв питания/крах.
+    /// 0 = автосохранение выключено (драфт всё равно восстанавливается при смене сессии/старте).
+    /// См. <see cref="QwenPlayground.App.ViewModels.DraftKeeper"/>.
+    /// </summary>
+    public int DraftSaveIntervalSeconds { get; set; } = 15;
 
     // ── MCP (Model Context Protocol) ────────────────────────────────────────────────
 

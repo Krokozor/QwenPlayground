@@ -2,6 +2,7 @@ using QwenPlayground.App.ViewModels;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
+using QwenPlayground.Core.MetaInfo;
 
 namespace QwenPlayground.App.Tests;
 
@@ -15,7 +16,7 @@ public sealed class StateBlockBuilderTests
     private readonly ChatLog _log = new();
     private readonly List<SurfacedMemory> _surfaced = [];
     private readonly List<QwenPlayground.Core.Memory.PendingPair> _pendingPairs = [];
-    private string? _nag;
+    private readonly FakeAnnouncer _announcer = new();
     private int _effectiveSize = 32768;
 
     private StateBlockBuilder Create()
@@ -27,8 +28,19 @@ public sealed class StateBlockBuilderTests
             _serverProps,
             () => _log,
             () => _surfaced,
-            () => _nag,
+            [_announcer],
             () => _pendingPairs);
+    }
+
+    /// <summary>Подставной анонсер доски сообщений: Message null = тишина.</summary>
+    private sealed class FakeAnnouncer : IStateAnnouncer
+    {
+        public string? Message { get; set; }
+
+        public IReadOnlyList<StateAnnounce> GetAnnounces() =>
+            Message is null
+                ? []
+                : [new StateAnnounce { Label = "fake", Messages = [Message] }];
     }
 
     [Fact]
@@ -92,14 +104,39 @@ public sealed class StateBlockBuilderTests
     }
 
     [Fact]
-    public void MemoryNag_PassedThrough_WhenPresent()
+    public void Announce_LandOnNoteBoard_WithLabel()
     {
         var builder = Create();
-        _nag = "займись дедупом памяти";
+        _announcer.Message = "займись дедупом памяти";
 
         var block = builder.Build();
 
-        Assert.Equal("займись дедупом памяти", block.MemoryNag);
+        // Анонс на доске сообщений (note=) в формате «метка: сообщение».
+        var note = Assert.Single(block.Notes);
+        Assert.Equal("fake: займись дедупом памяти", note);
+    }
+
+    [Fact]
+    public void NoAnnounce_NoNotes()
+    {
+        var builder = Create();
+
+        var block = builder.Build();
+
+        Assert.Empty(block.Notes); // тишина всех анонсеров — доски в блоке нет
+    }
+
+    [Fact]
+    public void Announce_MessageSanitizedToOneLine()
+    {
+        var builder = Create();
+        _announcer.Message = "первая\nвторая";
+
+        var block = builder.Build();
+
+        // Парсер блока режет по строкам — анонсер с переносом не должен его сломать.
+        var note = Assert.Single(block.Notes);
+        Assert.DoesNotContain('\n', note);
     }
 
     [Fact]

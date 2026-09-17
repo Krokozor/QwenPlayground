@@ -36,8 +36,9 @@ public static class ToolGroupIndex
 
         [ToolGroup.Mcp] =
             "External MCP (Model Context Protocol) tool servers: Blender, HuggingFace, and other " +
-            "third-party integrations. Tools are namespaced as {server}_{tool} (e.g. blender_execute_code). " +
-            "See the 'MCP Servers' table below for connected servers and their capabilities. " +
+            "third-party integrations. When activated, server tools appear as {server}_{tool} " +
+            "(e.g. blender_execute_code). See the 'MCP Servers' table for connected servers. " +
+            "Management tools: mcp_status (diagnostics), mcp_reload (reconnect). " +
             "Activate when you need to interact with an external application or service via MCP.",
     };
 
@@ -79,9 +80,21 @@ public static class ToolGroupIndex
             var name = g.ToString().ToLowerInvariant();
             if (active.Contains(g))
             {
-                var tools = registry.DefinitionsByGroup(g).Select(d => d.Name).OrderBy(n => n).ToList();
-                lines.Add($"| {name} | active | its {tools.Count} tools are in your prompt: " +
-                          $"{string.Join(", ", tools)}. Deactivate with deactivate_shelf when done. |");
+                if (g == ToolGroup.Mcp)
+                {
+                    // MCP shelf: concise (server tools are in the MCP Servers table below)
+                    var mgmtTools = registry.DefinitionsByGroup(g)
+                        .Where(d => d.Name.StartsWith("mcp_"))
+                        .Select(d => d.Name).OrderBy(n => n).ToList();
+                    lines.Add($"| {name} | active | MCP server tools available (see MCP Servers table). " +
+                              $"Management: {string.Join(", ", mgmtTools)}. Deactivate with deactivate_shelf when done. |");
+                }
+                else
+                {
+                    var tools = registry.DefinitionsByGroup(g).Select(d => d.Name).OrderBy(n => n).ToList();
+                    lines.Add($"| {name} | active | its {tools.Count} tools are in your prompt: " +
+                              $"{string.Join(", ", tools)}. Deactivate with deactivate_shelf when done. |");
+                }
             }
             else
             {

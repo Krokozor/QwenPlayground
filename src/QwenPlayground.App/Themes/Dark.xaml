@@ -103,6 +103,39 @@
         </Setter>
     </Style>
 
+    <!-- ============ Меню (ShelfMenu: полки инструментов) ============
+         Дефолтная тема WPF (Aero2) для MenuItem светлая, и её шаблон рендерил артефакт
+         (белый блок) в тёмном попапе — поэтому свой минимальный шаблон: прозрачный фон,
+         hover из палитры, чекмарка «✓» в колонке статуса. Фон попапа — в ChatView (Border). -->
+    <Style TargetType="MenuItem">
+        <Setter Property="Foreground" Value="{StaticResource FgBrush}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Padding" Value="10,4" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                            Padding="{TemplateBinding Padding}" CornerRadius="3" Margin="2,1">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="Check" Text="&#x2713;" FontSize="12" Width="16"
+                                       VerticalAlignment="Center" Visibility="Collapsed" />
+                            <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
+                                              VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Check" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style TargetType="ComboBoxItem">
         <Setter Property="Background" Value="{StaticResource InputBrush}" />
         <Setter Property="Foreground" Value="{StaticResource FgBrush}" />

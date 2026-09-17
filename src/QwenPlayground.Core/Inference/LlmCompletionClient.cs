@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using QwenPlayground.Core.Crash;
 
 namespace QwenPlayground.Core.Inference;
 
@@ -50,6 +51,8 @@ public sealed class LlmCompletionClient : ICompletionSource
 
     public async Task<CompletionResult> CompleteAsync(string prompt, GenerationOptions options, CancellationToken cancellationToken = default)
     {
+        DiagnosticsLog.Log($"LLM: POST /completion begin (prompt {prompt.Length} chars, max_tokens={options.MaxTokens})");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         // Usage от предыдущего запроса не должен пережить текущий: при падении здесь
         // наружу торчали бы чужие токены (AgentLoop читает LastUsage после каждого вызова).
         LastUsage = null;
@@ -64,6 +67,7 @@ public sealed class LlmCompletionClient : ICompletionSource
             ? contentElement.GetString() ?? string.Empty
             : string.Empty;
         LastUsage = ParseNativeUsage(root);
+        DiagnosticsLog.Log($"LLM: POST /completion done ({sw.ElapsedMilliseconds}ms, {text.Length} chars, tokens={LastUsage?.PromptTokens}/{LastUsage?.CompletionTokens})");
         return new CompletionResult(text, LastUsage);
     }
 
@@ -73,6 +77,10 @@ public sealed class LlmCompletionClient : ICompletionSource
         IReadOnlyList<string>? multimodalData = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        DiagnosticsLog.Log($"LLM: POST /completion (stream) begin (prompt {prompt.Length} chars, max_tokens={options.MaxTokens}, multimodal={multimodalData?.Count ?? 0})");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var chunkCount = 0;
+        var totalChars = 0;
         LastUsage = null;
         // Нативный /completion (legacy) стримит в SSE-стиле: каждая строка «data: {...}»,
         // чанки разделены пустой строкой. Поля чанка: content, tokens_evaluated,
@@ -123,19 +131,25 @@ public sealed class LlmCompletionClient : ICompletionSource
                     var text = content.GetString();
                     if (!string.IsNullOrEmpty(text))
                     {
+                        chunkCount++;
+                        totalChars += text.Length;
                         yield return text;
                     }
                 }
                 if (root.TryGetProperty("stop", out var stop) && stop.ValueKind == JsonValueKind.True)
                 {
+                    DiagnosticsLog.Log($"LLM: POST /completion (stream) done ({sw.ElapsedMilliseconds}ms, {totalChars} chars, {chunkCount} chunks, tokens={LastUsage?.PromptTokens}/{LastUsage?.CompletionTokens})");
                     yield break;
                 }
             }
         }
+        DiagnosticsLog.Log($"LLM: POST /completion (stream) done (no stop marker, {sw.ElapsedMilliseconds}ms, {totalChars} chars, {chunkCount} chunks)");
     }
 
     public async Task<int?> CountTokensAsync(string text, CancellationToken cancellationToken = default)
     {
+        DiagnosticsLog.Log($"LLM: POST /tokenize begin (text {text.Length} chars)");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             // add_special: false — считаем ровно то, что уйдёт в /completion (сырой рендер
@@ -147,7 +161,9 @@ public sealed class LlmCompletionClient : ICompletionSource
                 using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
                 if (document.RootElement.TryGetProperty("tokens", out var tokens) && tokens.ValueKind == JsonValueKind.Array)
                 {
-                    return tokens.GetArrayLength();
+                    var count = tokens.GetArrayLength();
+                    DiagnosticsLog.Log($"LLM: POST /tokenize done ({sw.ElapsedMilliseconds}ms, tokens={count})");
+                    return count;
                 }
             }
         }
@@ -169,7 +185,9 @@ public sealed class LlmCompletionClient : ICompletionSource
                 using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
                 if (document.RootElement.TryGetProperty("value", out var value))
                 {
-                    return value.GetInt32();
+                    var count = value.GetInt32();
+                    DiagnosticsLog.Log($"LLM: POST /api/extra/tokencount done ({sw.ElapsedMilliseconds}ms, tokens={count})");
+                    return count;
                 }
             }
         }
@@ -182,6 +200,7 @@ public sealed class LlmCompletionClient : ICompletionSource
             // второй endpoint тоже молчит — null; остальное наружу.
         }
 
+        DiagnosticsLog.Log($"LLM: POST /tokenize done ({sw.ElapsedMilliseconds}ms, result=null)");
         return null;
     }
 

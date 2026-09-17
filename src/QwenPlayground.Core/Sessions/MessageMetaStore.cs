@@ -53,4 +53,33 @@ public sealed class MessageMetaStore
         File.Copy(sourcePath, dest, overwrite: true);
         return dest;
     }
+
+    /// <summary>
+    /// Копирует файл в подпапку attachments/ (анонсируемые вложения: текст, pdf, что угодно
+    /// немультимодальное). В отличие от AddArtifact (мультимодальное, прямо в msg_&lt;id&gt;/ и
+    /// попадает в multimodal_data), эти файлы GetArtifacts НЕ видит (non-recursive) — их
+    /// анонсирует тег &lt;attachment&gt; в сообщении, модель читает через read_file. Возвращает путь.
+    /// </summary>
+    public string AddFileArtifact(int msgId, string sourcePath)
+    {
+        var dir = Path.Combine(ArtifactsDir(msgId), "attachments");
+        Directory.CreateDirectory(dir);
+        var dest = Path.Combine(dir, Path.GetFileName(sourcePath));
+        File.Copy(sourcePath, dest, overwrite: true);
+        return dest;
+    }
+
+    /// <summary>
+    /// Сохраняет текстовое содержимое в подпапку attachments/ папки артефактов сообщения
+    /// (sessions/&lt;sid&gt;/artifacts/msg_&lt;id&gt;/attachments/&lt;fileName&gt;). Для анонсируемых
+    /// (не мультимодальных) вложений: полный tool-вывод, документы. Возвращает путь к файлу.
+    /// </summary>
+    public string AddTextArtifact(int msgId, string fileName, string content)
+    {
+        var dir = Path.Combine(ArtifactsDir(msgId), "attachments");
+        Directory.CreateDirectory(dir);
+        var dest = Path.Combine(dir, fileName);
+        File.WriteAllText(dest, content);
+        return dest;
+    }
 }

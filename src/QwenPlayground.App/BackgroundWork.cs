@@ -1,3 +1,4 @@
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Runtime;
 
 namespace QwenPlayground.App;
@@ -41,6 +42,7 @@ public sealed class BackgroundWork
     /// </summary>
     public async Task RunAsync(string name, Func<CancellationToken, Task> work)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var turn = _turns.Register(name);
         turn.Log("запуск");
         turn.Begin();
@@ -48,15 +50,18 @@ public sealed class BackgroundWork
         {
             await work(turn.Cancellation.Token);
             turn.Finish(TurnState.Succeeded);
+            DiagnosticsLog.Log($"background '{name}': done ({sw.ElapsedMilliseconds}ms)");
         }
         catch (OperationCanceledException)
         {
             // Отмена — не ошибка: Stop/закрытие/смена сессии. Состояние фиксируется в реестре.
             turn.Finish(TurnState.Canceled);
+            DiagnosticsLog.Log($"background '{name}': canceled ({sw.ElapsedMilliseconds}ms)");
         }
         catch (Exception exception)
         {
             turn.Finish(TurnState.Failed, exception.Message);
+            DiagnosticsLog.Log($"background '{name}': FAILED ({sw.ElapsedMilliseconds}ms): {exception.Message}");
             _report($"⚠ {name}: {exception.Message}");
         }
     }

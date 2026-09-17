@@ -1,9 +1,13 @@
 using System.Diagnostics;
 using System.Text;
+using System.Xml.Linq;
 
 namespace QwenPlayground.Core.SelfBuild;
 
 public sealed record BuildResult(string Id, int ExitCode, string OutputTail);
+
+/// <summary>Упавший тест (из TRX): имя и первое сообщение ошибки.</summary>
+public sealed record FailedTest(string Name, string Error);
 
 public static class SelfBuildService
 {
@@ -13,6 +17,12 @@ public static class SelfBuildService
     /// (Windows-лок), и деплой не смог бы обновить их под живым стражем.
     /// </summary>
     public static Action? PreDeployTools;
+
+    /// <summary>
+    /// Хук после деплоя инструментов: приложение подставляет перезапуск watchdog'а
+    /// (он был остановлен PreDeployTools). Вызывается rebuild_launcher после сборки.
+    /// </summary>
+    public static Action? PostDeployTools;
 
     public static async Task<BuildResult> BuildNextAsync(CancellationToken cancellationToken)
     {
@@ -51,7 +61,10 @@ public static class SelfBuildService
         }
 
         // verbose-логгер: при падении в журнал попадает текст ошибки (с -v q он обрезался).
-        var gateArgs = $"test \"{SelfBuildPaths.TestProject}\" --nologo -v q --logger \"console;verbosity=normal\"";
+        // TRX-логгер: структурированный (локаль-независимый) список упавших тестов — для
+        // отчёта «какой тест не прошёл» в начале. Консольный — для читаемого tail.
+        var gateTrxPath = Path.Combine(versionDir, "gate-results.trx");
+        var gateArgs = $"test \"{SelfBuildPaths.TestProject}\" --nologo -v q --logger \"console;verbosity=normal\" --logger \"trx;LogFileName={gateTrxPath}\"";
 
         var gateLogPath = Path.Combine(versionDir, "gate.log");
         var gate = await RunProcessAsync("dotnet", gateArgs, cancellationToken);
@@ -70,7 +83,8 @@ public static class SelfBuildService
         if (gate.ExitCode != 0)
         {
             var diag = CaptureDiagnostics();
-            var gateTail = $"build OK, gate FAILED (tests, attempt {gateAttempt}):\n" + Tail(gate.Output, 6000);
+            var failedTests = ParseFailedTests(gateTrxPath);
+            var gateTail = BuildTestFailureReport(gateAttempt, failedTests, gate.Output);
             BuildJournal.Append(SelfBuildPaths.RunRoot, new BuildJournalEntry
             {
                 Id = id,
@@ -78,7 +92,7 @@ public static class SelfBuildService
                 BuildExitCode = 0,
                 BuildOutputTail = gateTail,
                 Status = "failed",
-                FailureReason = $"gate: tests failed (exit code {gate.ExitCode}, attempt {gateAttempt})",
+                FailureReason = $"gate: tests failed (exit code {gate.ExitCode}, attempt {gateAttempt}, {failedTests.Count} test(s))",
                 Announced = true,
                 BuildLogPath = buildLogPath,
                 GateLogPath = gateLogPath,
@@ -229,6 +243,74 @@ public static class SelfBuildService
 
     private static string Tail(string text, int cap = 3000) =>
         text.Length <= cap ? text : "...\n" + text[^cap..];
+
+    /// <summary>
+    /// Отчёт о падении тест-гейта: НАЧАЛО — список упавших тестов (из TRX, локаль-независимо),
+    /// потом tail консоли. Чтобы «что не прошло» было видно сразу, без копания в хвосте.
+    /// </summary>
+    private static string BuildTestFailureReport(int attempt, List<FailedTest> failedTests, string consoleOutput)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"build OK, gate FAILED (tests, attempt {attempt}): {failedTests.Count} test(s) failed");
+        if (failedTests.Count > 0)
+        {
+            sb.AppendLine("FAILED TESTS:");
+            foreach (var (name, error) in failedTests)
+            {
+                sb.AppendLine($"  - {name}");
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    foreach (var line in error.Replace("\r", string.Empty).Split('\n')
+                                 .Where(l => l.Trim().Length > 0).Take(3))
+                    {
+                        sb.AppendLine($"      {line.Trim()}");
+                    }
+                }
+            }
+        }
+        else
+        {
+            sb.AppendLine("(TRX не распарсен — детали ниже, в console tail)");
+        }
+        sb.AppendLine();
+        sb.AppendLine("--- console tail ---");
+        sb.AppendLine(Tail(consoleOutput, 4000));
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Извлечь упавшие тесты из TRX (локаль-независимо: по атрибуту outcome="Failed").
+    /// Возвращает (testName, сообщение ошибки). Пустой список — TRX нет/не распарсился.
+    /// </summary>
+    private static List<FailedTest> ParseFailedTests(string trxPath)
+    {
+        var failed = new List<FailedTest>();
+        try
+        {
+            if (!File.Exists(trxPath))
+            {
+                return failed;
+            }
+            var doc = XDocument.Load(trxPath);
+            var ns = doc.Root?.Name.Namespace ?? XNamespace.None;
+            foreach (var result in doc.Descendants(ns + "UnitTestResult"))
+            {
+                var outcome = result.Attribute("outcome")?.Value;
+                if (!string.Equals(outcome, "Failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                var name = result.Attribute("testName")?.Value ?? "?";
+                var message = result.Descendants(ns + "Message").FirstOrDefault()?.Value ?? string.Empty;
+                failed.Add(new FailedTest(name, message));
+            }
+        }
+        catch
+        {
+            // TRX бит/отсутствует — отчёт упадёт на console tail
+        }
+        return failed;
+    }
 
     /// <summary>
     /// Снимок окружения при падении гейта: dotnet/MSBuild-процессы, память.

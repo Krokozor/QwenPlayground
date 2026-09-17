@@ -1,3 +1,4 @@
+using System.Xml;
 using Microsoft.CodeAnalysis;
 using QwenPlayground.Core.Tools;
 
@@ -5,10 +6,11 @@ namespace QwenPlayground.Core.SelfBuild;
 
 [Tool("rebuild_self",
     "Rebuild the QwenPlayground application itself from source and restart into the new version. " +
-    "Use after modifying the application's own code. Runs Roslyn error check first, then build and tests. " +
+    "Use after modifying the application's own code. Runs a pre-check (XAML XML validation + Roslyn " +
+    "C# diagnostics), then the full dotnet build (runs the XAML compiler) and the test gate. " +
     "On failure returns the errors; fix them and call again. " +
-    "NOTE: If Roslyn reports errors in WPF XAML-generated fields (e.g. 'Name does not exist in context' for XAML x:Name fields), " +
-    "this is a known limitation — Roslyn doesn't run the XAML compiler. Build manually with: dotnet build -c Release -o run/<id>")]
+    "XAML: invalid XML (e.g. a raw '<' in an attribute) is reported directly with file:line:col. " +
+    "XAML bindings / x:Name issues are caught by the full build with MC#### codes.")]
 public sealed class RebuildSelfTool : AgentTool
 {
     // Общий Roslyn-воркспейс — не создавать свой, см. RoslynService.Shared.
@@ -16,11 +18,16 @@ public sealed class RebuildSelfTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
+        // XAML-валидация: Roslyn не гоняет XAML-компилятор, поэтому невалидный XML в .xaml
+        // (сырой '<' в атрибуте и т.п.) проявляется как ложный CS0103 'InitializeComponent'.
+        // Проверяем XML напрямую — корневая причина с точной строкой/колонкой.
+        var xamlErrors = CollectXamlXmlErrors();
         var roslynErrors = await CollectRoslynErrors(cancellationToken);
-        if (roslynErrors.Count > 0)
+        var allErrors = xamlErrors.Concat(roslynErrors).ToList();
+        if (allErrors.Count > 0)
         {
-            return $"Error: Roslyn reports {roslynErrors.Count} compilation errors; fix them before rebuilding:\n" +
-                   string.Join('\n', roslynErrors);
+            return $"Error: {allErrors.Count} problem(s) found; fix them before rebuilding:\n" +
+                   string.Join('\n', allErrors);
         }
 
         var result = await SelfBuildService.BuildNextAsync(cancellationToken);
@@ -125,6 +132,48 @@ public sealed class RebuildSelfTool : AgentTool
         }
     }
 
+    /// <summary>
+    /// Прямая валидация .xaml как XML: ловит невалидный XML (сырой '&lt;'/'&gt;' в атрибуте,
+    /// незакрытый тег) с точной строкой/колонкой ДО того, как Roslyn покажет ложный каскад
+    /// 'InitializeComponent не существует'. Только синтаксис XML — привязки/x:Name судит
+    /// реальный dotnet build (MC####).
+    /// </summary>
+    private static List<string> CollectXamlXmlErrors()
+    {
+        var errors = new List<string>();
+        var srcDir = Path.Combine(SelfBuildPaths.WorkspaceRoot, "src");
+        if (!Directory.Exists(srcDir))
+        {
+            return errors;
+        }
+        foreach (var file in Directory.EnumerateFiles(srcDir, "*.xaml", SearchOption.AllDirectories))
+        {
+            try
+            {
+                using var reader = XmlReader.Create(file, new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore });
+                while (reader.Read())
+                {
+                }
+            }
+            catch (XmlException ex)
+            {
+                var rel = Path.GetRelativePath(SelfBuildPaths.WorkspaceRoot, file);
+                var line = ex.LineNumber > 0 ? ex.LineNumber.ToString() : "?";
+                var col = ex.LinePosition > 0 ? ex.LinePosition.ToString() : "?";
+                errors.Add($"XAML {rel}:{line}:{col}: {ex.Message}");
+            }
+            catch
+            {
+                // файл не прочитался — пропускаем (не ломаем гейт)
+            }
+            if (errors.Count >= 50)
+            {
+                break;
+            }
+        }
+        return errors;
+    }
+
     private static async Task<List<string>> CollectRoslynErrors(CancellationToken cancellationToken)
     {
         var solution = await Service.GetSolutionAsync(cancellationToken);
@@ -143,8 +192,18 @@ public sealed class RebuildSelfTool : AgentTool
                     continue;
                 }
                 var position = diagnostic.Location.GetLineSpan();
-                var path = position.Path is not null
-                    ? Path.GetRelativePath(SelfBuildPaths.WorkspaceRoot, position.Path)
+                var rawPath = position.Path;
+                // Roslyn не гоняет XAML-компилятор: CS0103/CS0117 в code-behind (.xaml.cs)
+                // на сгенерированные XAML-члены (InitializeComponent, x:Name) — ложные. Их
+                // ловит реальный dotnet build с точным MC####-сообщением (он идёт следом).
+                if (rawPath is not null &&
+                    rawPath.EndsWith(".xaml.cs", StringComparison.OrdinalIgnoreCase) &&
+                    (diagnostic.Id == "CS0103" || diagnostic.Id == "CS0117"))
+                {
+                    continue;
+                }
+                var path = rawPath is not null
+                    ? Path.GetRelativePath(SelfBuildPaths.WorkspaceRoot, rawPath)
                     : "?";
                 errors.Add($"{diagnostic.Id} {path}:{position.StartLinePosition.Line + 1}: {diagnostic.GetMessage()}");
                 if (errors.Count >= 50)

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.SelfBuild;
 
 namespace QwenPlayground.Launcher;
@@ -207,6 +208,7 @@ public static class SwapService
             var reason = app is { HasExited: true }
                 ? $"process exited with code {app.ExitCode} before handshake"
                 : "handshake timeout (30s)";
+            var crash = TryGetRecentCrashExcerpt();
             Log($"startup failed: {reason}; rolling back");
             KillQuietly(app);
             if (!string.IsNullOrEmpty(oldId) && File.Exists(Path.Combine(Root, oldId, ExeName)))
@@ -221,7 +223,7 @@ public static class SwapService
                 WriteAppPid(rollback?.Id);
                 Log($"rolled back to {oldId}");
             }
-            BuildJournal.UpdateLast(Root, "failed", reason);
+            BuildJournal.UpdateLast(Root, "failed", reason, crash);
             return 1;
         }
         catch (Exception exception)
@@ -332,6 +334,7 @@ public static class SwapService
         var reason = app is { HasExited: true }
             ? $"process exited with code {app.ExitCode} before handshake"
             : "handshake timeout (30s)";
+        var crash = TryGetRecentCrashExcerpt();
         Log($"startup failed: {reason}; rolling back");
         KillQuietly(app);
         var rolledBack = Process.Start(new ProcessStartInfo(Path.Combine(current, ExeName))
@@ -340,7 +343,7 @@ public static class SwapService
             UseShellExecute = false
         });
         WriteAppPid(rolledBack?.Id);
-        BuildJournal.UpdateLast(Root, "failed", reason);
+        BuildJournal.UpdateLast(Root, "failed", reason, crash);
         Log("rollback done, previous version started");
         return 1;
     }
@@ -363,6 +366,42 @@ public static class SwapService
             Thread.Sleep(500);
         }
         return false;
+    }
+
+    /// <summary>
+    /// Свежий крах новой сборки: последняя запись logs/last-crash.log, если она свежая
+    /// (≤2 мин — окно handshake 30s + запас). null — краха нет (зависание, не крах) или
+    /// он устарел (не от этого старта). Обрезка, чтобы не раздувать отчёт; полный — в
+    /// logs/last-crash.log. Никогда не бросает.
+    /// </summary>
+    private static string? TryGetRecentCrashExcerpt()
+    {
+        try
+        {
+            var lastFile = CrashLogCore.LastFile(CrashLogCore.DefaultLogsDir, CrashLogCore.AppChannel);
+            if (!File.Exists(lastFile))
+            {
+                return null;
+            }
+            if ((DateTime.Now - File.GetLastWriteTime(lastFile)).TotalMinutes > 2)
+            {
+                return null;
+            }
+            var entries = CrashLogCore.SplitEntries(File.ReadAllText(lastFile)).ToList();
+            if (entries.Count == 0)
+            {
+                return null;
+            }
+            var entry = entries[^1];
+            const int cap = 1500;
+            return entry.Length <= cap
+                ? entry
+                : entry[..cap] + "\n… (обрезано; полный крах — logs/last-crash.log)";
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static void KillQuietly(Process? app)

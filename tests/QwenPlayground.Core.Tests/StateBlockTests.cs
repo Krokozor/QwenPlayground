@@ -19,7 +19,12 @@ public sealed class StateBlockTests
             new StateBlock.MemoryRef { Id = "mem2", Relevance = 0.42, Content = "fact two" }
         },
         MemoryNag = "do memory management",
-        Nag = "call sanity_check"
+        Nag = "call sanity_check",
+        Notes =
+        {
+            "note board: dedupe memories when idle",
+            "second note"
+        }
     };
 
     [Fact]
@@ -35,6 +40,8 @@ public sealed class StateBlockTests
             "mem=mem2 | relevance ~0.42 | fact two\n" +
             "mem_nag=do memory management\n" +
             "nag=call sanity_check\n" +
+            "note=note board: dedupe memories when idle\n" +
+            "note=second note\n" +
             "</state>";
 
         Assert.Equal(expected, Sample().ToString());
@@ -110,6 +117,9 @@ public sealed class StateBlockTests
         Assert.Equal("fact one", parsed.Memories[0].Content);
         Assert.Equal("do memory management", parsed.MemoryNag);
         Assert.Equal("call sanity_check", parsed.Nag);
+        Assert.Equal(2, parsed.Notes.Count);
+        Assert.Equal("note board: dedupe memories when idle", parsed.Notes[0]);
+        Assert.Equal("second note", parsed.Notes[1]);
         Assert.Equal(rendered, parsed.ToString());
     }
 
@@ -162,6 +172,7 @@ public sealed class StateBlockTests
         Assert.Equal("fact one", back.Memories[0].Content);
         Assert.Equal("do memory management", back.MemoryNag);
         Assert.Equal("call sanity_check", back.Nag);
+        Assert.Equal(2, back.Notes.Count);
         Assert.Equal(Sample().ToString(), back.ToString());
     }
 
