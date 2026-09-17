@@ -324,6 +324,11 @@ public sealed class CSharpReferenceReportTool : AgentTool
     {
         if (member is IMethodSymbol method)
         {
+            // Синтезированные методы (.cctor от статических инициализаторов и т.п.) — шум.
+            if (method.IsImplicitlyDeclared)
+            {
+                return false;
+            }
             return method.MethodKind is not (MethodKind.PropertyGet or MethodKind.PropertySet
                                               or MethodKind.EventAdd or MethodKind.EventRemove);
         }
@@ -494,7 +499,8 @@ public sealed class CSharpReferenceReportTool : AgentTool
             builder.AppendLine($"(… {filtered.Count - limit} more rows — raise 'limit' or use 'saveDetail')");
         }
         builder.AppendLine();
-        builder.AppendLine(Summary(filtered));
+        // Сводка — по ВСЕМ строкам (полная картина), а не по отфильтрованным.
+        builder.AppendLine(Summary(allRows));
         builder.AppendLine(Caveats);
 
         if (!saveDetail)

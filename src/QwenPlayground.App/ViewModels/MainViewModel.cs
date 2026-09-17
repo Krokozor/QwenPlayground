@@ -27,7 +27,6 @@ using QwenPlayground.Core.Tools;
 namespace QwenPlayground.App.ViewModels;
 
 public partial class MainViewModel : ObservableObject {
-    private static readonly string SessionsRoot = ChatSessions.Root;
     // Композиционный корень (Core/Main): граф сервисов собирается там, UI — протокол-адаптер
     // (пузыри, команды, тонкие виды). Хуки UI — через UiHooks в конструкторе.
     private readonly Main _main;
@@ -922,16 +921,6 @@ public partial class MainViewModel : ObservableObject {
     }
 
     /// <summary>
-    /// Единый с превью и ходом источник системного промпта: сборка — в SystemPromptAssembler
-    /// (Core); здесь только обновление меню полок (UI-состояние после каждого запроса).
-    /// </summary>
-    private string? ResolveSystemPrompt() {
-        var prompt = _main.PromptAssembler.ResolveSystemPrompt();
-        RefreshShelfUi(); // меню подхватывает изменения (в т.ч. тулами агента в этом же запросе)
-        return prompt;
-    }
-
-    /// <summary>
     /// Зарегистрировать MCP-тулы в реестре (вызывается после MCP init и при mcp_reload).
     /// </summary>
     internal void RegisterMcpTools()
@@ -1252,17 +1241,6 @@ public partial class MainViewModel : ObservableObject {
         catch {
             // просмотрщик не открылся — профилактика
         }
-    }
-    private static readonly HashSet<string> BinaryExtensions =
-    new(StringComparer.OrdinalIgnoreCase)
-    {
-".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".ico", ".svg",
-".pdf", ".mp4", ".mp3", ".wav", ".zip", ".7z", ".rar", ".exe", ".bin"
-    };
-    /// <summary>Бинарные файлы (картинки/документы/архивы) как текст не читаются — во вложения.</summary>
-    private static bool IsBinaryFile(string path) {
-        var ext = Path.GetExtension(path);
-        return BinaryExtensions.Contains(ext);
     }
     /// <summary>
     /// Синхронный flush настроек при закрытии. Дебаунс (800 мс) при выключении приложения
