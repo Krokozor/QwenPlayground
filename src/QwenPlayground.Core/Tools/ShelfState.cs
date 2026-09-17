@@ -31,6 +31,15 @@ public enum ShelfResult
 /// </summary>
 public sealed class ShelfState
 {
+    /// <summary>
+    /// Полка снята (перешла в staged-деактивацию): (группа, каталог сессии). Статическое
+    /// событие — экземпляры создаются ad-hoc в разных местах (тул агента, UI-меню).
+    /// Срабатывает только на реальный переход (повторная пометка не повторяет событие).
+    /// Реакции UI (например, скрыть оверлей курсора при снятии desktop) подписываются здесь,
+    /// а не прячутся в вызывающих местах.
+    /// </summary>
+    public static event Action<ToolGroup, string>? Deactivated;
+
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly string _directory;
 
@@ -112,7 +121,12 @@ public sealed class ShelfState
         {
             return ShelfResult.NotActive;
         }
+        var wasPending = LoadPending().Contains(group);
         MarkPending(group);
+        if (!wasPending)
+        {
+            Deactivated?.Invoke(group, _directory);
+        }
         return ShelfResult.Deactivated;
     }
 

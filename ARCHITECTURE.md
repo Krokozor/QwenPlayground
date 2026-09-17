@@ -10,10 +10,18 @@ WPF-приложение (MVVM-лайт) вокруг локальной llama.c
 (main-agent) живёт в постоянной сессии и развивает приложение сам через rebuild_self.
 Два слоя:
 
-- **`src/QwenPlayground.Core`** — домен без UI: агентный цикл, шаблон/парсер Qwen,
-  инструменты, память, компакция, настройки, самосборка. Тестируется (Core.Tests).
-- **`src/QwenPlayground.App`** — WPF-оболочка: ViewModel'и, окна, UI-инструменты,
-  композиция сервисов. Тестируются чистые части (App.Tests).
+- **`src/QwenPlayground.Core`** — домен без UI: композиционный корень (`Main`),
+  оркестрация хода (`TurnPipeline`), жизненный цикл сессий (`SessionController`),
+  сборка промпта (`SystemPromptAssembler`), агентный цикл (`AgentLoop`),
+  шаблон/парсер Qwen, инструменты, память, компакция, настройки, самосборка.
+  Тестируется (Core.Tests).
+- **`src/QwenPlayground.App`** — WPF-оболочка-адаптер: MainViewModel (пузыри, команды,
+  тонкие виды настроек, UI-таймеры), окна, UI-инструменты. Тестируются чистые
+  части (App.Tests).
+
+Направление зависимостей строго App → Core; обратных утечек нет (реакции UI на
+доменные события — через события/хуки: `UiHooks`, `ShelfState.Deactivated`,
+`McpService.ReRegisterTools`).
 
 Плюс `tools/QwenPlayground.Harness` — консольные сценарии против живого сервера;
 `run/<id>/` — развёрнутые версии приложения (pointer-layout), `assets/chat_template.jinja`
@@ -29,12 +37,30 @@ I/O с возвратом через `await`. Следствия:
 - тяжёлые вычисления в Core будут фризить UI — уводить через Task.Run + await;
 - параллельные ходы (будущий оркестратор) потребуют пересмотра этого пункта.
 
+## Main — композиционный корень (Core/Main)
+
+`Main` (паттерн NekoBot) — единственный владелец графа сервисов и знание порядка
+их сборки: `Log`, `ChatState`, `Tools`, `ServerProps`, `Compaction`, `MemorySurfacer`,
+`PairsStore`, `Background`, `ServiceLlm`, `PromptAssembler`, `StateBlocks`, `Pipeline`,
+`Maintenance`, `Lifecycle`, `Draft`, `Sessions`, `Turns`, `Heartbeat` (публичные) +
+`identity`/`externalTools`/`layerStore` (приватные). UI-реакции — через `UiHooks`
+(статус, генерация, окно драфта, heartbeat-ход, flush памяти, меню полок, shutdown):
+Core не знает про WPF.
+
+Договор конструктора: **ничего не стартует** (`Lifecycle.StartAll()` — за адаптером,
+после регистрации UI-сервисов) и **не грузит сессии** (за адаптером — вид должен быть
+готов). MainViewModel создаёт `Main` в конструкторе, подписывается на события
+(`Log.Changed`, `Sessions.SessionChanged`, `ShelfState.Deactivated`), регистрирует
+UI-таймеры (draft/heartbeat — DispatcherTimer качают Core-контроллеры) и UI-сервисы
+жизненного цикла, затем `StartAll()`.
+
 ## Жизненный цикл приложения
 
-`AppLifecycle` (App) — реестр сервисов с Start/Shutdown (`IAppService`); остановка LIFO,
-каждый в своём try/catch, ошибки — в статус. Зарегистрированы: heartbeat-таймер,
-синхронный flush настроек. MainWindow: `SaveCurrent()` → `vm.Shutdown()`. Новые сервисы
-с состоянием (таймеры, подписки, кэши) регистрируются здесь, а не гасятся вручную.
+`AppLifecycle` (Core/Runtime) — реестр сервисов с Start/Shutdown (`IAppService`);
+остановка LIFO, каждый в своём try/catch, ошибки — в статус. Зарегистрированы
+адаптером: draft-таймер (+flush при закрытии), heartbeat-таймер, синхронный flush
+настроек. MainWindow: `SaveCurrent()` → `vm.Shutdown()`. Новые сервисы с состоянием
+(таймеры, подписки, кэши) регистрируются здесь, а не гасятся вручную.
 
 ## Источники завершений
 
@@ -48,30 +74,36 @@ CountTokens + LastUsage. Потребители (PromptPipeline, ServiceCompleti
 
 | Состояние | Владелец | Кто мутирует |
 |---|---|---|
-| Разговор (`ChatLog`) | MainViewModel (экран) | VM, AgentLoop, ContextMaintenance — только через методы лога |
+| Граф сервисов (композиция) | `Main` (Core/Main) | только конструктор `Main` |
+| Разговор (`ChatLog`) | `Main` | TurnPipeline, ContextMaintenance, VM (откат/очистка) — только через методы лога |
 | ID сообщений (счётчик) | ChatLog | лог сам; персистится в SessionData.NextMessageId |
-| FSM чата (`ChatStateMachine`) | MainViewModel | цикл (Generating/Awaiting*), maintenance (Compacting) |
+| FSM чата (`ChatStateMachine`) | `Main` | TurnPipeline (Generating), maintenance (Compacting) |
 | Вид сообщений (`Messages`) | MainViewModel | VM; структурные изменения лога → RebuildMessageViews |
 | Настройки (`SettingsStore<AppSettings>`) | синглтон на процесс | тонкие свойства VM пишут напрямую |
-| Сессии (sessions/, ChatSessions) | MainViewModel | ChatSessions; бэкапы — ContextBackupStore |
-| Серверные факты (`ServerProps`) | MainViewModel | PromptPipeline (n_ctx, media_marker, LastPromptTokens) |
+| Сессии (sessions/, ключи профилей) | `SessionController` (Core/Sessions) | SessionController; бэкапы — ContextBackupStore |
+| Серверные факты (`ServerProps`) | `Main` | PromptPipeline (n_ctx, media_marker, LastPromptTokens) |
 | Память (memories/, layers.json) | файлы | MemoryStore/LayerStore; surfacer только читает |
 
 ## Жизненный цикл хода
 
 ```
-SendAsync / heartbeat / wake / resume
-  └─ GenerateWithBudgetAsync
+SendAsync (VM: ввод, вложения, user-пузырь) / heartbeat / wake / resume
+  └─ Main.Turns.RunTurnAsync(continue, onEvent)   [TurnPipeline, Core]
        ├─ EnsureBudget (ContextMaintenance): /tokenize следующего промпта
        │    vs окно − резерв → не влезает или запрошено ⇒ компакция
-       └─ GenerateCoreAsync  [FSM Idle→Generating]
+       │    (сбой → статус + SaveCurrent, ход не стартует)
+       └─ [FSM Idle→Generating]
             └─ AgentLoop.RunAsync(request)   ← IAsyncEnumerable<AgentEvent>
                  рендер промпта: история + InjectedIdentity (identity+layers+trajectory)
-                 + tool-определения + state-блок + мультимодальность
-                 стрим токенов → MessageViewModel.AppendStreamChunk (троттлинг ~50 мс)
+                 + tool-определения + state-блок (Build + OnRendered) + мультимодальность
+                 стрим токенов → onEvent → VM DispatchEvent → MessageViewModel
+                 (AppendStreamChunk, троттлинг ~50 мс)
                  tool_call → ToolRegistry.ExecuteDetailedAsync (+FinalizeAsync)
                  budget-guard между итерациями → EnsureBudget → [Compacting]
-            switch по AgentEvent в VM: мутации Messages/_log/StatusText
+            [FSM Generating→Idle] — до флага генерации (иначе кнопки не оживут)
+       итог TurnOutcome {Canceled/Error/BudgetFailed/Agentic} → VM решает, куда
+       показать ошибку (пузырь или статус); отмена → CommitCanceledPartial
+       рестарт в новую сборку (SelfBuildService.ConsumeRestartRequest) — в пайплайне
        SaveCurrent() — персистенция после хода
 ```
 
@@ -94,6 +126,14 @@ Idle→Compacting→Idle; запрос во время Generating ставитс
 
 Интерактив инструментов (подтверждение shell) — pull через статический
 `AgentInteraction`; оконную реализацию регистрирует `ChatInteraction` при старте.
+
+Полки (группы инструментов) — `ShelfState` (Core/Tools, per-session shelves.json):
+активация немедленная, деактивация staged (pending, снимается `FlushPending` при
+естественной смене промпта — батчинг с неизбежным KV-rebuild). Единая логика у тулов
+агента (`activate_shelf`/`deactivate_shelf`) и UI-меню. Доменное событие
+`ShelfState.Deactivated` (группа, каталог сессии) — единственная точка, где UI
+реагирует на снятие полки (например, скрытие оверлея курсора при снятии desktop);
+вызывающие места не знают о реакциях.
 
 ## Память агента
 

@@ -12,15 +12,20 @@ public sealed class ShelfStateTests : IDisposable
 {
     private readonly string _directory;
     private readonly ShelfState _state;
+    private readonly List<(ToolGroup Group, string Directory)> _deactivated = new();
 
     public ShelfStateTests()
     {
         _directory = Path.Combine(Path.GetTempPath(), "qwen_shelves_" + Guid.NewGuid().ToString("N"));
         _state = new ShelfState(_directory);
+        ShelfState.Deactivated += OnDeactivated;
     }
+
+    private void OnDeactivated(ToolGroup group, string directory) => _deactivated.Add((group, directory));
 
     public void Dispose()
     {
+        ShelfState.Deactivated -= OnDeactivated;
         try
         {
             Directory.Delete(_directory, recursive: true);
@@ -114,5 +119,38 @@ public sealed class ShelfStateTests : IDisposable
 
         Assert.Empty(_state.FlushPending());
         Assert.Contains(ToolGroup.Browser, _state.Load());
+    }
+
+    [Fact]
+    public void Deactivate_FiresEvent_WithGroupAndSessionDirectory()
+    {
+        _state.Activate(ToolGroup.Desktop);
+
+        _state.Deactivate(ToolGroup.Desktop);
+
+        // Доменное событие «полка снята» — единственная точка, где UI реагирует
+        // (например, скрывает оверлей курсора), а не прячет реакцию в вызывающих местах.
+        Assert.Single(_deactivated);
+        Assert.Equal(ToolGroup.Desktop, _deactivated[0].Group);
+        Assert.Equal(_directory, _deactivated[0].Directory);
+    }
+
+    [Fact]
+    public void Deactivate_AlreadyPending_DoesNotRefireEvent()
+    {
+        _state.Activate(ToolGroup.Browser);
+        _state.Deactivate(ToolGroup.Browser);
+
+        _state.Deactivate(ToolGroup.Browser); // идемпотентная пометка — без повторного события
+
+        Assert.Single(_deactivated);
+    }
+
+    [Fact]
+    public void Deactivate_NotActive_DoesNotFireEvent()
+    {
+        Assert.Equal(ShelfResult.NotActive, _state.Deactivate(ToolGroup.Desktop));
+
+        Assert.Empty(_deactivated);
     }
 }

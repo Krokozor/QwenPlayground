@@ -1,5 +1,4 @@
 using System.Reflection;
-using QwenPlayground.App.Desktop;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Tools;
 
@@ -108,10 +107,8 @@ public sealed class DeactivateShelfTool : AgentTool
         {
             return Task.FromResult($"Group '{Group}' is not active.");
         }
-
-        // Desktop: hide the cursor overlay — user is done with desktop control.
-        if (group == ToolGroup.Desktop)
-            DesktopOverlay.Hide();
+        // Снятие desktop-полки → скрытие оверлея курсора — реакция UI на доменное событие
+        // ShelfState.Deactivated (подписка в MainViewModel), а не прямое обращение сюда.
 
         return Task.FromResult($"Group '{Group}' scheduled for deactivation — its tools leave your prompt " +
                                 $"at the next natural system-prompt change (compaction/session switch). " +

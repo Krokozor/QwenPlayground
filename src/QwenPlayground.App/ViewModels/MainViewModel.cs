@@ -410,6 +410,8 @@ public partial class MainViewModel : ObservableObject {
             typeof(MainViewModel).Assembly); // App: UI-инструменты (screenshot, switch_tab)
         _main.Log.Changed += OnLogChanged;
         _main.Sessions.SessionChanged += OnSessionChanged;
+        // Снятие полки (тулом агента или из меню) — доменное событие; реакция UI — здесь.
+        ShelfState.Deactivated += OnShelfDeactivated;
         TurnsPanel = new TurnPanel(_main.Background.Turns);
 
         // Интерактив инструментов (подтверждение shell) — pull-модель: оконные
@@ -876,11 +878,22 @@ public partial class MainViewModel : ObservableObject {
         var state = new ShelfState(SessionDir());
         var isOn = state.Load().Contains(g) && !state.LoadPending().Contains(g);
         var result = isOn ? state.Deactivate(g) : state.Activate(g);
-        // Desktop: полка ушла в pending — скрываем оверлей курсора (как тул агента).
-        if (g == ToolGroup.Desktop && state.LoadPending().Contains(g))
-            DesktopOverlay.Hide();
         Debug.WriteLine($"[shelf-cache] UI: {g} → {result}");
         RefreshShelfUi();
+    }
+
+    /// <summary>
+    /// Полка снята (staged-деактивация) — реакция UI на доменное событие ShelfState.Deactivated:
+    /// desktop-полка текущего сессии ушла → скрываем оверлей курсора (пользователь закончил
+    /// управление десктопом). Оба вызывающих места (тул агента и меню) идут через событие.
+    /// Потоки: и тул (инвариант — agent-код на UI-потоке), и меню — UI-поток.
+    /// </summary>
+    private void OnShelfDeactivated(ToolGroup group, string sessionDir)
+    {
+        if (group == ToolGroup.Desktop && sessionDir == SessionDir())
+        {
+            DesktopOverlay.Hide();
+        }
     }
 
     /// <summary>
