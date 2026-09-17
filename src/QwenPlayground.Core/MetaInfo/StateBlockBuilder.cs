@@ -4,9 +4,10 @@ using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.MetaInfo;
 using QwenPlayground.Core.SelfBuild;
+using QwenPlayground.Core.Serialization;
 using QwenPlayground.Core.Settings;
 
-namespace QwenPlayground.App.ViewModels;
+namespace QwenPlayground.Core.MetaInfo;
 
 /// <summary>
 /// Сборка state-блока — снапшота «что агент знает о себе прямо сейчас»: msg_id, время,

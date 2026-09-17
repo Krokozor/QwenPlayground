@@ -1,9 +1,9 @@
 using System.IO;
-using QwenPlayground.App.ViewModels;
+using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Settings;
 
-namespace QwenPlayground.App.Tests;
+namespace QwenPlayground.Core.Tests;
 
 /// <summary>
 /// Жизненный цикл сессий на изолированном каталоге. Настройки (LastSessionId) — глобальный

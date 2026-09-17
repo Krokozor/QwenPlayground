@@ -1,6 +1,6 @@
-using QwenPlayground.App.ViewModels;
+using QwenPlayground.Core.Compaction;
 
-namespace QwenPlayground.App.Tests;
+namespace QwenPlayground.Core.Tests;
 
 /// <summary>
 /// Троттлинг-публикация завязана на реальный Stopwatch (порог 50 мс) — тесты используют

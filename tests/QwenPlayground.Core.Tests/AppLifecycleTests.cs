@@ -1,7 +1,7 @@
 using System.IO;
-using QwenPlayground.App;
+using QwenPlayground.Core.Runtime;
 
-namespace QwenPlayground.App.Tests;
+namespace QwenPlayground.Core.Tests;
 
 public sealed class AppLifecycleTests
 {
@@ -61,24 +61,5 @@ public sealed class AppLifecycleTests
         var failure = Assert.Single(failures);
         Assert.Contains("сломанный", failure);
         Assert.Single(errors);
-    }
-
-    [Fact]
-    public async Task HeartbeatController_AsService_ShutdownStopsTimer()
-    {
-        // Контракт IAppService у контроллера: Start идемпотентен, Shutdown гасит таймер.
-        var controller = new HeartbeatController(
-            new Core.Heartbeat.WakeSignalStore(Path.Combine(Path.GetTempPath(), "qpw_lc_" + Guid.NewGuid().ToString("N"))),
-            isBusy: () => false,
-            heartbeatEnabled: () => true,
-            heartbeatIntervalMinutes: () => 30,
-            setStatus: _ => { },
-            startTurn: _ => Task.CompletedTask,
-            flushMemory: () => Task.CompletedTask);
-
-        Assert.Equal("heartbeat", controller.Name);
-        controller.Start();
-        controller.Start(); // повторный Start не должен дублировать подписку/падать
-        controller.Shutdown();
     }
 }

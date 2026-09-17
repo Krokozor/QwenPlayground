@@ -6,7 +6,7 @@ using QwenPlayground.Core.Settings;
 using QwenPlayground.Core.Templates;
 using QwenPlayground.Core.Tools;
 
-namespace QwenPlayground.App.ViewModels;
+namespace QwenPlayground.Core.Templates;
 
 /// <summary>
 /// Сборка «следующего промпта» main-чата и точный подсчёт его токенов: история +

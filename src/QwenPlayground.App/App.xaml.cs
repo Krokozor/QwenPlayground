@@ -1,5 +1,6 @@
 using System.Windows;
 using QwenPlayground.Core.Crash;
+using QwenPlayground.Core.Mcp;
 using QwenPlayground.Core.SelfBuild;
 
 namespace QwenPlayground.App;
@@ -30,7 +31,7 @@ public partial class App : Application
         SelfBuildService.PostDeployTools = WatchdogLauncher.TryStart;
         // Connect to MCP servers (non-blocking), then register their tools
         StartupTrace.Log("App.OnStartup: MCP init launched (fire-and-forget)");
-        _ = Mcp.McpService.InitializeAsync().ContinueWith(_ =>
+        _ = McpService.InitializeAsync().ContinueWith(_ =>
         {
             // MCP ready — tools will be registered by MainViewModel via McpToolRegistrar
             StartupTrace.Log("App.OnStartup: MCP init finished");
@@ -45,7 +46,7 @@ public partial class App : Application
         // «пользователь закрыл» от «умерло посреди ничего».
         WatchdogLauncher.MarkClean();
         // MCP: disconnect all servers
-        try { Mcp.McpService.ShutdownAsync().GetAwaiter().GetResult(); } catch { }
+        try { McpService.ShutdownAsync().GetAwaiter().GetResult(); } catch { }
         base.OnExit(e);
     }
 }

@@ -1,7 +1,4 @@
-using System.Windows.Threading;
-using QwenPlayground.Core.Sessions;
-
-namespace QwenPlayground.App.ViewModels;
+namespace QwenPlayground.Core.Sessions;
 
 /// <summary>
 /// Хранитель драфта окошка ввода: периодически (интервал из настроек) проверяет, не
@@ -18,22 +15,20 @@ namespace QwenPlayground.App.ViewModels;
 ///  - закрытие → выгрести текст (Flush).
 ///
 /// Логика тика — в публичных методах (Tick/Flush/Restore/ClearOnSend), тестируется без
-/// таймера. Таймер — необязательная обёртка (IAppService: Start/Shutdown); интервал
-/// перечитывается на каждом тике, поэтому смена в настройках действует без рестарта.
+/// таймера. Без таймера: качает UI (DispatcherTimer с интервалом из настроек); свойство
+/// <see cref="IntervalSeconds"/> перечитывается UI на каждом тике, поэтому смена в
+/// настройках действует без рестарта.
 /// </summary>
-public sealed class DraftKeeper : IAppService
+public sealed class DraftKeeper
 {
     private readonly Func<string> _input;
     private readonly Action<string> _setInput;
     private readonly Func<string> _currentSessionId;
     private readonly SessionDraftStore _store;
     private readonly Func<int> _intervalSeconds;
-    private DispatcherTimer? _timer;
 
     /// <summary>Последний сохранённый в драфт текст (чтобы не переписывать файл без изменений).</summary>
     private string _lastSaved = string.Empty;
-
-    public string Name => "draft";
 
     public DraftKeeper(
         Func<string> input,
@@ -49,31 +44,12 @@ public sealed class DraftKeeper : IAppService
         _intervalSeconds = intervalSeconds;
     }
 
-    public void Start()
-    {
-        _timer = new DispatcherTimer { Interval = Interval() };
-        _timer.Tick += (_, _) => Tick();
-        _timer.Start();
-    }
-
-    public void Shutdown()
-    {
-        _timer?.Stop();
-        _timer = null;
-        Flush(); // досохранить текст при закрытии
-    }
-
-    private TimeSpan Interval() => TimeSpan.FromSeconds(Math.Max(1, _intervalSeconds()));
+    /// <summary>Интервал автосохранения (сек) — UI читает на каждом тике таймера.</summary>
+    public int IntervalSeconds => Math.Max(1, _intervalSeconds());
 
     /// <summary>Один тик: сохранить при изменении, удалить при переходе в пустое.</summary>
     public void Tick()
     {
-        // Интервал мог поменяться в настройках — подхватываем без рестарта.
-        if (_timer is not null && _timer.Interval != Interval())
-        {
-            _timer.Interval = Interval();
-        }
-
         var text = _input();
         if (text.Length == 0)
         {

@@ -1,16 +1,15 @@
-using System.Windows.Threading;
-using QwenPlayground.Core.Heartbeat;
+using QwenPlayground.Core.Runtime;
 
-namespace QwenPlayground.App;
+namespace QwenPlayground.Core.Heartbeat;
 
 /// <summary>
 /// Сердцебиение приложения: на каждом тике опрашивается wake/ (сигналы не ждут расписания),
 /// по истечении интервала планируется плановое пробуждение. Исполнение хода и flush памяти
 /// остаются снаружи (нужны FSM, endpoint, настройки) — контроллер владеет только решением
-/// «когда и чем разбудить» и статусами. Таймер — необязательная обёртка: в тестах Tick()
-/// вызывается напрямую, часы подменяются через <paramref name="clock"/>.
+/// «когда и чем разбудить» и статусами. Без таймера: качает UI (DispatcherTimer) или тест
+/// (Tick() напрямую); часы подменяются через <paramref name="clock"/>.
 /// </summary>
-public sealed class HeartbeatController : IAppService
+public sealed class HeartbeatController
 {
     public const string DefaultPrompt =
         "[heartbeat] Periodic autonomous wake-up. Check refactoring.md for pending work and decide if anything " +
@@ -25,7 +24,6 @@ public sealed class HeartbeatController : IAppService
     private readonly Action<string> _setStatus;
     private readonly Func<string, Task> _startTurn;
     private readonly Func<Task> _flushMemory;
-    private readonly DispatcherTimer? _timer;
     private readonly Func<DateTime> _utcNow;
     private readonly BackgroundWork _background;
     private readonly Action? _watchdogGuard;
@@ -41,7 +39,6 @@ public sealed class HeartbeatController : IAppService
         Action<string> setStatus,
         Func<string, Task> startTurn,
         Func<Task> flushMemory,
-        DispatcherTimer? timer = null,
         Func<DateTime>? clock = null,
         BackgroundWork? background = null,
         Action? watchdogGuard = null)
@@ -53,34 +50,10 @@ public sealed class HeartbeatController : IAppService
         _setStatus = setStatus;
         _startTurn = startTurn;
         _flushMemory = flushMemory;
-        _timer = timer;
         _utcNow = clock ?? new Func<DateTime>(() => DateTime.UtcNow);
         _background = background ?? new BackgroundWork(_ => { });
         _watchdogGuard = watchdogGuard;
         _lastTurnAt = _utcNow();
-    }
-
-    /// <summary>Запуск опроса (вызывается на потоке UI из конструктора ViewModel'и).</summary>
-    public string Name => "heartbeat";
-
-    /// <summary>Запуск опроса; повторный вызов безопасен (подписка/старт идемпотентны по факту).</summary>
-    public void Start()
-    {
-        if (_timer is null)
-        {
-            return;
-        }
-        _timer.Tick -= OnTick;
-        _timer.Tick += OnTick;
-        _timer.Start();
-    }
-
-    private void OnTick(object? sender, EventArgs e) => Tick();
-
-    /// <summary>Остановка опроса (закрытие приложения): таймер гасим, незавершённые ходы не трогаем.</summary>
-    public void Shutdown()
-    {
-        _timer?.Stop();
     }
 
     private int _tickCount;

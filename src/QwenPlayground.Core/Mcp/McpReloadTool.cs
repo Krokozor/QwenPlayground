@@ -3,7 +3,7 @@ using QwenPlayground.Core.Settings;
 using QwenPlayground.Core.Tools;
 using QwenPlayground.Core.Chat;
 
-namespace QwenPlayground.App.Mcp;
+namespace QwenPlayground.Core.Mcp;
 
 [Tool("mcp_reload",
     "Re-read MCP server settings and (re)connect all enabled servers. " +
@@ -56,26 +56,17 @@ public sealed class McpReloadTool : AgentTool
         if (failed.Count > 0) result.AppendLine($"Failed: {string.Join("; ", failed)}");
 
         // Re-register MCP tools in the tool registry (names/schemas may have changed).
-        // Инструмент исполняется из agent-потока — регистрация на UI-потоке (Dispatcher),
-        // иначе ToolRegistry мутируется параллельно с UI.
+        // Реестр и поток его мутации знает UI — хук регистрируется в App (паттерн
+        // AgentInteraction: Core не лезет в окна/диспетчер).
         try
         {
-            var app = System.Windows.Application.Current;
-            if (app is not null)
+            if (McpService.ReRegisterTools is { } reRegister)
             {
-                var vm = app.MainWindow?.DataContext as QwenPlayground.App.ViewModels.MainViewModel;
-                if (vm is not null)
-                {
-                    app.Dispatcher.Invoke(() => vm.RegisterMcpTools());
-                }
-                else
-                {
-                    result.AppendLine("WARNING: MainWindow.DataContext is not MainViewModel — tools NOT re-registered.");
-                }
+                reRegister();
             }
             else
             {
-                result.AppendLine("WARNING: Application.Current is null — tools NOT re-registered.");
+                result.AppendLine("WARNING: no UI re-registration hook — tools NOT re-registered.");
             }
         }
         catch (Exception ex)

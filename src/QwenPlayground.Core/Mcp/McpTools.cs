@@ -1,10 +1,9 @@
 using System.Text.Json.Nodes;
-using QwenPlayground.App.Mcp;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Mcp;
 using QwenPlayground.Core.Tools;
 
-namespace QwenPlayground.App.Mcp;
+namespace QwenPlayground.Core.Mcp;
 
 /// <summary>
 /// MCP management tools (shelf "mcp"). Allows the agent to inspect and call

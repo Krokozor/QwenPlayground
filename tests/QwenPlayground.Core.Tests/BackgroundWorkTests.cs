@@ -1,7 +1,7 @@
 using QwenPlayground.Core.Runtime;
-using QwenPlayground.App;
 
-namespace QwenPlayground.App.Tests;
+
+namespace QwenPlayground.Core.Tests;
 
 /// <summary>
 /// Политика присмотра BackgroundWork поверх реестра ходов: исключение → Failed + отчёт,
@@ -73,20 +73,5 @@ public sealed class BackgroundWorkTests
         Assert.Equal(TurnState.Canceled, turn.State);
         Assert.Contains("запрошена отмена", turn.Journal);
         Assert.Empty(_reports); // отмена — штатный путь
-    }
-
-    [Fact]
-    public async Task TurnPanel_ReflectsRegistryStates()
-    {
-        var panel = new TurnPanel(_registry);
-
-        await _background.RunAsync("видимая работа", _ => Task.CompletedTask);
-
-        panel.Refresh();
-        var item = Assert.Single(panel.Items);
-        Assert.Equal("видимая работа", item.Name);
-        Assert.Equal("готово", item.StateText);
-        Assert.False(item.IsRunning);
-        Assert.StartsWith("Ходы:", panel.Summary);
     }
 }

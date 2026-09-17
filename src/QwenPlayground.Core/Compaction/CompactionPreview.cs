@@ -1,38 +1,80 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text;
-using CommunityToolkit.Mvvm.ComponentModel;
 
-namespace QwenPlayground.App.ViewModels;
+namespace QwenPlayground.Core.Compaction;
 
 /// <summary>
 /// Живое превью компакции: токены суммаризации стримятся в буфер и публикуются в UI с
 /// троттлингом (~50 мс) — работает и для простой компакции, и для конвейера L1/L2/L3
 /// main-агента (этапы разделены заголовками «── … ──»). Всё пишется/читается на потоке UI
 /// (async-продолжение компакции захватывает Dispatcher).
+///
+/// Core-класс без MVVM: INotifyPropertyChanged поднят вручную — WPF-биндинги работают
+/// как есть, а консольный/веб-UI сможет читать свойства и подписываться на события
+/// без CommunityToolkit.
 /// </summary>
-public partial class CompactionPreview : ObservableObject
+public sealed class CompactionPreview : INotifyPropertyChanged
 {
     private readonly StringBuilder _buffer = new();
     private readonly Stopwatch _throttle = new();
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasContent))]
-    [NotifyPropertyChangedFor(nameof(ShowPanel))]
     private bool _isActive;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasPreview))]
-    [NotifyPropertyChangedFor(nameof(HasContent))]
-    [NotifyPropertyChangedFor(nameof(ShowPanel))]
     private string _preview = string.Empty;
-
-    [ObservableProperty]
     private string _stage = string.Empty;
+    private bool _isHidden;
+
+    public bool IsActive
+    {
+        get => _isActive;
+        private set
+        {
+            if (_isActive == value) return;
+            _isActive = value;
+            OnPropertyChanged(nameof(IsActive));
+            OnPropertyChanged(nameof(HasContent));
+            OnPropertyChanged(nameof(ShowPanel));
+        }
+    }
+
+    public string Preview
+    {
+        get => _preview;
+        private set
+        {
+            if (_preview == value) return;
+            _preview = value;
+            OnPropertyChanged(nameof(Preview));
+            OnPropertyChanged(nameof(HasPreview));
+            OnPropertyChanged(nameof(HasContent));
+            OnPropertyChanged(nameof(ShowPanel));
+        }
+    }
+
+    public string Stage
+    {
+        get => _stage;
+        private set
+        {
+            if (Stage == value) return;
+            _stage = value;
+            OnPropertyChanged(nameof(Stage));
+        }
+    }
 
     /// <summary>Пользователь скрыл панель «×» (превью сохраняется; новая компакция откроет панель сама).</summary>
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowPanel))]
-    private bool _isHidden;
+    public bool IsHidden
+    {
+        get => _isHidden;
+        private set
+        {
+            if (_isHidden == value) return;
+            _isHidden = value;
+            OnPropertyChanged(nameof(IsHidden));
+            OnPropertyChanged(nameof(ShowPanel));
+        }
+    }
 
     public bool HasPreview => Preview.Length > 0;
 
@@ -100,4 +142,9 @@ public partial class CompactionPreview : ObservableObject
         Flush();
         IsActive = false;
     }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? name = null) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }

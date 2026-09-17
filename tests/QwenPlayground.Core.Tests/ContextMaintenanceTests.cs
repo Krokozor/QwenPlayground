@@ -1,11 +1,11 @@
 using System.IO;
-using QwenPlayground.App.ViewModels;
+
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.Sessions;
 
-namespace QwenPlayground.App.Tests;
+namespace QwenPlayground.Core.Tests;
 
 /// <summary>
 /// FSM-контракт и сценарии компакции на фейковом LLM (делегат completeStructured).

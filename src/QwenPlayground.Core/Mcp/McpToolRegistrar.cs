@@ -3,7 +3,7 @@ using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Mcp;
 using QwenPlayground.Core.Tools;
 
-namespace QwenPlayground.App.Mcp;
+namespace QwenPlayground.Core.Mcp;
 
 /// <summary>
 /// Генерирует ToolEntry для каждого тула подключённых MCP-серверов.

@@ -1,10 +1,10 @@
-using QwenPlayground.App.ViewModels;
+
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.MetaInfo;
 
-namespace QwenPlayground.App.Tests;
+namespace QwenPlayground.Core.Tests;
 
 /// <summary>
 /// Снапшот самосостояния агента: инварианты полей блока на подставных данных.

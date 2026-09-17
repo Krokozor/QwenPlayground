@@ -10,8 +10,10 @@ using QwenPlayground.App.Desktop;
 using QwenPlayground.App.Tools;
 using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
+using QwenPlayground.Core.Compaction;
 using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Heartbeat;
+using QwenPlayground.Core.Mcp;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.MetaInfo;
 using QwenPlayground.Core.Memory;
@@ -51,6 +53,9 @@ public partial class MainViewModel : ObservableObject {
     // Сердцебиение: решение «когда и чем будить» — в HeartbeatController (тестируемо),
     // исполнение хода/flush — здесь.
     private readonly HeartbeatController _heartbeat;
+    // UI-таймеры качают Core-контроллеры (heartbeat, draft) — Core без WPF.
+    private System.Windows.Threading.DispatcherTimer _draftTimer;
+    private System.Windows.Threading.DispatcherTimer _heartbeatTimer;
     // Оконный интерактив инструментов (подтверждение shell) поверх FSM.
     private readonly ChatInteraction _interaction;
     // Жизненный цикл: реестр стартуемых/останавливаемых сервисов.
@@ -491,7 +496,17 @@ public partial class MainViewModel : ObservableObject {
         () => _sessions.CurrentId,
         new SessionDraftStore(ChatSessions.Root),
         () => DraftSaveIntervalSeconds);
-        _lifecycle.Register(_draft);
+        // Таймер — за UI (Core-класс без таймера): интервал перечитывается на каждом
+        // тике, поэтому смена в настройках действует без рестарта (как раньше).
+        _draftTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(_draft.IntervalSeconds) };
+        _draftTimer.Tick += (_, _) =>
+        {
+            _draftTimer.Interval = TimeSpan.FromSeconds(_draft.IntervalSeconds);
+            _draft.Tick();
+        };
+        _lifecycle.Register(new DelegateAppService("draft",
+            start: () => _draftTimer.Start(),
+            shutdown: () => { _draftTimer.Stop(); _draft.Flush(); }));
 
         Messages.CollectionChanged += (_, _) => {
             RerollCommand.NotifyCanExecuteChanged();
@@ -525,7 +540,21 @@ public partial class MainViewModel : ObservableObject {
         // MCP: register tools after initial connection completes (non-blocking).
         // Dispatch на UI-поток (ToolRegistry — общий с UI). Если MainWindow ещё не
         // создан (редкий гонок) — ретрай через DispatcherTimer, пока не появится.
-        _ = QwenPlayground.App.Mcp.McpService.Ready.ContinueWith(_ =>
+        // Хук перерегистрации MCP-тулов (mcp_reload): Core не знает про UI, UI знает
+        // про поток реестра (паттерн AgentInteraction).
+        McpService.ReRegisterTools = () =>
+        {
+            var app = System.Windows.Application.Current;
+            if (app?.Dispatcher is { } dispatcher)
+            {
+                dispatcher.Invoke(RegisterMcpTools);
+            }
+            else
+            {
+                RegisterMcpTools();
+            }
+        };
+        _ = McpService.Ready.ContinueWith(_ =>
         {
             StartupTrace.Log("MCP: Ready fired (background thread)");
             var app = System.Windows.Application.Current;
@@ -576,9 +605,13 @@ public partial class MainViewModel : ObservableObject {
         setStatus: status => StatusText = status,
         startTurn: prompt => RunHeartbeatTurnAsync(prompt),
         flushMemory: FlushMemoryVectorsAsync,
-        timer: new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(20) },
         watchdogGuard: WatchdogLauncher.EnsureAlive);
-        _lifecycle.Register(_heartbeat);
+        // Качание тиков — за UI (паттерн NekoBot: DispatcherTimer UI качает Core-контроллер).
+        _heartbeatTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
+        _heartbeatTimer.Tick += (_, _) => _heartbeat.Tick();
+        _lifecycle.Register(new DelegateAppService("heartbeat",
+            start: () => _heartbeatTimer.Start(),
+            shutdown: () => _heartbeatTimer.Stop()));
 
         // Настройки: закрытие приложения — единственный синхронный flush (дебаунс не гарантирован).
         _lifecycle.Register(new DelegateAppService("настройки", shutdown: FlushSettingsSave));
@@ -1118,9 +1151,9 @@ public partial class MainViewModel : ObservableObject {
     /// </summary>
     internal void RegisterMcpTools()
     {
-        var manager = QwenPlayground.App.Mcp.McpService.Instance;
+        var manager = McpService.Instance;
         if (manager is null) return;
-        var (registered, warnings) = QwenPlayground.App.Mcp.McpToolRegistrar.RegisterAll(_toolRegistry, manager);
+        var (registered, warnings) = McpToolRegistrar.RegisterAll(_toolRegistry, manager);
         System.Diagnostics.Debug.WriteLine($"[MCP] Registered {registered} tools.");
         foreach (var w in warnings)
             System.Diagnostics.Debug.WriteLine($"[MCP] WARNING: {w}");
@@ -1133,8 +1166,8 @@ public partial class MainViewModel : ObservableObject {
         if (settings.McpServers.Count == 0)
             return Array.Empty<ToolGroupIndex.McpServerRow>();
 
-        var manager = QwenPlayground.App.Mcp.McpService.Instance;
-        var clients = manager?.Clients ?? new Dictionary<string, QwenPlayground.Core.Mcp.McpClient>();
+        var manager = McpService.Instance;
+        var clients = manager?.Clients ?? new Dictionary<string, McpClient>();
         var mcpShelfActive = EffectiveShelves().Contains(ToolGroup.Mcp);
 
         return settings.McpServers.Select(s =>

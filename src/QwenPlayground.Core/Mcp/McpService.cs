@@ -1,7 +1,7 @@
 using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Mcp;
 
-namespace QwenPlayground.App.Mcp;
+namespace QwenPlayground.Core.Mcp;
 
 /// <summary>
 /// Static holder for the McpServerManager instance.
@@ -13,6 +13,14 @@ public static class McpService
 
     /// <summary>Completes when initial MCP connection is done (success or failure).</summary>
     public static Task Ready { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// Хук UI: перерегистрировать MCP-тулы в реестре (mcp_reload). Реестр владеет UI, и UI
+    /// знает, на каком потоке его мутация легальна — Core не лезет в окна/диспетчер
+    /// (паттерн AgentInteraction: маршрут интерактива регистрирует владелец UI).
+    /// null — UI нет (Harness/тесты): перерегистрация не нужна, тулы не в реестре.
+    /// </summary>
+    public static Action? ReRegisterTools;
 
     public static async Task InitializeAsync()
     {

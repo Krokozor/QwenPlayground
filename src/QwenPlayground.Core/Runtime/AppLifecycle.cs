@@ -1,4 +1,4 @@
-namespace QwenPlayground.App;
+namespace QwenPlayground.Core.Runtime;
 
 /// <summary>Сервис с жизненным циклом приложения (аналог IStartable из NekoBot).</summary>
 public interface IAppService

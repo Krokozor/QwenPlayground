@@ -220,6 +220,36 @@ wait absent/appear, navigate back, type mode=type, trusted key/click (submit ф�
 16. `MemorySimilarity.ScanPassAsync` — `pairs.Pending.Any(...)` O(n) внутри двойного цикла —
     O(n³) на всех парах; пока память мала не болит, при росте — индексируемые множества.
 
+### 2026-09-17 (47) — Квест сегрегации Core/UI, этап 1: домен переехал в Core
+Запрос владельца: часть, ответственная за функционирование, должна быть стянута в одном
+месте (Core), а UI (WPF) — сносимая оболочка (консоль/веб по желанию). Референс владельца:
+NekoBot — UI\`App.xaml.cs` создаёт \`NekoBot.Core\`.\`Main` и качает \`Main.Update()` через
+DispatcherTimer; Main владеет всеми сервисами.
+**Аудит**: направление зависимостей уже правильное (Core без WPF/WebView2/System.Drawing,
+TFM net10.0), но 19 файлов чистой бизнес-логики жили в App + обратные утечки (домен тянул
+UI): ContextMaintenance→CompactionPreview (MVVM), McpReloadTool→System.Windows.Application,
+HeartbeatController/DraftKeeper→DispatcherTimer.
+**Сделано (этап 1, без изменения поведения)**:
+- Перенос в Core: BackgroundWork/AppLifecycle→Runtime, MainAgent/InjectedIdentity/
+  ExternalToolsNote→Agent, ServiceCompletionClient→Inference, WatchdogLauncher→Crash,
+  McpService/McpToolRegistrar/McpTools/McpReloadTool→Mcp, ChatSessions/DraftKeeper→Sessions,
+  ContextMaintenance/CompactionPreview→Compaction, PromptPipeline→Templates,
+  StateBlockBuilder→MetaInfo, FileDependentCache→Serialization, HeartbeatController→Heartbeat.
+  Тесты (10 файлов) — в Core.Tests; TurnPanel-тест остался в App.Tests (TurnPanel — UI).
+- **Таймеры — за UI**: HeartbeatController и DraftKeeper без DispatcherTimer и без IAppService;
+  MainViewModel качает их DispatcherTimer'ами через DelegateAppService (NekoBot-паттерн:
+  UI-таймер качает Core-контроллер).
+- **CompactionPreview** — ручной INPC (без CommunityToolkit): WPF-биндинги как есть,
+  консольный UI сможет читать свойства без MVVM.
+- **McpReloadTool** — хук \`McpService.ReRegisterTools\` (Action, регистрирует UI) вместо
+  \`System.Windows.Application.Current\` — паттерн AgentInteraction: Core не знает про окна,
+  UI знает про поток реестра.
+- Сборка 20260917-081729 success (тесты зелёные), приложение проверено живым.
+**Дальше (этап 2)**: фасад Main в Core — композиционный корень + оркестрация из
+MainViewModel (ChatLog, FSM, сессии, генерация, heartbeat-маршруты) с событиями для UI;
+VM худеет до MVVM-адаптера. **Этап 3**: утечка ShelfTools→DesktopOverlay.Hide() через
+событие, ARCHITECTURE.md обновить под новую карту.
+
 ### 2026-09-16 (46) — Полки в UI: кнопка 🗄 + меню со статусами on/pending/off
 Запрос владельца: включить нужные группы инструментов заранее, до первого промпта — тем же
 механизмом, что у тулов агента (вкл — сразу, выкл — при следующем удобном случае). По

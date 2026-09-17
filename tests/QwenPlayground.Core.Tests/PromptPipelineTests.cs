@@ -1,4 +1,4 @@
-using QwenPlayground.App.ViewModels;
+
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
@@ -6,7 +6,7 @@ using QwenPlayground.Core.MetaInfo;
 using QwenPlayground.Core.Templates;
 using QwenPlayground.Core.Tools;
 
-namespace QwenPlayground.App.Tests;
+namespace QwenPlayground.Core.Tests;
 
 /// <summary>
 /// Конвейер промпта на подставном ICompletionSource — без HTTP. Проверяем контракт

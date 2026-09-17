@@ -1,8 +1,8 @@
 using System.IO;
-using QwenPlayground.App.ViewModels;
+
 using QwenPlayground.Core.Sessions;
 
-namespace QwenPlayground.App.Tests;
+namespace QwenPlayground.Core.Tests;
 
 /// <summary>
 /// Логика DraftKeeper без таймера: тик сохраняет при изменении и удаляет при переходе

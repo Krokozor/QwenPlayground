@@ -1,7 +1,7 @@
 using System.IO;
-using QwenPlayground.App.ViewModels;
+using QwenPlayground.Core.Serialization;
 
-namespace QwenPlayground.App.Tests;
+namespace QwenPlayground.Core.Tests;
 
 public sealed class FileDependentCacheTests : IDisposable
 {

@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using QwenPlayground.Core.SelfBuild;
 
-namespace QwenPlayground.App;
+namespace QwenPlayground.Core.Crash;
 
 /// <summary>
 /// Запуск watchdog'а — отдельного процесса, который фиксирует смерть приложения,
@@ -98,7 +98,8 @@ public static class WatchdogLauncher
             {
                 // exit code не критичен
             }
-            CrashLog.LogCrash("Watchdog: guardian died",
+            CrashLogCore.WriteWithContext(CrashLogCore.DefaultLogsDir, CrashLogCore.AppChannel,
+                "Watchdog: guardian died", null,
                 $"watchdog (PID {watchdog.Id}) завершился, пока приложение живо (exit code: {exitCode?.ToString() ?? "unknown"}). " +
                 "Пока страж был мёртв, неконтролируемые смерти не фиксировались. Страж перезапущен.");
             watchdog.Dispose();

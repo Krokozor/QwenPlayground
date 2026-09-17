@@ -4,7 +4,6 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using QwenPlayground.App.Mcp;
 using QwenPlayground.Core.Mcp;
 using QwenPlayground.Core.Settings;
 

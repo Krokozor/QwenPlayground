@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using QwenPlayground.App.Desktop;
 using QwenPlayground.App.ViewModels;
+using QwenPlayground.Core.Compaction;
 
 namespace QwenPlayground.App.Views;
 

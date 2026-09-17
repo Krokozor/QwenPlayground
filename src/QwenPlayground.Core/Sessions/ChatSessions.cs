@@ -1,11 +1,12 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Settings;
 
-namespace QwenPlayground.App.ViewModels;
+namespace QwenPlayground.Core.Sessions;
 
 /// <summary>
 /// Жизненный цикл сессий чата (домен, вытащенный из MainViewModel): текущий ID, список

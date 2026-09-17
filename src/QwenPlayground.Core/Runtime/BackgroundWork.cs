@@ -1,7 +1,7 @@
 using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Runtime;
 
-namespace QwenPlayground.App;
+namespace QwenPlayground.Core.Runtime;
 
 /// <summary>
 /// Владелец фоновой работы приложения — мини-аналог BotTaskProcessor из NekoBot,

@@ -1,8 +1,8 @@
 using System.IO;
-using QwenPlayground.App;
+using QwenPlayground.Core.Runtime;
 using QwenPlayground.Core.Heartbeat;
 
-namespace QwenPlayground.App.Tests;
+namespace QwenPlayground.Core.Tests;
 
 /// <summary>
 /// Логика сердцебиения без таймера: Tick()/WakeNow() дёргаются напрямую, часы и все
@@ -37,7 +37,6 @@ public sealed class HeartbeatControllerTests : IDisposable
             setStatus: s => _statuses.Add(s),
             startTurn: startTurn ?? (prompt => { _turns.Add(prompt); return Task.CompletedTask; }),
             flushMemory: () => { _flushCount++; return Task.CompletedTask; },
-            timer: null,
             clock: () => _now,
             background: new BackgroundWork(s => _backgroundErrors.Add(s)));
     }
@@ -174,7 +173,6 @@ public sealed class HeartbeatControllerTests : IDisposable
             setStatus: _ => { },
             startTurn: _ => Task.CompletedTask,
             flushMemory: () => { failures++; return Task.FromException(new IOException("диск полон")); },
-            timer: null,
             clock: () => _now,
             background: new BackgroundWork(s => _backgroundErrors.Add(s)));
 

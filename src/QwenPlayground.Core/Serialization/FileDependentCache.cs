@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace QwenPlayground.App.ViewModels;
+namespace QwenPlayground.Core.Serialization;
 
 /// <summary>
 /// Кэш значения, пересчитываемого только при изменении файлов-зависимостей

@@ -1,8 +1,8 @@
 using System.IO;
-using QwenPlayground.App.ViewModels;
+using QwenPlayground.Core.Serialization;
 using QwenPlayground.Core.SelfBuild;
 
-namespace QwenPlayground.App;
+namespace QwenPlayground.Core.Agent;
 
 /// <summary>
 /// Секция «внешние инструменты» в системном промпте: содержимое external/README.md

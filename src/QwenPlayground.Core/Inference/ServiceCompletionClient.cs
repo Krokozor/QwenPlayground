@@ -2,7 +2,7 @@ using System.Text;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Templates;
 
-namespace QwenPlayground.App;
+namespace QwenPlayground.Core.Inference;
 
 /// <summary>
 /// Изолированные сервисные LLM-вызовы (суммаризация сессий, слои L1/L2/L3, извлечение фактов):

@@ -62,7 +62,7 @@ public partial class MainWindow : Window
                 StartupTrace.Log("MainWindow: ResumePendingChain end");
             };
             timer.Start();
-            if (ViewModels.StateBlockBuilder.LastBuild() is { } last)
+            if (QwenPlayground.Core.MetaInfo.StateBlockBuilder.LastBuild() is { } last)
             {
                 Title = $"QwenPlayground [{last.Id}]";
             }

@@ -1,9 +1,9 @@
 using System.IO;
-using QwenPlayground.App.ViewModels;
+using QwenPlayground.Core.Serialization;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.SelfBuild;
 
-namespace QwenPlayground.App;
+namespace QwenPlayground.Core.Agent;
 
 /// <summary>
 /// Динамическое ЯДРО системного промпта main-агента: идентичность (main-agent.md) +

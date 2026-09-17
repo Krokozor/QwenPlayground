@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace QwenPlayground.App;
+namespace QwenPlayground.Core.Agent;
 
 /// <summary>
 /// «Основной» резидентный агент: постоянная сессия, которая переживает рестарты

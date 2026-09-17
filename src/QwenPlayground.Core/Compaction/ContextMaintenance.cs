@@ -1,4 +1,5 @@
 using System.IO;
+using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
 using QwenPlayground.Core.Crash;
@@ -7,7 +8,7 @@ using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Settings;
 
-namespace QwenPlayground.App.ViewModels;
+namespace QwenPlayground.Core.Compaction;
 
 /// <summary>
 /// Сжатие контекста и обслуживание бюджета (домен, вытащенный из MainViewModel):
