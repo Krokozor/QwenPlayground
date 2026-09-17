@@ -156,7 +156,13 @@ public sealed class TurnPipeline
                 // Nag самопроверки живёт ВНУТРИ state-блока — без блока nag'ать некуда.
                 SanityCheckInterval = stateEnabled ? settings.ResolveSanityCheckInterval(sampler) : 0,
                 ReasoningEffort = ParseEffort(prompt.ReasoningEffort),
-                StateProvider = stateEnabled ? messages => _stateBlocks.Build() : null,
+                // После РЕАЛЬНОГО рендера в модель — сдвиг счётчика показов всплывших памятей
+                // (mem-nag). Превью/подсчёт токенов ходят через PromptPipeline без OnRendered.
+                StateProvider = stateEnabled ? messages => {
+                    var state = _stateBlocks.Build();
+                    _memorySurfacer.OnRendered();
+                    return state;
+                } : null,
                 SystemPromptProvider = _ => _promptAssembler.ResolveSystemPrompt(),
                 ToolExecutor = async (name, args, ctx, ct) => {
                     // Менеджмент памяти сбрасывает mem_nag: модель задела memory_* — значит занималась.

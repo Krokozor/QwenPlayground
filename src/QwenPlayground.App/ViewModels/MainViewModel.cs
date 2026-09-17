@@ -12,9 +12,9 @@ using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
 using QwenPlayground.Core.Crash;
-using QwenPlayground.Core.Heartbeat;
 using QwenPlayground.Core.Mcp;
 using QwenPlayground.Core.Inference;
+using QwenPlayground.Core.Main;
 using QwenPlayground.Core.MetaInfo;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.Probes;
@@ -28,65 +28,22 @@ namespace QwenPlayground.App.ViewModels;
 
 public partial class MainViewModel : ObservableObject {
     private static readonly string SessionsRoot = ChatSessions.Root;
-    // Жизненный цикл сессий (Core): текущая сессия, переключение/создание/удаление,
-    // история + ключи профилей, инвариант «flush драфта старой → restore драфта новой».
-    // Создаётся в ctor (нужен _draft); реакции UI — через событие SessionChanged.
-    private readonly SessionController _sessionController;
-    // Динамический системный промпт main-агента (identity+layers+trajectory), кэш по mtime.
-    private readonly InjectedIdentity _identity = new();
-    private readonly ExternalToolsNote _externalTools = new();
-    private readonly ChatLog _log = new();
+    // Композиционный корень (Core/Main): граф сервисов собирается там, UI — протокол-адаптер
+    // (пузыри, команды, тонкие виды). Хуки UI — через UiHooks в конструкторе.
+    private readonly Main _main;
     // Структурные изменения разговора (компакция/загрузка/откат) сами перестраивают вид.
     private void OnLogChanged() => RebuildMessageViews();
-    // Две сборки: Core (базовые инструменты) + App (UI-инструменты: screenshot, switch_tab).
-    private readonly ToolRegistry _toolRegistry = new(typeof(AgentTool).Assembly, typeof(MainViewModel).Assembly);
-    // Сборка системного промпта и множества тулов (Core): единый источник для запроса и превью.
-    // Кэш промпта, детект KV-rebuild и батчинг staged-деактиваций — внутри модуля.
-    private readonly SystemPromptAssembler _promptAssembler;
     /// <summary>Каталог текущей сессии: у каждой сессии своя папка sessions/&lt;id&gt;/ (как у main-агента).</summary>
-    private string SessionDir() => _sessionController.DirectoryFor(_sessionController.CurrentId);
-    private readonly MemoryLayerStore _layerStore = new();
-    // Оркестрация хода (Core): бюджет, FSM, AgentLoop, профили, отмена, рестарт.
-    // VM — sink событий (пузыри) + решение, куда показать ошибку.
-    private readonly TurnPipeline _turns;
-    // Владелец фоновой работы: «запустил и забыл» с гарантией, что исключение не умрёт в тишине.
-    private readonly BackgroundWork _background;
+    private string SessionDir() => _main.Sessions.DirectoryFor(_main.Sessions.CurrentId);
 
     /// <summary>UI-диспетчер ходов (heartbeat/wake/flush видны списком, не одной строкой).</summary>
     public TurnPanel TurnsPanel { get; private set; } = null!;
-    // Сервисные LLM-вызовы (суммаризация/компакция/конвейер/память): эндпоинт и семплер
-    // вычисляются на каждый вызов из живых настроек (инициализация в конструкторе).
-    private readonly ServiceCompletionClient _serviceLlm;
-    // Сердцебиение: решение «когда и чем будить» — в HeartbeatController (тестируемо),
-    // исполнение хода/flush — здесь.
-    private readonly HeartbeatController _heartbeat;
     // UI-таймеры качают Core-контроллеры (heartbeat, draft) — Core без WPF.
     private System.Windows.Threading.DispatcherTimer _draftTimer;
     private System.Windows.Threading.DispatcherTimer _heartbeatTimer;
-    // Оконный интерактив инструментов (подтверждение shell) поверх FSM.
+    // Оконный интерактив инструментов (подтверждение shell) поверх FSM — провайдеры окон,
+    // поэтому живёт в App (Core не знает про окна).
     private readonly ChatInteraction _interaction;
-    // Жизненный цикл: реестр стартуемых/останавливаемых сервисов.
-    private readonly AppLifecycle _lifecycle;
-    // Драфт окошка ввода: автосохранение в sessions/<id>/draft.txt (переживает обрыв питания).
-    private readonly DraftKeeper _draft;
-    private readonly ChatStateMachine _chatState = new();
-    // Сжатие контекста и бюджет-обслуживание (домен вынесен; FSM-контракт — см. класс).
-    private readonly ContextMaintenance _maintenance;
-    // Live-превью компакции (буфер + троттл + панель) — в Core-модели CompactionPreview.
-    private readonly CompactionPreview _compaction = new();
-    // Свойства сервера (media_marker + n_ctx + последний фактический подсчёт токенов):
-    // кэш GET /props на TTL; счётчик промпта пишется конвейером после /tokenize.
-    private readonly ServerProps _serverProps = new();
-    // Сборка следующего промпта + точный подсчёт токенов (превью, бюджет-гвард, state-блок).
-    private readonly PromptPipeline _pipeline;
-    // Снапшот самосостояния агента для рендера (msg_id/время/контекст/сборка/воспоминания).
-    private readonly StateBlockBuilder _stateBlocks;
-    // Ассоциативная память: всплывшие факты складываются в state-блок, живут до компакции,
-    // дубликаты по id не повторяются; live-реколл во время генерации + наг менеджмента памяти.
-    // Реализация — в Core/Memory/MemorySurfacer (тестируема в isolation).
-    private readonly MemorySurfacer _memorySurfacer = new();
-    // Связи пар воспоминаний (очередь надмоза на слияние + разведённые false-positive).
-    private readonly PairsStore _pairsStore = new(new MemoryStore().Root);
 
     // Flush-векторизация памяти (NekoBot): фоновая до-классификация фактов без слоёв/с устаревшей
     // версией словаря. Троттлинг — раз в минуту, до 2 фактов за проход; в горячем потоке чата не бегает.
@@ -160,10 +117,10 @@ public partial class MainViewModel : ObservableObject {
     }
 
     /// <summary>Чат занят (нельзя принимать новые ходы/ручную компакцию). Вычисляется из FSM.</summary>
-    public bool IsBusy => _chatState.IsBusy;
+    public bool IsBusy => _main.ChatState.IsBusy;
 
     /// <summary>Живое превью компакции (панель, стадии, стриминг токенов).</summary>
-    public CompactionPreview Compaction => _compaction;
+    public CompactionPreview Compaction => _main.Compaction;
 
     public ReasoningEffort ReasoningEffort {
         get => S.ReasoningEffort;
@@ -421,7 +378,7 @@ public partial class MainViewModel : ObservableObject {
     // через контроллер.
 
     /// <summary>main-сессия управляется идентичностью — настройка чата для неё закрыта.</summary>
-    public bool IsMainSession => _sessionController.CurrentId == MainAgent.SessionId;
+    public bool IsMainSession => _main.Sessions.CurrentId == MainAgent.SessionId;
 
     /// <summary>
     /// Редактор статичных профилей чата — ЕДИНСТВЕННОЕ место правки пресетов, живёт во
@@ -437,108 +394,40 @@ public partial class MainViewModel : ObservableObject {
 
     public MainViewModel() {
         StartupTrace.Log("MainViewModel ctor: begin");
-        // Композиционный корень главного чата: граф сервисов собирается здесь (единственное
-        // место, знающее порядок). Цикла pipeline⇄stateBlocks больше нет — кэш серверных
-        // фактов живёт в ServerProps, оба читают его независимо.
-        _log.Changed += OnLogChanged;
-        _background = new BackgroundWork(status => StatusText = status);
-        TurnsPanel = new TurnPanel(_background.Turns);
-        _promptAssembler = new SystemPromptAssembler(
-            () => _sessionController.CurrentId,
-            () => _sessionController.PromptKey,
-            SessionDir,
-            _identity,
-            _externalTools,
-            _toolRegistry);
-
-        _serviceLlm = new ServiceCompletionClient(
-        () => Endpoint,
-        () => BuildOptions(ServiceCompletionClient.MaxTokens));
-        // Доска сообщений state-блока: pull-анонсеры (состояние на момент рендера) +
-        // BoardAnnouncer — дрейн статичной мусорки (push из кода без интерфейса).
-        _stateBlocks = new StateBlockBuilder(
-        _log.AssignPendingIds,
-        () => _log.NextMessageId,
-        () => EffectiveContextSize,
-        _serverProps,
-        () => _log,
-        () => _memorySurfacer.GetSurfacedForStateBlock(),
-        [_memorySurfacer, new BoardAnnouncer()],
-        () => _pairsStore.Pending);
-        _pipeline = new PromptPipeline(
-        () => _log,
-        ResolveSystemPrompt,
-        _toolRegistry,
-        _serverProps,
-        messages => _stateBlocks.Build(),
-        ct => MultimodalContext.BuildAsync(SessionDir(), Endpoint, _serverProps, ct),
-        activeShelves: () => _promptAssembler.EffectiveShelves());
-
-        _maintenance = new ContextMaintenance(
-        _log,
-        _chatState,
-        _compaction,
-        (user, system, onChunk, ct) => _serviceLlm.CompleteStructuredAsync(user, system, onChunk, ct),
-        _layerStore,
-        _memorySurfacer,
-        ct => _pipeline.CountNextTokensAsync(ct),
-        GetEffectiveContextSizeAsync,
-        () => _sessionController.CurrentId,
-        new ContextBackupStore(ChatSessions.Root),
-        new ContextMaintenance.Ui(
-        status => StatusText = status,
-        generating => IsGenerating = generating,
-        SaveCurrent),
-        onCompacted: () =>
-        {
-            _promptAssembler.DeactivateUnusedShelves(_log);
-            RefreshShelfUi(); // меню должно показать снятые полки
-        });
-
-        // Интерактив инструментов (подтверждение shell) — pull-модель: оконные
-        // провайдеры живут в ChatInteraction, Core не знает про окна и FSM.
-        _interaction = new ChatInteraction(_chatState);
-        _interaction.Register();
-
-        // Жизненный цикл: единая точка старта/остановки сервисов (закрытие — LIFO, без бросков).
-        _lifecycle = new AppLifecycle(status => StatusText = status);
-        // Драфт окошка ввода: создаём ДО EnsureMainSession/RestoreLastSession — они идут
-        // через LoadSession, которая пользуется _draft (Flush/Restore). Регистрация здесь,
-        // запуск таймера — в StartAll (в конце конструктора).
-        _draft = new DraftKeeper(
-        () => InputText,
-        text => InputText = text,
-        () => _sessionController.CurrentId,
-        new SessionDraftStore(ChatSessions.Root),
-        () => DraftSaveIntervalSeconds);
-        // Сессии: после драфта (Load пользуется _draft), до EnsureMainSession/RestoreLastSession.
-        _sessionController = new SessionController(_log, _draft, _memorySurfacer);
-        _sessionController.SessionChanged += OnSessionChanged;
-        // Ход: после сессий (пользуется их ключами/каталогом) и maintenance (бюджет-гард).
-        _turns = new TurnPipeline(
-            _log,
-            _chatState,
-            _toolRegistry,
-            _stateBlocks,
-            _maintenance,
-            _serverProps,
-            _sessionController,
-            _promptAssembler,
-            _memorySurfacer,
+        // Композиционный корень (Core/Main): граф сервисов собирается там (единственное
+        // место, знающее порядок). Хуки UI — через UiHooks: фасад не знает про WPF.
+        _main = new Main(new UiHooks(
             status => StatusText = status,
             generating => IsGenerating = generating,
-            () => System.Windows.Application.Current?.Shutdown());
+            () => InputText,
+            text => InputText = text,
+            SaveCurrent,
+            RunHeartbeatTurnAsync,
+            FlushMemoryVectorsAsync,
+            RefreshShelfUi, // меню должно показать снятые полки
+            () => System.Windows.Application.Current?.Shutdown()),
+            typeof(AgentTool).Assembly, // Core: базовые инструменты
+            typeof(MainViewModel).Assembly); // App: UI-инструменты (screenshot, switch_tab)
+        _main.Log.Changed += OnLogChanged;
+        _main.Sessions.SessionChanged += OnSessionChanged;
+        TurnsPanel = new TurnPanel(_main.Background.Turns);
+
+        // Интерактив инструментов (подтверждение shell) — pull-модель: оконные
+        // провайдеры живут в ChatInteraction (App), Core не знает про окна и FSM.
+        _interaction = new ChatInteraction(_main.ChatState);
+        _interaction.Register();
+
         // Таймер — за UI (Core-класс без таймера): интервал перечитывается на каждом
         // тике, поэтому смена в настройках действует без рестарта (как раньше).
-        _draftTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(_draft.IntervalSeconds) };
+        _draftTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(_main.Draft.IntervalSeconds) };
         _draftTimer.Tick += (_, _) =>
         {
-            _draftTimer.Interval = TimeSpan.FromSeconds(_draft.IntervalSeconds);
-            _draft.Tick();
+            _draftTimer.Interval = TimeSpan.FromSeconds(_main.Draft.IntervalSeconds);
+            _main.Draft.Tick();
         };
-        _lifecycle.Register(new DelegateAppService("draft",
+        _main.Lifecycle.Register(new DelegateAppService("draft",
             start: () => _draftTimer.Start(),
-            shutdown: () => { _draftTimer.Stop(); _draft.Flush(); }));
+            shutdown: () => { _draftTimer.Stop(); _main.Draft.Flush(); }));
 
         Messages.CollectionChanged += (_, _) => {
             RerollCommand.NotifyCanExecuteChanged();
@@ -555,14 +444,14 @@ public partial class MainViewModel : ObservableObject {
         RestoreLastSession();
         // Восстановить драфт ТЕКУЩЕЙ сессии (main или последней открытой) в окошко ввода:
         // переживает обрыв питания/крах — набранный промпт возвращается.
-        _draft.Restore();
+        _main.Draft.Restore();
         StartupTrace.Log("MainViewModel ctor: RefreshPromptPreview (startup)");
         RefreshPromptPreview();
 
         // Вкладка «Диагностика»: стекло в состояние FSM, бюджет контекста, сборки, память.
         Diagnostics = new DiagnosticsViewModel(
-        _chatState,
-        () => _serverProps.LastActualPromptTokens(_log),
+        _main.ChatState,
+        () => _main.ServerProps.LastActualPromptTokens(_main.Log),
         () => EffectiveContextSize,
         () => MaxTokens);
 
@@ -627,32 +516,22 @@ public partial class MainViewModel : ObservableObject {
             StartupTrace.Log("MCP: Dispatcher.Invoke returned");
         }, TaskScheduler.Default);
 
-        // Heartbeat: опрос wake/ и расписания. Период опроса фиксированный (20 с),
-        // частота реальных пробуждений — HeartbeatIntervalMinutes; сигналы не ждут расписания.
-        _heartbeat = new HeartbeatController(
-        new WakeSignalStore(),
-        isBusy: () => _chatState.IsBusy,
-        heartbeatEnabled: () => HeartbeatEnabled,
-        heartbeatIntervalMinutes: () => HeartbeatIntervalMinutes,
-        setStatus: status => StatusText = status,
-        startTurn: prompt => RunHeartbeatTurnAsync(prompt),
-        flushMemory: FlushMemoryVectorsAsync,
-        watchdogGuard: WatchdogLauncher.EnsureAlive);
-        // Качание тиков — за UI (паттерн NekoBot: DispatcherTimer UI качает Core-контроллер).
+        // Качание тиков heartbeat — за UI (паттерн NekoBot: DispatcherTimer UI качает
+        // Core-контроллер; сам контроллер собран в Main).
         _heartbeatTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-        _heartbeatTimer.Tick += (_, _) => _heartbeat.Tick();
-        _lifecycle.Register(new DelegateAppService("heartbeat",
+        _heartbeatTimer.Tick += (_, _) => _main.Heartbeat.Tick();
+        _main.Lifecycle.Register(new DelegateAppService("heartbeat",
             start: () => _heartbeatTimer.Start(),
             shutdown: () => _heartbeatTimer.Stop()));
 
         // Настройки: закрытие приложения — единственный синхронный flush (дебаунс не гарантирован).
-        _lifecycle.Register(new DelegateAppService("настройки", shutdown: FlushSettingsSave));
+        _main.Lifecycle.Register(new DelegateAppService("настройки", shutdown: FlushSettingsSave));
         // Настройки, изменённые агентом изнутри (инструмент set_setting): живой экземпляр уже
         // обновлён и записан, остаётся перерисовать биндинг. Событие может прийти из
         // agent-потока → маришализуем на Dispatcher (см. OnSettingsChangedExternally).
         SettingsStore<AppSettings>.Changed += OnSettingsChangedExternally;
         StartupTrace.Log("MainViewModel ctor: lifecycle StartAll");
-        _lifecycle.StartAll();
+        _main.Lifecycle.StartAll();
         StartupTrace.Log("MainViewModel ctor: done");
 
         // Саморебилд индикатор v2
@@ -676,10 +555,10 @@ public partial class MainViewModel : ObservableObject {
     /// <summary>Снимок «что происходило» для записей CrashLog (вызывается синхронно, без блокировок).</summary>
     private string BuildCrashContext() {
         var sb = new StringBuilder();
-        sb.AppendLine($"session: {_sessionController.CurrentId}");
-        sb.AppendLine($"chat FSM: {_chatState.Current}; generating: {IsGenerating}");
+        sb.AppendLine($"session: {_main.Sessions.CurrentId}");
+        sb.AppendLine($"chat FSM: {_main.ChatState.Current}; generating: {IsGenerating}");
         // QwenPlayground.Core.Runtime.TurnState: вложенный класс TurnState хода затеняет имя.
-        var active = _background.Turns.Turns
+        var active = _main.Background.Turns.Turns
             .Where(t => t.State is QwenPlayground.Core.Runtime.TurnState.Queued
                 or QwenPlayground.Core.Runtime.TurnState.Running)
             .ToList();
@@ -703,7 +582,7 @@ public partial class MainViewModel : ObservableObject {
 
     /// <summary>Централизованная остановка сервисов при закрытии (LIFO, ошибки собираются).</summary>
     public List<string> Shutdown() {
-        return _lifecycle.ShutdownAll();
+        return _main.Lifecycle.ShutdownAll();
     }
 
     public void AnnounceRestarts() {
@@ -720,12 +599,12 @@ public partial class MainViewModel : ObservableObject {
             var outcome = entry.Status == "success"
             ? $"[перезапуск] сборка {entry.Id} успешно запущена."
             : BuildRestartFailureMessage(entry);
-            if (_log.Count > 0 && _log[^1].Role == ChatRole.Tool) {
-                _log[^1].Content += "\n" + outcome;
+            if (_main.Log.Count > 0 && _main.Log[^1].Role == ChatRole.Tool) {
+                _main.Log[^1].Content += "\n" + outcome;
             }
 
             else {
-                _log.Add(ChatMessage.Tool(outcome));
+                _main.Log.Add(ChatMessage.Tool(outcome));
             }
         }
 
@@ -750,14 +629,14 @@ public partial class MainViewModel : ObservableObject {
     }
     public void ResumePendingChain() {
         var sw = Stopwatch.StartNew();
-        StartupTrace.Log($"ResumePendingChain: begin (busy={_chatState.IsBusy}, messages={_log.Count}, last={(_log.Count > 0 ? _log[^1].Role.ToString() : "none")})");
+        StartupTrace.Log($"ResumePendingChain: begin (busy={_main.ChatState.IsBusy}, messages={_main.Log.Count}, last={(_main.Log.Count > 0 ? _main.Log[^1].Role.ToString() : "none")})");
         AnnounceRestarts();
         // Гвард по FSM, а не по IsGenerating: при Compacting/Awaiting* второй ход
         // бросил бы InvalidOperationException внутри Transition.
 
-        if (!_chatState.IsBusy && _log.Count > 0 && _log[^1].Role == ChatRole.Tool) {
+        if (!_main.ChatState.IsBusy && _main.Log.Count > 0 && _main.Log[^1].Role == ChatRole.Tool) {
             StartupTrace.Log("ResumePendingChain: starting tool-chain continuation");
-            _background.Queue("продолжение цепочки tool", () => GenerateAsync());
+            _main.Background.Queue("продолжение цепочки tool", () => GenerateAsync());
         }
         StartupTrace.Log($"ResumePendingChain: done ({sw.ElapsedMilliseconds}ms)");
     }
@@ -769,7 +648,7 @@ public partial class MainViewModel : ObservableObject {
     /// </summary>
     private async Task<string> RunSummarizationCallAsync(
     string userContent, string? system, Action<string>? onToken, CancellationToken cancellationToken) {
-        var result = await _serviceLlm.CompleteStructuredAsync(userContent, system, onToken, cancellationToken);
+        var result = await _main.ServiceLlm.CompleteStructuredAsync(userContent, system, onToken, cancellationToken);
         return result ?? string.Empty;
     }
 
@@ -779,7 +658,7 @@ public partial class MainViewModel : ObservableObject {
     /// обновление списка сессий (вид).
     /// </summary>
     private void EnsureMainSession() {
-        _sessionController.EnsureMain();
+        _main.Sessions.EnsureMain();
         RefreshSessions();
     }
 
@@ -789,7 +668,7 @@ public partial class MainViewModel : ObservableObject {
     /// Ошибки глотаются — не критичный путь; следующее сердцебиение повторит попытку.
     /// </summary>
     private async Task FlushMemoryVectorsAsync() {
-        if (!S.MemoryEnabled || _memoryFlushInFlight || _chatState.IsBusy) 
+        if (!S.MemoryEnabled || _memoryFlushInFlight || _main.ChatState.IsBusy) 
             return;
         
         if (DateTime.UtcNow - _lastMemoryFlushAt < MemoryFlushInterval) 
@@ -800,7 +679,7 @@ public partial class MainViewModel : ObservableObject {
 
         try {
             var endpoint = CompanionEndpoint;
-            var token = _turns.ActiveToken;
+            var token = _main.Turns.ActiveToken;
             var store = new MemoryStore();
             var processed = await MemoryClassifier.FlushAsync(store, endpoint, AppSettings.Get().MemoryFlushBudget, token);
 
@@ -811,7 +690,7 @@ public partial class MainViewModel : ObservableObject {
             else {
                 // Все факты с векторами — надмозг переключается на поиск дубликатов.
                 var scan = await MemorySimilarity.ScanPassAsync(
-                store, _pairsStore, endpoint, AppSettings.Get().MemoryScanProbeBudget,
+                store, _main.PairsStore, endpoint, AppSettings.Get().MemoryScanProbeBudget,
                 (prompt, _, _, ct) => LlmProbeClient.ProbeAsync(endpoint, prompt, nProbs: 20, ct),
                 token);
 
@@ -842,12 +721,12 @@ public partial class MainViewModel : ObservableObject {
 
     /// <summary>Ручной wake (кнопка): если есть сигнал — обработать его, иначе обычный heartbeat.</summary>
     [RelayCommand(CanExecute = nameof(CanInteract))]
-    private void WakeNow() => _heartbeat.WakeNow();
+    private void WakeNow() => _main.Heartbeat.WakeNow();
 
     /// <summary>Ход main-агента по инициативе приложения: всегда агентный режим (иначе бессмысленно).</summary>
     private async Task RunHeartbeatTurnAsync(string prompt) {
         var userMessage = ChatMessage.User(prompt);
-        _log.Add(userMessage);
+        _main.Log.Add(userMessage);
         Messages.Add(MessageViewModel.FromMessage("user", userMessage));
         await GenerateAsync();
         SaveCurrent();
@@ -855,10 +734,10 @@ public partial class MainViewModel : ObservableObject {
 
     partial void OnSelectedSessionChanged(SessionInfo? value) {
         OnPropertyChanged(nameof(CanDeleteSelectedSession));
-        if (value is null || value.Id == _sessionController.CurrentId || IsGenerating) 
+        if (value is null || value.Id == _main.Sessions.CurrentId || IsGenerating) 
             return;
         
-        if (_sessionController.Load(value.Id))
+        if (_main.Sessions.Load(value.Id))
             StatusText = string.Empty;
         // Реакции вида (список/превью/полки) — в OnSessionChanged (событие контроллера).
     }
@@ -868,11 +747,11 @@ public partial class MainViewModel : ObservableObject {
         if (IsGenerating) 
             return;        
 
-        if (_log.Count > 0) 
+        if (_main.Log.Count > 0) 
             SaveCurrent();        
 
-        _log.Clear();
-        _sessionController.StartNew();
+        _main.Log.Clear();
+        _main.Sessions.StartNew();
         // Реакции вида (список/выбор/превью/полки) — в OnSessionChanged (событие контроллера).
     }    
     private CancellationTokenSource? _settingsSaveDebounce;
@@ -885,7 +764,7 @@ public partial class MainViewModel : ObservableObject {
         _settingsSaveDebounce?.Dispose();
         _settingsSaveDebounce = new CancellationTokenSource();
         var token = _settingsSaveDebounce.Token;
-        _background.Queue("сохранение настроек", async () => {
+        _main.Background.Queue("сохранение настроек", async () => {
             await Task.Delay(800, token);
             AppSettings.Save();
         });
@@ -941,7 +820,7 @@ public partial class MainViewModel : ObservableObject {
         if (confirm.ShowDialog() != true)
             return;
 
-        _sessionController.Delete(SelectedSession.Id);
+        _main.Sessions.Delete(SelectedSession.Id);
         // Реакции вида (список/превью/полки) — в OnSessionChanged (событие контроллера).
     }
 
@@ -1034,7 +913,7 @@ public partial class MainViewModel : ObservableObject {
     /// (Core); здесь только обновление меню полок (UI-состояние после каждого запроса).
     /// </summary>
     private string? ResolveSystemPrompt() {
-        var prompt = _promptAssembler.ResolveSystemPrompt();
+        var prompt = _main.PromptAssembler.ResolveSystemPrompt();
         RefreshShelfUi(); // меню подхватывает изменения (в т.ч. тулами агента в этом же запросе)
         return prompt;
     }
@@ -1046,7 +925,7 @@ public partial class MainViewModel : ObservableObject {
     {
         var manager = McpService.Instance;
         if (manager is null) return;
-        var (registered, warnings) = McpToolRegistrar.RegisterAll(_toolRegistry, manager);
+        var (registered, warnings) = McpToolRegistrar.RegisterAll(_main.Tools, manager);
         System.Diagnostics.Debug.WriteLine($"[MCP] Registered {registered} tools.");
         foreach (var w in warnings)
             System.Diagnostics.Debug.WriteLine($"[MCP] WARNING: {w}");
@@ -1066,12 +945,12 @@ public partial class MainViewModel : ObservableObject {
             OrderedKeys(profiles.Samplers.Keys),
             OrderedKeys(profiles.Prompts.Keys),
             OrderedKeys(profiles.StateBlocks.Keys),
-            _sessionController.SamplerKey, _sessionController.PromptKey, _sessionController.StateBlockKey)
+            _main.Sessions.SamplerKey, _main.Sessions.PromptKey, _main.Sessions.StateBlockKey)
         { Owner = System.Windows.Application.Current.MainWindow };
         // Пресеты редактируются в ЕДИНСТВЕННОМ месте — вкладка «Настройки»; диалог закрываем.
         dialog.GoToSettings = () => SelectedTabIndex = SettingsTabIndex;
         if (dialog.ShowDialog() == true) {
-            _sessionController.ApplyProfileKeys(
+            _main.Sessions.ApplyProfileKeys(
                 dialog.SelectedSamplerKey, dialog.SelectedPromptKey, dialog.SelectedStateBlockKey);
             RefreshPromptPreview();
             StatusText = "Настройка чата применена: действует со следующего хода.";
@@ -1086,22 +965,22 @@ public partial class MainViewModel : ObservableObject {
     /// SessionController; реакции вида — в OnSessionChanged.
     /// </summary>
     private void RestoreLastSession() {
-        _sessionController.RestoreLast();
+        _main.Sessions.RestoreLast();
     }
 
     public void SaveCurrent() {
-        _sessionController.SaveCurrent();
+        _main.Sessions.SaveCurrent();
         RefreshSessions(); // заголовок/время в списке могли измениться
     }
 
     private void RefreshSessions() {
-        _sessionController.RefreshList();
+        _main.Sessions.RefreshList();
         Sessions.Clear();
-        foreach (var info in _sessionController.List) {
+        foreach (var info in _main.Sessions.List) {
             Sessions.Add(info);
         }
 
-        SelectedSession = Sessions.FirstOrDefault(s => s.Id == _sessionController.CurrentId);
+        SelectedSession = Sessions.FirstOrDefault(s => s.Id == _main.Sessions.CurrentId);
     }
 
     /// <summary>
@@ -1117,11 +996,11 @@ public partial class MainViewModel : ObservableObject {
 
     private void RebuildMessageViews() {
         var sw = Stopwatch.StartNew();
-        var count = _log.Count;
+        var count = _main.Log.Count;
         var sessionDir = SessionDir();
         Messages.Clear();
         var added = 0;
-        foreach (var message in _log) {
+        foreach (var message in _main.Log) {
             var view = MessageViewModel.FromMessage(RoleName(message), message);
             view.LoadArtifacts(sessionDir);
             Messages.Add(view);
@@ -1140,9 +1019,9 @@ public partial class MainViewModel : ObservableObject {
         InputText = string.Empty;
         // Текст отправлен (стал сообщением) — драфт удаляем, чтобы не восстанавливать
         // отправленное при следующем старте.
-        _draft.ClearOnSend();
+        _main.Draft.ClearOnSend();
         var userMessage = ChatMessage.User(text);
-        _log.Add(userMessage); // ID присваивается здесь же — до копирования вложений
+        _main.Log.Add(userMessage); // ID присваивается здесь же — до копирования вложений
         var attachments = PendingAttachments.ToList();
         PendingAttachments.Clear();
         var metaStore = new MessageMetaStore(SessionDir());
@@ -1195,14 +1074,14 @@ public partial class MainViewModel : ObservableObject {
     private bool CanSend() => !IsBusy && (InputText.Trim().Length > 0 || PendingAttachments.Count > 0) && Endpoint.Trim().Length > 0;
 
     [RelayCommand(CanExecute = nameof(IsGenerating))]
-    private void Cancel() => _turns.Cancel();
+    private void Cancel() => _main.Turns.Cancel();
 
     /// <summary>
     /// Очистка текущего разговора — программный доступ (Harness). UI-кнопка «Очистить»
     /// убрана (2026-09-02): сценарий покрывает «откат» первого сообщения.
     /// </summary>
     public void Clear() {
-        _log.Clear();
+        _main.Log.Clear();
         StatusText = string.Empty;
         SaveCurrent();
     }
@@ -1221,7 +1100,7 @@ public partial class MainViewModel : ObservableObject {
             Messages.RemoveAt(Messages.Count - 1);
         }
 
-        _log.RemoveFrom(index);
+        _main.Log.RemoveFrom(index);
         SaveCurrent();
 
     }
@@ -1384,60 +1263,28 @@ public partial class MainViewModel : ObservableObject {
 
     /// <summary>Ручная компакция из UI.</summary>
     [RelayCommand(CanExecute = nameof(CanInteract))]
-    private async Task CompactAsync() => await _maintenance.CompactFromUiAsync();
+    private async Task CompactAsync() => await _main.Maintenance.CompactFromUiAsync();
 
     /// <summary>Скрыть панель live-превью сжатия («×» на панели).</summary>
     [RelayCommand]
-    private void HideCompactionPanel() => _compaction.Hide();
+    private void HideCompactionPanel() => _main.Compaction.Hide();
 
     /// <summary>Открыть панель сжатия из тулбара (кнопка активна, когда в панели есть что показывать).</summary>
     [RelayCommand]
-    private void ShowCompactionPanel() => _compaction.Open();
+    private void ShowCompactionPanel() => _main.Compaction.Open();
     private bool CanInteract() => !IsBusy;
-    private GenerationOptions BuildOptions(int? maxTokensOverride = null) =>
-    S.ToGenerationOptions(maxTokensOverride);
-    /// <summary>
-    /// Опции для сервисных вызовов (суммаризация, слои L1/L2/L3, извлечение фактов).
-    /// Макс. бюджет генерации — большой: резюме может быть небольшим, но размышления о нём
-    /// способны съесть десятки тысяч токенов, и мы не должны обрезать модель на середине мысли
-    /// (иначе submit_result никогда не будет вызван). ReasoningEffort.Medium (без инструкции)
-    /// задаётся на уровне рендера шаблона (StructuredCompletion.Render), здесь только бюджет.
-    /// </summary>
-    private GenerationOptions BuildServiceOptions() => BuildOptions(ServiceMaxTokens);
-    /// <summary>Потолок генерации одного сервисного вызова — ждём максимум (весь остаток контекста на размышления).</summary>
-    private const int ServiceMaxTokens = 60000;
-    /// <summary>
-    /// State-блок для модели (сборка — в <see cref="StateBlockBuilder"/>): после реального
-    /// рендера счётчик показов всплывших памятей сдвигается.
-    /// </summary>
-    private StateBlock BuildStateBlock(IReadOnlyList<ChatMessage> conversation) {
-        var state = _stateBlocks.Build();
-        _memorySurfacer.OnRendered();
-        return state;
-    }
-    /// <summary>
-    /// Свойства сервера (media_marker + n_ctx) — кэш в <see cref="ServerProps"/> на TTL.
-    /// Endpoint передаётся на каждый вызов: пользователь может его сменить.
-    /// </summary>
-    private Task FetchServerPropsAsync(CancellationToken ct = default) =>
-    _serverProps.FetchAsync(Endpoint, ct);
-    /// <summary>
-    /// <summary>Однострочное содержимое для state-блока: новые строки → пробелы, обрезка.</summary>
-    private static string ToSingleLine(string text, int maxLength) {
-        var oneLine = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ');
-        return oneLine.Length <= maxLength ? oneLine : oneLine[..maxLength] + "…";
-    }
+
     /// <summary>
     /// Эффективный размер окна: реальный n_ctx сервера (если известен), иначе настроенный
     /// ContextSize. Для проверки «влезет ли» сравниваем именно с ним — это то, что реально
     /// спрашивает сервер.
     /// </summary>
-    private int EffectiveContextSize => Math.Min(ContextSize, _serverProps.NContext ?? ContextSize);
+    private int EffectiveContextSize => Math.Min(ContextSize, _main.ServerProps.NContext ?? ContextSize);
     private int _previewRenderCount;
     private void RefreshPromptPreview() {
         var sw = Stopwatch.StartNew();
         try {
-            var preview = _pipeline.RenderForPreview();
+            var preview = _main.Pipeline.RenderForPreview();
             PromptPreview = preview.Length == 0 ? "(пусто)" : preview;
             _previewRenderCount++;
             if (_previewRenderCount <= 10 || _previewRenderCount % 50 == 0 || sw.ElapsedMilliseconds > 500) {
@@ -1451,20 +1298,15 @@ public partial class MainViewModel : ObservableObject {
     }
     private Task GenerateAsync(bool continueLastAssistant = false) =>
     GenerateCoreAsync(continueLastAssistant);
-    /// <summary>Реальный n_ctx сервера (кэш), иначе настроенный ContextSize.</summary>
-    private async Task<int> GetEffectiveContextSizeAsync() {
-        await FetchServerPropsAsync();
-        return EffectiveContextSize;
-    }
     /// <summary>
     /// Ход: доменная оркестрация (бюджет, FSM, AgentLoop, профили, отмена, рестарт) — в
     /// TurnPipeline; здесь — только состояние вида (пузыри) и решение, куда показать ошибку.
     /// </summary>
     private async Task GenerateCoreAsync(bool continueLastAssistant) {
         var agentic = S.ProjectRoot.Trim().Length > 0;
-        var continued = continueLastAssistant && _log.Count > 0 &&
-        _log[^1].Role == ChatRole.Assistant
-        ? _log[^1]
+        var continued = continueLastAssistant && _main.Log.Count > 0 &&
+        _main.Log[^1].Role == ChatRole.Assistant
+        ? _main.Log[^1]
         : null;
         // Состояние одного хода: локальные мутации обработчиков событий собраны вместе.
         var turn = new TurnState { Continued = continued, Agentic = agentic };
@@ -1472,7 +1314,7 @@ public partial class MainViewModel : ObservableObject {
             turn.CurrentAssistant = Messages[^1];
             turn.Raw.Append(continued.ToRawOutput());
         }
-        var outcome = await _turns.RunTurnAsync(continueLastAssistant, e => DispatchEvent(turn, e));
+        var outcome = await _main.Turns.RunTurnAsync(continueLastAssistant, e => DispatchEvent(turn, e));
         if (outcome.BudgetFailed) {
             // Бюджет не прошёл — статус и сохранение истории уже сделаны пайплайном.
             return;
@@ -1537,7 +1379,7 @@ public partial class MainViewModel : ObservableObject {
     private void OnToken(TurnState turn, string text) {
         if (turn.CurrentAssistant is null) {
             // Новый стрим: сброс live-реколл окна.
-            _memorySurfacer.ResetLiveWindow();
+            _main.MemorySurfacer.ResetLiveWindow();
             turn.CurrentAssistant = AddAssistantView();
             turn.CurrentAssistant.BeginStreaming(turn.Raw.ToString());
             turn.StreamStarted = true;
@@ -1550,9 +1392,9 @@ public partial class MainViewModel : ObservableObject {
         }
         turn.Raw.Append(text);
         turn.CurrentAssistant.AppendStreamChunk(text);
-        _memorySurfacer.MaybeFireLiveRecall(turn.Agentic, text, turn.Raw, turn.Continued is not null,
-        _log, _sessionController.CurrentId == MainAgent.SessionId,
-        CompanionEndpoint, _turns.ActiveToken);
+        _main.MemorySurfacer.MaybeFireLiveRecall(turn.Agentic, text, turn.Raw, turn.Continued is not null,
+        _main.Log, _main.Sessions.CurrentId == MainAgent.SessionId,
+        CompanionEndpoint, _main.Turns.ActiveToken);
     }
     private void OnAssistantMessage(TurnState turn, ChatMessage message) {
         turn.CurrentAssistant ??= AddAssistantView();
@@ -1566,12 +1408,12 @@ public partial class MainViewModel : ObservableObject {
         turn.Raw.Clear();
         // Ассоциативный реколл: факты подтягиваются между итерациями, фоном на компаньон-модели.
         if (turn.Agentic) {
-            var conversation = _log;
+            var conversation = _main.Log;
             var companion = CompanionEndpoint;
-            var token = _turns.ActiveToken;
-            _background.Queue("реколл памяти", () =>
-            _memorySurfacer.RecallAfterTurnAsync(
-            conversation, _sessionController.CurrentId == MainAgent.SessionId, companion, token));
+            var token = _main.Turns.ActiveToken;
+            _main.Background.Queue("реколл памяти", () =>
+            _main.MemorySurfacer.RecallAfterTurnAsync(
+            conversation, _main.Sessions.CurrentId == MainAgent.SessionId, companion, token));
         }
     }
     private void OnToolStarted(TurnState turn, string name, JsonObject arguments) {
@@ -1607,11 +1449,11 @@ public partial class MainViewModel : ObservableObject {
             continued.Generation = null;
             currentAssistant.ApplyParsed(continued);
         }
-        else if (_log.Count > 0 && _log[^1].Role == ChatRole.Assistant) {
-            currentAssistant.Source = _log[^1];
+        else if (_main.Log.Count > 0 && _main.Log[^1].Role == ChatRole.Assistant) {
+            currentAssistant.Source = _main.Log[^1];
         }
         else {
-            _log.Add(partial);
+            _main.Log.Add(partial);
             currentAssistant.ApplyParsed(partial);
         }
     }

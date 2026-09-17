@@ -334,6 +334,30 @@ AgentLoop, profiles, restart) с событиями; VM остаётся про�
 SessionController/assembler'ами; VM остаётся протокол-адаптером. Этап 3 —
 ShelfTools→событие + ARCHITECTURE.md.
 
+### 2026-09-17 (51) — Этап 2, модуль 4: фасад Main (Core/Main) — композиционный корень
+- **`Main`** (Core/Main, новый) — композиционный корень main-агента (паттерн NekoBot):
+  владеет ВСЕМ графом сервисов и знает порядок сборки (log, tools, identity,
+  externalTools, layerStore — приватные; Log/ChatState/Tools/ServerProps/Compaction/
+  MemorySurfacer/PairsStore/Background/ServiceLlm/PromptAssembler/StateBlocks/Pipeline/
+  Maintenance/Lifecycle/Draft/Sessions/Turns/Heartbeat — публичные). UI-реакции —
+  через `UiHooks` (статус, генерация, драфт-окно, heartbeat-ход, flush памяти,
+  меню полок, shutdown): Core не знает про WPF. Конструктор ничего не стартует
+  (StartAll — за UI, после регистрации UI-сервисов) и не грузит сессии (за адаптером).
+- **Фикс регрессии модуля 3**: StateProvider хода терял `_memorySurfacer.OnRendered()`
+  (счётчик mem-nag'а) при переносе в TurnPipeline — восстановлено в пайплайне
+  (Build + OnRendered; превью/подсчёт токенов через PromptPipeline — без OnRendered).
+- **MainViewModel** — конструктор: ~150 строк графа → создание `Main` + подписки +
+  UI-таймеры + регистрация UI-сервисов. Поля-сервисы (17 шт.) → `_main.X`; удалены
+  мёртвые методы (BuildOptions/BuildServiceOptions/ServiceMaxTokens, BuildStateBlock,
+  FetchServerPropsAsync, GetEffectiveContextSizeAsync, ToSingleLine,
+  ResolveSystemPrompt-обёртка). VM: 1627 → 1469 строк. Осталось в VM: виды
+  (коллекции пузырей, тонкие виды настроек), команды, TurnState/DispatchEvent,
+  ChatInteraction (окна), MCP-регистрация (Dispatcher), UI-таймеры.
+- Сборка 20260917-123027 success (374 теста зелёные), приложение проверено живым
+  (старт на новой композиции: сессия восстановлена, ход идёт через Main → TurnPipeline).
+**Дальше**: этап 3 — утечка ShelfTools→DesktopOverlay.Hide() через событие,
+обновить ARCHITECTURE.md под новую карту слоёв (Main как композиционный корень).
+
 ### 2026-09-16 (46) — Полки в UI: кнопка 🗄 + меню со статусами on/pending/off
 Запрос владельца: включить нужные группы инструментов заранее, до первого промпта — тем же
 механизмом, что у тулов агента (вкл — сразу, выкл — при следующем удобном случае). По
