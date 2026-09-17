@@ -65,6 +65,60 @@ public sealed class CSharpReferenceReportToolTests
     }
 
     [Fact]
+    public async Task Types_XamlElementTagCountsAsReference()
+    {
+        // BoolToVisibilityConverter живёт ТОЛЬКО в XAML (<views:BoolToVisibilityConverter/>) —
+        // C#-ссылок нет, XAML-индекс должен дать refs > 0 с разбивкой в note.
+        var tool = new CSharpReferenceReportTool
+        {
+            Mode = "types",
+            File = "src/QwenPlayground.App/Views/DiagnosticsConverters.cs",
+        };
+        var result = await tool.ExecuteAsync(TestContext(), CancellationToken.None);
+
+        Assert.DoesNotContain("not found", result);
+        // Строка данных (а не заголовок, где имя встречается в file=).
+        var line = result.Split('\n')
+            .First(l => l.Contains("BoolToVisibilityConverter") && int.TryParse(l[..4].Trim(), out _));
+        Assert.True(int.Parse(line[..4].Trim()) > 0, $"ожидается refs > 0, строка: {line}");
+        Assert.Contains("xaml:", result);
+    }
+
+    [Fact]
+    public async Task Members_XamlBindingCountsAsReference()
+    {
+        // DiagnosticsViewModel мелкий и весь прикручен к DiagnosticsView.xaml биндингами.
+        var tool = new CSharpReferenceReportTool { Type = "DiagnosticsViewModel" };
+        var result = await tool.ExecuteAsync(TestContext(), CancellationToken.None);
+
+        Assert.DoesNotContain("not found", result);
+        Assert.Contains("xaml:", result); // хотя бы один член живёт биндингом
+    }
+
+    [Fact]
+    public async Task Members_AccessorsAndBackingFieldFolded()
+    {
+        var tool = new CSharpReferenceReportTool { Type = "DiagnosticsViewModel" };
+        var result = await tool.ExecuteAsync(TestContext(), CancellationToken.None);
+
+        Assert.DoesNotContain("k__BackingField", result);
+        // Аксессоры не строчатся отдельно: get_X встречается только как часть note/first use.
+        var accessorLines = result.Split('\n')
+            .Where(l => l.Length > 5 && int.TryParse(l[..4].Trim(), out _))
+            .Where(l => l.Contains("get_") || l.Contains("set_"));
+        Assert.Empty(accessorLines);
+    }
+
+    [Fact]
+    public async Task Summary_ContainsDeadRatio()
+    {
+        var tool = new CSharpReferenceReportTool { Type = "QwenChatTemplate" };
+        var result = await tool.ExecuteAsync(TestContext(), CancellationToken.None);
+
+        Assert.Contains("dead ratio:", result);
+    }
+
+    [Fact]
     public async Task SaveDetail_WritesFullReportFile()
     {
         var file = Path.Combine(SelfBuildPaths.WorkspaceRoot, "reports", "reference_report_ShelfState.md");

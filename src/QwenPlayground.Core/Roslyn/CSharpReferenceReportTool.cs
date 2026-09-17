@@ -12,22 +12,30 @@ namespace QwenPlayground.Core.Roslyn;
 
 /// <summary>
 /// Пакетный репорт по счётчикам ссылок (диагностика здоровья кода) — VS CodeLens,
-/// но одним вызовом вместо N:
+/// но одним вызовом вместо N, с фильтрами по вкусу:
 /// - members-режим: счётчик ссылок на каждого члена типа (мёртвые API, одно-ссыльные);
 /// - types-режим: счётчик ссылок на каждый тип namespace/солюшена («сложный класс,
 ///   а ссылок один»).
-/// Счётчик исключает саму декларацию. 0 ссылок — кандидат, не доказательство:
-/// XAML-биндинги кросс-чекаются (метка [XAML:]), [Tool]-члены помечаются «жив через
-/// рефлексию», делегатная индирекция (f = x => M(x)) не видна — честный кавек в футере.
+/// Счётчик = C#-ссылки (без декларации, как в VS CodeLens) + XAML-ссылки (биндинги,
+/// теги элементов — для WPF-приложения это реальные ссылки; разбивка в note).
+/// Шум свёрнут: аксессоры (get_/set_/add_/remove_) и бэкинг-поля не строчатся
+/// отдельно — свойство/событие покрывает их. 0 ссылок = кандидат, не доказательство:
+/// [Tool] помечается «via reflection», тест-типы — «test framework», делегатная
+/// индирекция (f = x => M(x)) и строковые lookup'ы не видны — честный кавек в футере.
 /// </summary>
 [Tool("csharp_reference_report",
     "Batch reference-count report (code-health diagnostics), like VS CodeLens but in one call. " +
     "Modes: 'members' (default) — per-member reference counts of a type (find dead API with 0 refs, " +
     "single-use abstractions with 1 ref); 'types' — per-type reference counts for a namespace or the " +
-    "whole solution (find heavy classes referenced by one element). Count excludes the declaration. " +
-    "0 refs = candidate, not proof: XAML bindings are cross-checked and marked [XAML:], [Tool] members " +
-    "are marked 'via reflection', delegate indirection (f = x => M(x)) is not visible. " +
-    "Use maxRefs:0 for dead-only, maxRefs:1 for dead+near-dead, minRefs:N for hotspots. " +
+    "whole solution (find heavy classes referenced by one element). " +
+    "Refs = C# references (excluding the declaration, like VS CodeLens) + XAML references " +
+    "(bindings and element tags — real references for a WPF app; breakdown in the note column). " +
+    "Accessors and backing fields are folded into their property/event (not listed separately). " +
+    "0 refs = candidate, not proof: [Tool] members are marked 'via reflection', test-project types " +
+    "'test framework', delegate indirection (f = x => M(x)) and string-based lookups are not visible. " +
+    "Filters: maxRefs (0 = dead only, 1 = dead + single-use), minRefs (hotspots), access, kinds, " +
+    "file (types mode: only types declared in this file), limit. " +
+    "deep (types mode, SLOW): computes per-type dead-member ratio for the rows shown. " +
     "saveDetail writes the full unlimited report to reports/reference_report_<type>.md and returns " +
     "summary + path (attach the file to a message to read it).", ToolGroup.CSharp)]
 public sealed class CSharpReferenceReportTool : AgentTool
@@ -42,6 +50,9 @@ public sealed class CSharpReferenceReportTool : AgentTool
 
     [ToolParameter("Namespace for 'types' mode (default: all types of the solution)", Required = false)]
     public string? Namespace { get; set; }
+
+    [ToolParameter("File filter for 'types' mode: only types declared in this file (relative to workspace root)", Required = false)]
+    public string? File { get; set; }
 
     [ToolParameter("Access filter: 'all' (default, includes private) or 'public'", Required = false)]
     public string Access { get; set; } = "all";
@@ -61,23 +72,29 @@ public sealed class CSharpReferenceReportTool : AgentTool
     [ToolParameter("Write the full (unlimited) report to reports/reference_report_<type>.md, return summary + path", Required = false)]
     public bool SaveDetail { get; set; }
 
+    [ToolParameter("'types' mode only, SLOW: compute per-type dead-member ratio (0-refs members / all members) for the rows shown", Required = false)]
+    public bool Deep { get; set; }
+
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
         var solution = await Service.GetSolutionAsync(cancellationToken);
+        // XAML-индекс строится ОДИН раз на прогон: имя → (сколько строк XAML под src/
+        // его упоминают, первое совпадение file:line).
+        var xamlIndex = await BuildXamlIndexAsync(cancellationToken);
         if (Mode.Trim().Equals("types", StringComparison.OrdinalIgnoreCase))
         {
-            return await TypesModeAsync(solution, cancellationToken);
+            return await TypesModeAsync(solution, xamlIndex, cancellationToken);
         }
         if (string.IsNullOrWhiteSpace(Type))
         {
             return "Error: 'type' is required in members mode.";
         }
-        return await MembersModeAsync(solution, Type.Trim(), cancellationToken);
+        return await MembersModeAsync(solution, Type.Trim(), xamlIndex, cancellationToken);
     }
 
     // ─────────────────────────── members ───────────────────────────
 
-    private async Task<string> MembersModeAsync(Solution solution, string typeName, CancellationToken ct)
+    private async Task<string> MembersModeAsync(Solution solution, string typeName, IReadOnlyDictionary<string, XamlUse> xaml, CancellationToken ct)
     {
         var (type, error) = await FindTypeAsync(solution, typeName, ct);
         if (error is not null)
@@ -91,85 +108,140 @@ public sealed class CSharpReferenceReportTool : AgentTool
 
         var rows = new List<ReportRow>();
         foreach (var member in type.GetMembers()
-                     .Where(m => Access.Trim().Equals("public", StringComparison.OrdinalIgnoreCase)
-                                 ? m.DeclaredAccessibility == Accessibility.Public
-                                 : true)
-                     .Where(m => MatchesKind(m, Kinds)))
+                      .Where(m => Access.Trim().Equals("public", StringComparison.OrdinalIgnoreCase)
+                                  ? m.DeclaredAccessibility == Accessibility.Public
+                                  : true)
+                      .Where(m => MatchesKind(m, Kinds))
+                      .Where(NotNoise))
         {
             var locations = await FindSourceLocationsAsync(member, solution, ct);
+            var xamlUse = xaml.TryGetValue(member.Name, out var x) ? x : default;
             var row = new ReportRow
             {
                 Name = member.Name,
                 Kind = KindName(member),
-                // FindReferencesAsync в этой версии Roslyn возвращает только
-                // ИСПОЛЬЗОВАНИЯ (декларация в locations не входит) — счётчик
-                // «без декларации» получается по построению, как в VS CodeLens.
-                Refs = locations.Count,
-                FirstUse = FormatLocation(locations.FirstOrDefault()),
+                // C#-ссылки (без декларации) + XAML-ссылки: для WPF биндинг — реальная ссылка.
+                Refs = locations.Count + xamlUse.Count,
+                FirstUse = locations.Count > 0
+                    ? FormatLocation(locations.FirstOrDefault())
+                    : (xamlUse.Count > 0 ? xamlUse.First : "—"),
                 Note = BuildNote(member),
             };
-            // XAML-кроссчек для нулей: WPF-биндинг не виден Roslyn как C#-ссылка.
-            if (row.Refs == 0)
+            if (xamlUse.Count > 0)
             {
-                var xaml = await FindXamlUseAsync(row.Name, ct);
-                if (xaml is not null)
-                {
-                    row.Note = string.Join("; ", new[] { row.Note, $"[XAML: {xaml}]" }.Where(s => s is not null));
-                }
+                row.Note = AppendNote(row.Note, $"xaml: {xamlUse.Count} ({xamlUse.First})");
             }
             rows.Add(row);
         }
 
         return FormatReport(
-            $"{typeName} — {rows.Count} members (access={Access}, kinds={Kinds})",
+            $"{typeName} — {rows.Count} members (access={Access}, kinds={Kinds}, accessors/backing fields folded)",
             rows,
             typeName,
             SaveDetail);
     }
 
-    private static bool MatchesKind(ISymbol member, string kinds)
-    {
-        return kinds.Trim().ToLowerInvariant() switch
-        {
-            "all" => member is IMethodSymbol or IPropertySymbol or IFieldSymbol or IEventSymbol,
-            "methods" => member is IMethodSymbol,
-            "properties" => member is IPropertySymbol,
-            "fields" => member is IFieldSymbol,
-            "events" => member is IEventSymbol,
-            _ => true,
-        };
-    }
-
     // ─────────────────────────── types ───────────────────────────
 
-    private async Task<string> TypesModeAsync(Solution solution, CancellationToken ct)
+    private async Task<string> TypesModeAsync(Solution solution, IReadOnlyDictionary<string, XamlUse> xaml, CancellationToken ct)
     {
         var rows = new List<ReportRow>();
+        var typeByKey = new Dictionary<string, ITypeSymbol>();
         foreach (var project in solution.Projects)
         {
             var allTypes = await CollectTypesAsync(project, ct);
             var types = allTypes
                 .Where(t => Namespace is null || t.ContainingNamespace.ToString() == Namespace)
+                .Where(t => File is null || SameFile(t, File))
                 .ToList();
             foreach (var type in types)
             {
                 var locations = await FindSourceLocationsAsync(type, solution, ct);
-                rows.Add(new ReportRow
+                var xamlUse = xaml.TryGetValue(type.Name, out var x) ? x : default;
+                var row = new ReportRow
                 {
                     Name = type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
                     Kind = "type",
-                    Refs = locations.Count, // только использования (декларация не в locations)
-                    FirstUse = FormatLocation(locations.FirstOrDefault()),
+                    Refs = locations.Count + xamlUse.Count,
+                    FirstUse = locations.Count > 0
+                        ? FormatLocation(locations.FirstOrDefault())
+                        : (xamlUse.Count > 0 ? xamlUse.First : "—"),
                     Note = BuildNote(type),
-                });
+                };
+                if (xamlUse.Count > 0)
+                {
+                    row.Note = AppendNote(row.Note, $"xaml: {xamlUse.Count} ({xamlUse.First})");
+                }
+                rows.Add(row);
+                typeByKey[row.Name] = type;
+            }
+        }
+
+        // Deep (SLOW): для показанных строк — доля мёртвых членов у типа.
+        if (Deep)
+        {
+            var filteredNames = rows
+                .Where(r => (MaxRefs < 0 || r.Refs <= MaxRefs) && (MinRefs < 0 || r.Refs >= MinRefs))
+                .Select(r => r.Name)
+                .ToList();
+            foreach (var name in filteredNames)
+            {
+                if (!typeByKey.TryGetValue(name, out var type))
+                {
+                    continue;
+                }
+                var (dead, total) = await CountDeadMembersAsync(type, solution, xaml, ct);
+                var row = rows.First(r => r.Name == name);
+                row.Note = AppendNote(row.Note, $"dead members: {dead}/{total}");
             }
         }
 
         return FormatReport(
-            $"types — {rows.Count} types (namespace={Namespace ?? "<all>"})",
+            $"types — {rows.Count} types (namespace={Namespace ?? "<all>"}{(File is null ? "" : $", file={File}")})",
             rows,
             Namespace ?? "solution",
             SaveDetail);
+    }
+
+    /// <summary>Доля мёртвых членов у типа (0 C# + 0 XAML) — «rot ratio».</summary>
+    private static async Task<(int Dead, int Total)> CountDeadMembersAsync(
+        ITypeSymbol type, Solution solution, IReadOnlyDictionary<string, XamlUse> xaml, CancellationToken ct)
+    {
+        var total = 0;
+        var dead = 0;
+        foreach (var member in type.GetMembers().Where(m => m is IMethodSymbol or IPropertySymbol or IFieldSymbol or IEventSymbol).Where(NotNoise))
+        {
+            total++;
+            var locations = await FindSourceLocationsAsync(member, solution, ct);
+            var xamlCount = xaml.TryGetValue(member.Name, out var x) ? x.Count : 0;
+            if (locations.Count + xamlCount == 0)
+            {
+                dead++;
+            }
+        }
+        return (dead, total);
+    }
+
+    private static bool SameFile(ITypeSymbol type, string file)
+    {
+        var declaration = type.Locations.FirstOrDefault(l => l.IsInSource);
+        if (declaration is null)
+        {
+            return false;
+        }
+        var path = declaration.GetLineSpan().Path;
+        if (string.IsNullOrEmpty(path))
+        {
+            return false;
+        }
+        var expected = Path.IsPathRooted(file)
+            ? file
+            : Path.Combine(SelfBuildPaths.WorkspaceRoot, file);
+        // Сепараторы: file-параметр приходит со слешами, span.Path — с бэкслашами.
+        return string.Equals(
+            (path ?? "").Replace('\\', '/'),
+            expected.Replace('\\', '/'),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -200,7 +272,80 @@ public sealed class CSharpReferenceReportTool : AgentTool
         return types;
     }
 
+    // ─────────────────────────── XAML-индекс ───────────────────────────
+
+    private readonly record struct XamlUse(int Count, string First);
+
+    /// <summary>
+    /// Один проход по *.xaml под src/ (run/ не трогаем): каждое идентификатор-
+    /// совпадение индексируется → имя → (число строк, первое file:line). Биндинги
+    /// ({Binding X}), теги элементов (&lt;local:X/>) и x:Class — всё это реальные
+    /// ссылки WPF, невидимые Roslyn. Шум: значения атрибутов-слов («Top», «Center»)
+    /// тоже считаются — кавек в футере.
+    /// </summary>
+    private static async Task<Dictionary<string, XamlUse>> BuildXamlIndexAsync(CancellationToken ct)
+    {
+        var index = new Dictionary<string, XamlUse>(StringComparer.Ordinal);
+        var root = SelfBuildPaths.WorkspaceRoot;
+        var identifier = new Regex(@"\b[A-Za-z_][A-Za-z0-9_]*\b");
+        foreach (var file in Directory.EnumerateFiles(root, "*.xaml", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+            if (!relative.StartsWith("src/", StringComparison.Ordinal))
+            {
+                continue;
+            }
+            // System.IO.File явно: File резолвится в свойство тула (в статике — CS0120).
+            var text = await System.IO.File.ReadAllTextAsync(file, ct);
+            var lines = text.Split('\n');
+            for (var i = 0; i < lines.Length; i++)
+            {
+                foreach (Match match in identifier.Matches(lines[i]))
+                {
+                    var name = match.Value;
+                    if (!index.TryGetValue(name, out var entry))
+                    {
+                        entry = new XamlUse(0, $"{relative}:{i + 1}");
+                    }
+                    index[name] = new XamlUse(entry.Count + 1, entry.First);
+                }
+            }
+        }
+        return index;
+    }
+
     // ─────────────────────────── общее ───────────────────────────
+
+    /// <summary>
+    /// Шум, который не несёт информации: аксессоры (свойство/событие их покрывает)
+    /// и бэкинг-поля (компиляторные).
+    /// </summary>
+    private static bool NotNoise(ISymbol member)
+    {
+        if (member is IMethodSymbol method)
+        {
+            return method.MethodKind is not (MethodKind.PropertyGet or MethodKind.PropertySet
+                                              or MethodKind.EventAdd or MethodKind.EventRemove);
+        }
+        if (member is IFieldSymbol field)
+        {
+            return !field.IsImplicitlyDeclared;
+        }
+        return true;
+    }
+
+    private static bool MatchesKind(ISymbol member, string kinds)
+    {
+        return kinds.Trim().ToLowerInvariant() switch
+        {
+            "all" => member is IMethodSymbol or IPropertySymbol or IFieldSymbol or IEventSymbol,
+            "methods" => member is IMethodSymbol,
+            "properties" => member is IPropertySymbol,
+            "fields" => member is IFieldSymbol,
+            "events" => member is IEventSymbol,
+            _ => true,
+        };
+    }
 
     private static async Task<(ITypeSymbol? Type, string? Error)> FindTypeAsync(Solution solution, string typeName, CancellationToken ct)
     {
@@ -261,19 +406,6 @@ public sealed class CSharpReferenceReportTool : AgentTool
         return locations;
     }
 
-    private static bool IsSameLocation(Location? a, Location? b)
-    {
-        if (a is null || b is null || !a.IsInSource || !b.IsInSource)
-        {
-            return a is null && b is null;
-        }
-        var spanA = a.GetLineSpan();
-        var spanB = b.GetLineSpan();
-        return spanA.Path == spanB.Path
-            && spanA.StartLinePosition == spanB.StartLinePosition
-            && spanA.EndLinePosition == spanB.EndLinePosition;
-    }
-
     private static string FormatLocation(Location? location)
     {
         if (location is null || !location.IsInSource)
@@ -299,44 +431,28 @@ public sealed class CSharpReferenceReportTool : AgentTool
     }
 
     /// <summary>
-    /// Метка «жив через рефлексию»: [Tool]-атрибут — ToolRegistry сканирует такие
-    /// члены GetTypes() и не оставляет им C#-ссылок.
+    /// Метки «жив, но без C#-ссылок»: [Tool]-атрибут (ToolRegistry сканирует такие
+    /// члены GetTypes()), тест-типы (xUnit находит их рефлексией).
     /// </summary>
-    private static string? BuildNote(ISymbol member)
+    private static string? BuildNote(ISymbol symbol)
     {
-        if (member.GetAttributes().Any(a => a.AttributeClass?.Name is "ToolAttribute" or "Tool"))
+        var notes = new List<string>();
+        if (symbol.GetAttributes().Any(a => a.AttributeClass?.Name is "ToolAttribute" or "Tool"))
         {
-            return "via reflection ([Tool])";
+            notes.Add("via reflection ([Tool])");
         }
-        return null;
+        if (symbol is ITypeSymbol type &&
+            (type.ContainingAssembly.Name.EndsWith("Tests", StringComparison.OrdinalIgnoreCase) ||
+             type.ContainingAssembly.Name.Contains("Test", StringComparison.OrdinalIgnoreCase)))
+        {
+            notes.Add("test framework (reflection)");
+        }
+        return notes.Count > 0 ? string.Join("; ", notes) : null;
     }
 
-    /// <summary>
-    /// XAML-кроссчек: ищет имя члена в *.xaml под src/ (биндинги, x:Name, Tag).
-    /// run/ (развёрнутые копии) не трогаем. Возвращает первое совпадение file:line.
-    /// </summary>
-    private static async Task<string?> FindXamlUseAsync(string name, CancellationToken ct)
+    private static string AppendNote(string? existing, string note)
     {
-        var root = SelfBuildPaths.WorkspaceRoot;
-        var pattern = new Regex($@"\b{Regex.Escape(name)}\b");
-        foreach (var file in Directory.EnumerateFiles(root, "*.xaml", SearchOption.AllDirectories))
-        {
-            var relative = Path.GetRelativePath(root, file);
-            if (!relative.StartsWith("src/", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-            var text = await File.ReadAllTextAsync(file, ct);
-            var lines = text.Split('\n');
-            for (var i = 0; i < lines.Length; i++)
-            {
-                if (pattern.IsMatch(lines[i]))
-                {
-                    return $"{relative.Replace('\\', '/')}:{i + 1}";
-                }
-            }
-        }
-        return null;
+        return existing is null ? note : $"{existing}; {note}";
     }
 
     private static string Summary(List<ReportRow> rows)
@@ -345,13 +461,16 @@ public sealed class CSharpReferenceReportTool : AgentTool
         int one = rows.Count(r => r.Refs == 1);
         int few = rows.Count(r => r.Refs is >= 2 and <= 5);
         int many = rows.Count(r => r.Refs > 5);
-        return $"summary: 0 refs: {zero} · 1 ref: {one} · 2–5: {few} · 6+: {many}";
+        var ratio = rows.Count > 0 ? zero * 100.0 / rows.Count : 0;
+        return $"summary: 0 refs: {zero} · 1 ref: {one} · 2–5: {few} · 6+: {many} · dead ratio: {ratio:0}%";
     }
 
     private const string Caveats =
-        "caveats: count excludes the declaration; 0 refs = candidate, not proof —\n" +
-        "XAML bindings are cross-checked ([XAML:] mark), [Tool] members are marked 'via reflection',\n" +
-        "delegate indirection (f = x => M(x)) and string-based lookups are not visible.";
+        "caveats: C# count excludes the declaration (like VS CodeLens); XAML count = identifier " +
+        "occurrences in *.xaml under src/ (bindings, element tags, x:Class — plus attribute-word noise " +
+        "like 'Top'/'Center'); 0 refs = candidate, not proof —\n" +
+        "[Tool] members are marked 'via reflection', test-project types 'test framework', delegate " +
+        "indirection (f = x => M(x)) and string-based lookups are not visible.";
 
     private string FormatReport(string title, List<ReportRow> allRows, string reportName, bool saveDetail)
     {
@@ -368,7 +487,7 @@ public sealed class CSharpReferenceReportTool : AgentTool
         var limit = Math.Max(1, Limit);
         foreach (var row in filtered.Take(limit))
         {
-            builder.AppendLine($"{row.Refs,4}  {Pad(row.Name, 24)} {Pad(row.Kind, 9)} {row.FirstUse}");
+            builder.AppendLine($"{row.Refs,4}  {Pad(row.Name, 24)} {Pad(row.Kind, 9)} {row.FirstUse}{NoteSuffix(row.Note)}");
         }
         if (filtered.Count > limit)
         {
@@ -401,7 +520,8 @@ public sealed class CSharpReferenceReportTool : AgentTool
         var directory = Path.Combine(SelfBuildPaths.WorkspaceRoot, "reports");
         Directory.CreateDirectory(directory);
         var file = Path.Combine(directory, $"reference_report_{Sanitize(reportName)}.md");
-        File.WriteAllText(file, detail.ToString());
+        // System.IO.File явно: File без префикса резолвится в свойство тула.
+        System.IO.File.WriteAllText(file, detail.ToString());
         var relative = Path.GetRelativePath(SelfBuildPaths.WorkspaceRoot, file).Replace('\\', '/');
 
         builder.AppendLine();
@@ -409,11 +529,18 @@ public sealed class CSharpReferenceReportTool : AgentTool
         return builder.ToString().TrimEnd();
     }
 
+    private static string NoteSuffix(string? note)
+    {
+        return string.IsNullOrEmpty(note) ? "" : $"  [{note}]";
+    }
+
     private static string Pad(string value, int width) =>
         value.Length >= width ? value : value.PadRight(width);
 
-    private static string Sanitize(string name) =>
-        new string(name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+    private static string Sanitize(string name)
+    {
+        return new string(name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+    }
 
     private sealed class ReportRow
     {
