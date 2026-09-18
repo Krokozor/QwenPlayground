@@ -63,7 +63,7 @@
                     ToolTip="Полки (группы инструментов): отметка — сразу, снятие — при следующей смене промпта. По умолчанию всё выключено.">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#x1F5C4;" FontSize="14" />
-                    <TextBlock Text="{Binding ShelfCount}" Margin="5,0,0,0" FontSize="11" Foreground="#648CFF"
+                    <TextBlock Text="{Binding Shelves.ShelfCount}" Margin="5,0,0,0" FontSize="11" Foreground="#648CFF"
                                VerticalAlignment="Center"
                                Visibility="{Binding HasActiveShelves, Converter={StaticResource BoolToVis}}" />
                 </StackPanel>
@@ -75,7 +75,7 @@
                    AllowsTransparency="True" PopupAnimation="Fade" Closed="ShelfPopup_Closed">
                 <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
                         BorderThickness="1" CornerRadius="4" Padding="3" Margin="8">
-                    <views:ShelfMenu DataContext="{Binding}" />
+                    <views:ShelfMenu DataContext="{Binding Shelves}" />
                 </Border>
             </Popup>
             <Button Content="&#9200;" Command="{Binding WakeNowCommand}" ToolTip="Разбудить main-агента: wake-сигнал или heartbeat вне расписания"

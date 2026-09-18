@@ -157,6 +157,7 @@ public partial class MainViewModel : ObservableObject {
 
     public MainViewModel() {
         StartupTrace.Log("MainViewModel ctor: begin");
+        Shelves = new(() => SessionDir());
         // Композиционный корень (Core/Main): граф сервисов собирается там (единственное
         // место, знающее порядок). Хуки UI — через UiHooks: фасад не знает про WPF.
         _main = new Main(new UiHooks(
@@ -167,14 +168,14 @@ public partial class MainViewModel : ObservableObject {
             SaveCurrent,
             RunHeartbeatTurnAsync,
             FlushMemoryVectorsAsync,
-            RefreshShelfUi, // меню должно показать снятые полки
+            Shelves.Refresh, // меню должно показать снятые полки
             () => System.Windows.Application.Current?.Shutdown()),
             typeof(AgentTool).Assembly, // Core: базовые инструменты
             typeof(MainViewModel).Assembly); // App: UI-инструменты (screenshot, switch_tab)
         _main.Log.Changed += OnLogChanged;
         _main.Sessions.SessionChanged += OnSessionChanged;
-        // Снятие полки (тулом агента или из меню) — доменное событие; реакция UI — здесь.
-        ShelfState.Deactivated += OnShelfDeactivated;
+        // Снятие полки (тулом агента или из меню) — доменное событие; реакция UI — в меню.
+        ShelfState.Deactivated += Shelves.OnDeactivated;
         TurnsPanel = new TurnPanel(_main.Background.Turns);
 
         // Интерактив инструментов (подтверждение shell) — pull-модель: оконные
@@ -574,94 +575,13 @@ public partial class MainViewModel : ObservableObject {
     /// Единый с превью и ходом источник системного промпта: main-сессия — динамическая
     /// идентичность, специализированная — кусок-промпт из статичного хранилища профилей.
     /// </summary>
-    // ── Полки в UI (кнопка 🗄 в тулбаре чата) ─────────────────────────────────────
-    // Тот же механизм, что и у тулов агента: состояние — sessions/<id>/shelves.json,
-    // активация немедленная, деактивация staged (снимется при ближайшей естественной
-    // смене промпта). Состояние меню синхронизируется из файла: при открытии меню,
-    // смене сессии, переключении и на каждый запрос (ResolveSystemPrompt — подхватывает
-    // изменения тулами агента).
-    private readonly ShelfUiState[] _shelfUi =
-    {
-        new(ToolGroup.Browser, "WebView2-браузер: навигация, клики, ввод текста, скриншоты, JS, консоль и сетевые логи"),
-        new(ToolGroup.CSharp, "Анализ кода Roslyn: символы, ссылки, диагностика, outline, class map"),
-        new(ToolGroup.Desktop, "Рабочий стол: мышь, клавиатура, скриншоты, окна"),
-        new(ToolGroup.Mcp, "Инструменты управления MCP (mcp_status, mcp_reload) и тулы подключённых MCP-серверов"),
-    };
-
-    public ShelfUiState BrowserShelf => _shelfUi[0];
-    public ShelfUiState CSharpShelf => _shelfUi[1];
-    public ShelfUiState DesktopShelf => _shelfUi[2];
-    public ShelfUiState McpShelf => _shelfUi[3];
-
-    private int _shelfCount;
-    /// <summary>Сколько полок реально в промпте (on + pending) — счётчик на кнопке «🗄 N».</summary>
-    public int ShelfCount {
-        get => _shelfCount;
-        private set {
-            if (_shelfCount == value) return;
-            _shelfCount = value;
-            OnPropertyChanged(nameof(ShelfCount));
-            OnPropertyChanged(nameof(HasActiveShelves));
-        }
-    }
-    public bool HasActiveShelves => ShelfCount > 0;
-
     /// <summary>
-    /// Переключить полку из UI-меню — тот же вход, что и у тулов агента (ShelfState.Activate/
-    /// Deactivate): отметка → немедленная активация (отменяет pending), снятие → staged-
-    /// деактивация. Направление — по состоянию чекбокса («on» = активна И не помечена):
-    /// on → помечаем к снятию; off/pending → активируем (pending-группа всё ещё в active,
-    /// смотреть только на active нельзя — иначе повторный клик по pending снова пометит её).
+    /// Меню полок в тулбаре чата (🗄 + Popup): состояние, переключение, реакция на
+    /// ShelfState.Deactivated. Состояние меню синхронизируется из shelves.json: при
+    /// открытии меню, смене сессии, переключении и на каждый запрос (подхватывает
+    /// переключения тулами агента).
     /// </summary>
-    [RelayCommand]
-    private void ToggleShelf(string? group) {
-        if (!ActivateShelfTool.TryParseGroup(group ?? string.Empty, out var g))
-            return;
-        var state = new ShelfState(SessionDir());
-        var isOn = state.Load().Contains(g) && !state.LoadPending().Contains(g);
-        var result = isOn ? state.Deactivate(g) : state.Activate(g);
-        Debug.WriteLine($"[shelf-cache] UI: {g} → {result}");
-        RefreshShelfUi();
-    }
-
-    /// <summary>
-    /// Полка снята (staged-деактивация) — реакция UI на доменное событие ShelfState.Deactivated:
-    /// desktop-полка текущего сессии ушла → скрываем оверлей курсора (пользователь закончил
-    /// управление десктопом). Оба вызывающих места (тул агента и меню) идут через событие.
-    /// Потоки: и тул (инвариант — agent-код на UI-потоке), и меню — UI-поток.
-    /// </summary>
-    private void OnShelfDeactivated(ToolGroup group, string sessionDir)
-    {
-        if (group == ToolGroup.Desktop && sessionDir == SessionDir())
-        {
-            DesktopOverlay.Hide();
-        }
-    }
-
-    /// <summary>
-    /// Синхронизировать состояние меню полок с shelves.json текущей сессии. Dispatcher-safe:
-    /// вызывается из UI (смена сессии, переключение, открытие меню) и из agent loop
-    /// (ResolveSystemPrompt на каждый запрос — подхватывает переключения тулами агента).
-    /// </summary>
-    public void RefreshShelfUi() {
-        void Do() {
-            var shelf = new ShelfState(SessionDir());
-            var active = shelf.Load();
-            var pending = shelf.LoadPending();
-            var count = 0;
-            foreach (var s in _shelfUi) {
-                var inPrompt = active.Contains(s.Group) || pending.Contains(s.Group);
-                s.Refresh(active.Contains(s.Group), pending.Contains(s.Group));
-                if (inPrompt) count++;
-            }
-            ShelfCount = count;
-        }
-        var dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher is not null && !dispatcher.CheckAccess())
-            dispatcher.BeginInvoke(Do);
-        else
-            Do();
-    }
+    public ShelfUiViewModel Shelves { get; }
 
     /// <summary>
     /// Зарегистрировать MCP-тулы в реестре (вызывается после MCP init и при mcp_reload).
@@ -736,7 +656,7 @@ public partial class MainViewModel : ObservableObject {
         OnPropertyChanged(nameof(IsMainSession));
         RefreshSessions();
         RefreshPromptPreview();
-        RefreshShelfUi();
+        Shelves.Refresh();
     }
 
     private void RebuildMessageViews() {

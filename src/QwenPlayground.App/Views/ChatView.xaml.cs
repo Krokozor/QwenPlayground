@@ -104,7 +104,7 @@ public partial class ChatView : UserControl
     /// </summary>
     private void ShelfButton_Click(object sender, RoutedEventArgs e)
     {
-        _viewModel?.RefreshShelfUi();
+        _viewModel?.Shelves.Refresh();
         if (ShelfPopup is null)
         {
             return;
