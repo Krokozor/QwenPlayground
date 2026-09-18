@@ -163,11 +163,11 @@ internal static class Scenarios
         viewModel.Messages.Add(message);
 
         Console.WriteLine($"IsGenerating: {viewModel.IsGenerating}");
-        Console.WriteLine($"EditMessage(msg): {viewModel.EditMessageCommand.CanExecute(message)}");
-        Console.WriteLine($"Rollback(msg): {viewModel.RollbackCommand.CanExecute(message)}");
-        Console.WriteLine($"InspectPrompt(msg): {viewModel.InspectPromptCommand.CanExecute(message)}");
-        Console.WriteLine($"CopyChat(null): {viewModel.CopyChatCommand.CanExecute(null)}");
-        Console.WriteLine($"Continue(null): {viewModel.ContinueCommand.CanExecute(null)}");
+        Console.WriteLine($"EditMessage(msg): {viewModel.MessageCommands.EditMessageCommand.CanExecute(message)}");
+        Console.WriteLine($"Rollback(msg): {viewModel.MessageCommands.RollbackCommand.CanExecute(message)}");
+        Console.WriteLine($"InspectPrompt(msg): {viewModel.MessageCommands.InspectPromptCommand.CanExecute(message)}");
+        Console.WriteLine($"CopyChat(null): {viewModel.MessageCommands.CopyChatCommand.CanExecute(null)}");
+        Console.WriteLine($"Continue(null): {viewModel.MessageCommands.ContinueCommand.CanExecute(null)}");
         return 0;
     }
 
@@ -317,7 +317,7 @@ internal static class Scenarios
         {
             if (e.PropertyName == nameof(vm.IsGenerating) && !vm.IsGenerating)
             {
-                canExecWhenReset = vm.RollbackCommand.CanExecute(vm.Messages.LastOrDefault()).ToString();
+                canExecWhenReset = vm.MessageCommands.RollbackCommand.CanExecute(vm.Messages.LastOrDefault()).ToString();
                 fsmWhenReset = vm.Diagnostics.ChatStateName;
                 vm.PropertyChanged -= handler;
             }
@@ -341,14 +341,14 @@ internal static class Scenarios
         }
 
         var target = vm.Messages[^1];
-        Console.WriteLine($"last message role={target.Role}, CanExecute(Rollback)={vm.RollbackCommand.CanExecute(target)}");
+        Console.WriteLine($"last message role={target.Role}, CanExecute(Rollback)={vm.MessageCommands.RollbackCommand.CanExecute(target)}");
         var canSendAfter = vm.SendCommand.CanExecute(null);
         Console.WriteLine($"CanExecute(Send)={canSendAfter}");
         Console.WriteLine($"IsGenerating={vm.IsGenerating}, IsBusy={vm.IsBusy}");
 
-        if (vm.RollbackCommand.CanExecute(target))
+        if (vm.MessageCommands.RollbackCommand.CanExecute(target))
         {
-            vm.RollbackCommand.Execute(target);
+            vm.MessageCommands.RollbackCommand.Execute(target);
             Console.WriteLine($"after rollback: messages={vm.Messages.Count}, conversation persisted via SaveCurrent");
         }
 
@@ -558,14 +558,14 @@ internal static class Scenarios
         var first = vm.Messages[^1].Content;
         Console.WriteLine($"after stop1: '{first}'");
 
-        if (!vm.ContinueCommand.CanExecute(null))
+        if (!vm.MessageCommands.ContinueCommand.CanExecute(null))
         {
             Console.WriteLine("FAIL: Continue disabled after stop");
             listener.Stop();
             return 1;
         }
 
-        vm.ContinueCommand.Execute(null);
+        vm.MessageCommands.ContinueCommand.Execute(null);
         started = await WaitCondition(() => vm.IsGenerating, 5000);
         if (!started)
         {

@@ -22,7 +22,7 @@
                                    VerticalAlignment="Center" />
                         <Button Content="&#215;" Padding="2,0" Margin="0,2,0,0" FontSize="10" Foreground="#e06c75"
                                 HorizontalAlignment="Left"
-                                Command="{Binding DataContext.RemoveAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                Command="{Binding DataContext.MessageCommands.RemoveAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                 CommandParameter="{Binding}" />
                     </StackPanel>
                 </StackPanel>
@@ -86,7 +86,7 @@
                     IsEnabled="{Binding Compaction.HasContent}"
                     ToolTip="Открыть панель сжатия контекста (неактивна, пока в ней нет содержимого)" />
             <!-- DockPanel.Dock: без него последний элемент растягивается на весь остаток ширины. -->
-            <Button Content="Скопировать чат" Command="{Binding CopyChatCommand}" Padding="12,2" DockPanel.Dock="Left" />
+            <Button Content="Скопировать чат" Command="{Binding MessageCommands.CopyChatCommand}" Padding="12,2" DockPanel.Dock="Left" />
             <!-- Desktop cursor position: visible when desktop shelf is active -->
             <TextBlock x:Name="DesktopCursorPos" DockPanel.Dock="Right"
                        Text="(0, 0)" Foreground="#648CFF" FontFamily="Consolas" FontSize="12"
@@ -131,20 +131,20 @@
                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                                                 Visibility="{Binding IsSystem, Converter={StaticResource InverseBoolToVis}}">
                                         <Button Content="промпт" Padding="8,0" Margin="4,0,0,0" FontSize="11"
-                                                Command="{Binding DataContext.InspectPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Command="{Binding DataContext.MessageCommands.InspectPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}" />
                                         <Button Content="правка" Padding="8,0" Margin="4,0,0,0" FontSize="11"
-                                                Command="{Binding DataContext.EditMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Command="{Binding DataContext.MessageCommands.EditMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}" />
                                         <Button Content="копировать" Padding="8,0" Margin="4,0,0,0" FontSize="11"
-                                                Command="{Binding DataContext.CopyMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Command="{Binding DataContext.MessageCommands.CopyMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}" />
                                         <Button Content="реролл" Padding="8,0" Margin="4,0,0,0" FontSize="11"
-                                                Command="{Binding DataContext.RerollCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Command="{Binding DataContext.MessageCommands.RerollCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}"
                                                 Visibility="{Binding IsAssistant, Converter={StaticResource BoolToVis}}" />
                                         <Button Content="откат" Padding="8,0" Margin="4,0,0,0" FontSize="11"
-                                                Command="{Binding DataContext.RollbackCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Command="{Binding DataContext.MessageCommands.RollbackCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}" />
                                     </StackPanel>
                                 </DockPanel>
@@ -181,7 +181,7 @@
                                                 <StackPanel>
                                                     <Button Background="Transparent" BorderThickness="0" Padding="0"
                                                             HorizontalContentAlignment="Stretch"
-                                                            Command="{Binding DataContext.OpenAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            Command="{Binding DataContext.MessageCommands.OpenAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                             CommandParameter="{Binding}"
                                                             ToolTip="Открыть файл">
                                                         <StackPanel>
@@ -261,16 +261,16 @@
                     <ComboBoxItem Content="усилие: medium (в меру)" />
                     <ComboBoxItem Content="усилие: low (думать меньше)" />
                 </ComboBox>
-                <Button Content="+" Command="{Binding AttachFilesCommand}" ToolTip="Прикрепить файлы"
+                <Button Content="+" Command="{Binding MessageCommands.AttachFilesCommand}" ToolTip="Прикрепить файлы"
                         Padding="10,4" Margin="8,0,0,0" FontWeight="Bold" />
-                <Button Content="&#128206;" Command="{Binding PasteImageCommand}"
+                <Button Content="&#128206;" Command="{Binding MessageCommands.PasteImageCommand}"
                         ToolTip="Вставить картинку из буфера (Ctrl+V)" Padding="10,4" Margin="4,0,0,0"
                         FontWeight="Bold" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Отправить" Command="{Binding SendCommand}"
                         Padding="16,4" Margin="0,0,8,0" />
-                <Button Content="Продолжить" Command="{Binding ContinueCommand}"
+                <Button Content="Продолжить" Command="{Binding MessageCommands.ContinueCommand}"
                         Padding="16,4" Margin="0,0,8,0" />
                 <Button Content="Стоп" Command="{Binding CancelCommand}"
                         Padding="16,4" />

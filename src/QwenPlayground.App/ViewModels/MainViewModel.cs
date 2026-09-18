@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -77,11 +77,15 @@ public partial class MainViewModel : ObservableObject {
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SendCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
-    [NotifyCanExecuteChangedFor(nameof(RollbackCommand))]
-    [NotifyCanExecuteChangedFor(nameof(RerollCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
-    [NotifyCanExecuteChangedFor(nameof(CopyChatCommand))]
     private bool _isGenerating;
+
+    /// <summary>
+    /// Команды сообщений живут в MessageCommands — их CanExecute (Reroll/Continue)
+    /// зависит от IsGenerating: уведомляем модуль, когда флаг переключается.
+    /// </summary>
+    partial void OnIsGeneratingChanged(bool value) {
+        MessageCommands?.NotifyCanExecuteChanged();
+    }
     /// <summary>Чат занят (нельзя принимать новые ходы/ручную компакцию). Вычисляется из FSM.</summary>
     public bool IsBusy => _main.ChatState.IsBusy;
 
@@ -141,6 +145,13 @@ public partial class MainViewModel : ObservableObject {
     /// </summary>
     public SessionListViewModel SessionList { get; }
 
+    /// <summary>
+    /// Команды операций над сообщениями: откат, просмотр промпта, редактирование,
+    /// копирование, реколл/продолжение, вложения. Коллекции и состояние чата — здесь,
+    /// в VM; в модуль приходят ссылки и делегаты.
+    /// </summary>
+    public MessageCommandsViewModel MessageCommands { get; }
+
     /// <summary>Индекс вкладки «Настройки» в главном окне (для перехода из шестерёнки чата).</summary>
     public const int SettingsTabIndex = 2;
 
@@ -164,8 +175,12 @@ public partial class MainViewModel : ObservableObject {
             () => System.Windows.Application.Current?.Shutdown()),
             typeof(AgentTool).Assembly, // Core: базовые инструменты
             typeof(MainViewModel).Assembly); // App: UI-инструменты (screenshot, switch_tab)
-        // LEGO-модули UI: панель сессий и меню полок (свои DataContext, события — швы).
+        // LEGO-модули UI: панель сессий, меню полок, команды сообщений (свои DataContext,
+        // события/делегаты — швы).
         SessionList = new(_main.Sessions, _main.Log, () => IsGenerating, status => StatusText = status);
+        MessageCommands = new(Messages, PendingAttachments, _main.Log,
+            CanInteract, () => IsGenerating, continueLast => GenerateAsync(continueLast),
+            SaveCurrent, RefreshPromptPreview, status => StatusText = status);
         _main.Log.Changed += OnLogChanged;
         _main.Sessions.SessionChanged += OnSessionChanged;
         // Снятие полки (тулом агента или из меню) — доменное событие; реакция UI — в меню.
@@ -190,8 +205,8 @@ public partial class MainViewModel : ObservableObject {
             shutdown: () => { _draftTimer.Stop(); _main.Draft.Flush(); }));
 
         Messages.CollectionChanged += (_, _) => {
-            RerollCommand.NotifyCanExecuteChanged();
-            ContinueCommand.NotifyCanExecuteChanged();
+            MessageCommands.RerollCommand.NotifyCanExecuteChanged();
+            MessageCommands.ContinueCommand.NotifyCanExecuteChanged();
             RefreshPromptPreview();
         };
 
@@ -680,160 +695,6 @@ public partial class MainViewModel : ObservableObject {
         SaveCurrent();
     }
 
-    [RelayCommand(CanExecute = nameof(CanInteract))]
-    private void Rollback(MessageViewModel? message) {
-        if (message is null) 
-            return;        
-
-        var index = Messages.IndexOf(message);
-
-        if (index < 0) 
-            return;        
-
-        while (Messages.Count > index) {
-            Messages.RemoveAt(Messages.Count - 1);
-        }
-
-        _main.Log.RemoveFrom(index);
-        SaveCurrent();
-
-    }
-
-    [RelayCommand]
-    private void InspectPrompt(MessageViewModel? message) {
-        var text = message?.GetInspectionText() ?? "(нет данных генерации)";
-        new Views.PromptWindow(text) { Owner = System.Windows.Application.Current.MainWindow }.Show();
-    }
-
-    [RelayCommand]
-    private void EditMessage(MessageViewModel? message) {
-        if (IsGenerating || message?.Source is null) 
-            return;        
-
-        new Views.EditMessageWindow(message, OnMessageEdited) {
-            Owner = System.Windows.Application.Current.MainWindow
-        }.ShowDialog();
-    }
-
-    private void OnMessageEdited() {
-        RefreshPromptPreview();
-        SaveCurrent();
-    }
-
-    [RelayCommand]
-    private void CopyMessage(MessageViewModel? message) {
-        if (message is null) return;
-        var sb = new StringBuilder();
-        if (message.Reasoning.Length > 0) {
-            sb.Append("[мысли]\n").Append(message.Reasoning).Append('\n');
-        }
-        foreach (var tc in message.ToolCalls) {
-            sb.Append(tc).Append('\n');
-        }
-        sb.Append(message.Content);
-        System.Windows.Clipboard.SetText(sb.ToString());
-    }
-
-    [RelayCommand(CanExecute = nameof(CanInteract))]
-    private void CopyChat() {
-        var builder = new StringBuilder();
-        foreach (var message in Messages) {
-            builder.Append("### ").Append(message.Role).Append('\n');
-            if (message.Reasoning.Length > 0) {
-                builder.Append("[reasoning]\n").Append(message.Reasoning).Append('\n');
-            }
-            if (message.Content.Length > 0) {
-                builder.Append(message.Content).Append('\n');
-            }
-            foreach (var call in message.ToolCalls) {
-                builder.Append("[tool call] ").Append(call).Append('\n');
-            }
-            builder.Append('\n');
-        }
-        System.Windows.Clipboard.SetText(builder.ToString());
-        StatusText = "чат скопирован в буфер обмена";
-    }
-    [RelayCommand(CanExecute = nameof(CanReroll))]
-    private async Task RerollAsync(MessageViewModel? message) {
-        if (message is null) 
-            return;
-        
-        Rollback(message);
-        await GenerateAsync();
-        SaveCurrent();
-    }
-    private bool CanReroll(MessageViewModel? message) =>
-    !IsGenerating && message is not null && Messages.Count > 0 &&
-    ReferenceEquals(message, Messages[^1]) && message.Role == "assistant";
-    [RelayCommand(CanExecute = nameof(CanContinue))]
-    private async Task ContinueAsync() {
-        await GenerateAsync(continueLastAssistant: true);
-        SaveCurrent();
-    }
-    private bool CanContinue() =>
-    !IsGenerating && Messages.Count > 0 && Messages[^1].Role == "assistant";
-    [RelayCommand(CanExecute = nameof(CanInteract))]
-    private void AttachFiles() {
-        var dialog = new Microsoft.Win32.OpenFileDialog {
-            Multiselect = true,
-            Title = "Прикрепить файлы"
-        };
-        if (dialog.ShowDialog() != true) 
-            return;
-        // Все файлы — во вложения. Картинки уходят мультимодально (маркер + base64 в рендере),
-        // остальные (txt, pdf, ...) — как анонсируемые аттачменты (attachments/ + тег
-        // <attachment> в сообщении), я читаю их через read_file. Текст в ввод больше не
-        // вставляется: не раздувает сообщение и не обрезает крупные файлы.
-        foreach (var file in dialog.FileNames) {
-            PendingAttachments.Add(new PendingAttachment(Path.GetFileName(file), file));
-        }
-    }
-    [RelayCommand(CanExecute = nameof(CanInteract))]
-    private void RemoveAttachment(PendingAttachment? attachment) {
-        if (attachment is not null) {
-            PendingAttachments.Remove(attachment);
-        }
-    }
-    /// <summary>Вставить картинку из буфера обмена во вложения (без текста).</summary>
-    [RelayCommand(CanExecute = nameof(CanInteract))]
-    private void PasteImage() {
-        if (!System.Windows.Clipboard.ContainsImage()) {
-            StatusText = "в буфере обмена нет картинки";
-            return;
-        }
-        try {
-            var image = System.Windows.Clipboard.GetImage();
-            if (image is null) 
-                return;
-            
-            var dir = Path.Combine(Path.GetTempPath(), "qwen-paste");
-            Directory.CreateDirectory(dir);
-            var file = Path.Combine(dir, $"paste-{DateTime.Now:yyyyMMdd-HHmmssfff}.png");
-            using (var stream = File.Create(file)) {
-                var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
-                encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(image));
-                encoder.Save(stream);
-            }
-            PendingAttachments.Add(new PendingAttachment(Path.GetFileName(file), file));
-            StatusText = "картинка из буфера добавлена во вложения";
-        }
-        catch {
-            StatusText = "не удалось вставить картинку из буфера";
-        }
-    }
-    /// <summary>Открыть прикреплённый файл системным просмотрщиком.</summary>
-    [RelayCommand(CanExecute = nameof(CanInteract))]
-    private void OpenAttachment(MessageAttachment? attachment) {
-        if (attachment is null || !File.Exists(attachment.FullPath)) 
-            return;
-        
-        try {
-            Process.Start(new ProcessStartInfo(attachment.FullPath) { UseShellExecute = true });
-        }
-        catch {
-            // просмотрщик не открылся — профилактика
-        }
-    }
     /// <summary>Ручная компакция из UI.</summary>
     [RelayCommand(CanExecute = nameof(CanInteract))]
     private async Task CompactAsync() => await _main.Maintenance.CompactFromUiAsync();

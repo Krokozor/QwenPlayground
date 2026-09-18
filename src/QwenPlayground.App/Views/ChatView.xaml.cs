@@ -129,7 +129,7 @@ public partial class ChatView : UserControl
         }
         if (System.Windows.Clipboard.ContainsImage())
         {
-            _viewModel.PasteImageCommand.Execute(null);
+            _viewModel.MessageCommands.PasteImageCommand.Execute(null);
             e.Handled = true;
         }
     }
