@@ -46,27 +46,33 @@ public sealed class Main
     private readonly ExternalToolsNote _externalTools = new();
     private readonly MemoryLayerStore _layerStore = new();
 
-    public ChatLog Log { get; } = new();
-    public ChatStateMachine ChatState { get; } = new();
+    // ── Общие сервисы (на всё приложение) ───────────────────────────────────────────
     public ToolRegistry Tools { get; }
     public ServerProps ServerProps { get; } = new();
-    public CompactionPreview Compaction { get; } = new();
-    public MemorySurfacer MemorySurfacer { get; } = new();
     public PairsStore PairsStore { get; }
     public BackgroundWork Background { get; }
     public ServiceCompletionClient ServiceLlm { get; }
-    public SystemPromptAssembler PromptAssembler { get; }
-    public StateBlockBuilder StateBlocks { get; }
-    public PromptPipeline Pipeline { get; }
-    public ContextMaintenance Maintenance { get; }
     public AppLifecycle Lifecycle { get; }
-    public DraftKeeper Draft { get; }
     public SessionController Sessions { get; }
-    public TurnPipeline Turns { get; }
     public HeartbeatController Heartbeat { get; }
+
+    // ── Рантайм main-агента (пер-разговорные сервисы; форварды для совместимости) ──
+    public ChatRuntime Runtime { get; }
+    public ChatLog Log => Runtime.Log;
+    public ChatStateMachine ChatState => Runtime.ChatState;
+    public CompactionPreview Compaction => Runtime.Compaction;
+    public MemorySurfacer MemorySurfacer => Runtime.MemorySurfacer;
+    public SystemPromptAssembler PromptAssembler => Runtime.PromptAssembler;
+    public StateBlockBuilder StateBlocks => Runtime.StateBlocks;
+    public PromptPipeline Pipeline => Runtime.Pipeline;
+    public ContextMaintenance Maintenance => Runtime.Maintenance;
+    public DraftKeeper Draft => Runtime.Draft;
+    public TurnPipeline Turns => Runtime.Turns;
+    public int EffectiveContextSize => Runtime.EffectiveContextSize;
 
     public Main(UiHooks hooks, params Assembly[] toolAssemblies)
     {
+        // ── Общие сервисы (на всё приложение) ────────────────────────────────────────
         Tools = new ToolRegistry(toolAssemblies);
         PairsStore = new PairsStore(new MemoryStore().Root);
         Background = new BackgroundWork(hooks.Status);
@@ -75,8 +81,16 @@ public sealed class Main
         ServiceLlm = new ServiceCompletionClient(
             () => AppSettings.Get().Endpoint,
             () => AppSettings.Get().ToGenerationOptions(ServiceCompletionClient.MaxTokens));
-        PromptAssembler = new SystemPromptAssembler(
-            () => Sessions.CurrentId,
+        // Жизненный цикл: единая точка старта/остановки сервисов (закрытие — LIFO, без бросков).
+        Lifecycle = new AppLifecycle(hooks.Status);
+
+        // ── Рантайм main-агента: пер-разговорные сервисы (бандл — ChatRuntime) ──────
+        // Сессия динамична: селектор главного окна переключает сессии, хуки ссылаются
+        // на Sessions лениво (заполняется ниже).
+        Runtime = new ChatRuntime(() => Sessions.CurrentId, ServerProps);
+        var rt = Runtime;
+        rt.PromptAssembler = new SystemPromptAssembler(
+            rt.SessionId,
             () => Sessions.PromptKey,
             () => Sessions.DirectoryFor(Sessions.CurrentId),
             _identity,
@@ -84,75 +98,74 @@ public sealed class Main
             Tools);
         // Доска сообщений state-блока: pull-анонсеры (состояние на момент рендера) +
         // BoardAnnouncer — дрейн статичной мусорки (push из кода без интерфейса).
-        StateBlocks = new StateBlockBuilder(
-            Log.AssignPendingIds,
-            () => Log.NextMessageId,
-            () => EffectiveContextSize,
+        rt.StateBlocks = new StateBlockBuilder(
+            rt.Log.AssignPendingIds,
+            () => rt.Log.NextMessageId,
+            () => rt.EffectiveContextSize,
             ServerProps,
-            () => Log,
-            () => MemorySurfacer.GetSurfacedForStateBlock(),
-            [MemorySurfacer, new BoardAnnouncer()],
+            () => rt.Log,
+            () => rt.MemorySurfacer.GetSurfacedForStateBlock(),
+            [rt.MemorySurfacer, new BoardAnnouncer()],
             () => PairsStore.Pending);
-        Pipeline = new PromptPipeline(
-            () => Log,
-            () => PromptAssembler.ResolveSystemPrompt(),
+        rt.Pipeline = new PromptPipeline(
+            () => rt.Log,
+            () => rt.PromptAssembler.ResolveSystemPrompt(),
             Tools,
             ServerProps,
-            messages => StateBlocks.Build(),
+            messages => rt.StateBlocks.Build(),
             ct => MultimodalContext.BuildAsync(Sessions.DirectoryFor(Sessions.CurrentId), AppSettings.Get().Endpoint, ServerProps, ct),
-            activeShelves: () => PromptAssembler.EffectiveShelves());
-        Maintenance = new ContextMaintenance(
-            Log,
-            ChatState,
-            Compaction,
+            activeShelves: () => rt.PromptAssembler.EffectiveShelves());
+        rt.Maintenance = new ContextMaintenance(
+            rt.Log,
+            rt.ChatState,
+            rt.Compaction,
             (user, system, onChunk, ct) => ServiceLlm.CompleteStructuredAsync(user, system, onChunk, ct),
             _layerStore,
-            MemorySurfacer,
-            ct => Pipeline.CountNextTokensAsync(ct),
+            rt.MemorySurfacer,
+            ct => rt.Pipeline.CountNextTokensAsync(ct),
             async () =>
             {
                 // Реальный n_ctx сервера (кэш), иначе настроенный ContextSize.
                 await ServerProps.FetchAsync(AppSettings.Get().Endpoint);
-                return EffectiveContextSize;
+                return rt.EffectiveContextSize;
             },
-            () => Sessions.CurrentId,
+            rt.SessionId,
             new ContextBackupStore(ChatSessions.Root),
             new ContextMaintenance.Ui(hooks.Status, hooks.Generating, hooks.SaveCurrent),
             onCompacted: () =>
             {
-                PromptAssembler.DeactivateUnusedShelves(Log);
+                rt.PromptAssembler.DeactivateUnusedShelves(rt.Log);
                 hooks.OnCompactedUi();
             });
-        // Жизненный цикл: единая точка старта/остановки сервисов (закрытие — LIFO, без бросков).
-        Lifecycle = new AppLifecycle(hooks.Status);
         // Драфт окошка ввода: создаём ДО сессий — Load пользуется Draft (Flush/Restore).
-        Draft = new DraftKeeper(
+        rt.Draft = new DraftKeeper(
             hooks.DraftInput,
             hooks.DraftInputSet,
-            () => Sessions.CurrentId,
+            rt.SessionId,
             new SessionDraftStore(ChatSessions.Root),
             () => AppSettings.Get().DraftSaveIntervalSeconds);
         // Сессии: после драфта (Load пользуется драфтом).
-        Sessions = new SessionController(Log, Draft, MemorySurfacer);
+        Sessions = new SessionController(rt.Log, rt.Draft, rt.MemorySurfacer);
         // Ход: после сессий (пользуется их ключами/каталогом) и maintenance (бюджет-гард).
-        Turns = new TurnPipeline(
-            Log,
-            ChatState,
+        rt.Turns = new TurnPipeline(
+            rt.Log,
+            rt.ChatState,
             Tools,
-            StateBlocks,
-            Maintenance,
+            rt.StateBlocks,
+            rt.Maintenance,
             ServerProps,
             Sessions,
-            PromptAssembler,
-            MemorySurfacer,
+            rt.PromptAssembler,
+            rt.MemorySurfacer,
             hooks.Status,
             hooks.Generating,
             hooks.ShutdownApp);
+        // ── Main-специфичное ─────────────────────────────────────────────────────────
         // Heartbeat: опрос wake/ и расписания. Период опроса фиксированный (20 с),
         // частота реальных пробуждений — HeartbeatIntervalMinutes; сигналы не ждут расписания.
         Heartbeat = new HeartbeatController(
             new WakeSignalStore(),
-            isBusy: () => ChatState.IsBusy,
+            isBusy: () => rt.ChatState.IsBusy,
             heartbeatEnabled: () => AppSettings.Get().HeartbeatEnabled,
             heartbeatIntervalMinutes: () => AppSettings.Get().HeartbeatIntervalMinutes,
             setStatus: hooks.Status,
@@ -160,12 +173,4 @@ public sealed class Main
             flushMemory: hooks.FlushMemory,
             watchdogGuard: WatchdogLauncher.EnsureAlive);
     }
-
-    /// <summary>
-    /// Эффективный размер окна: реальный n_ctx сервера (если известен), иначе настроенный
-    /// ContextSize. Для проверки «влезет ли» сравниваем именно с ним — это то, что реально
-    /// спрашивает сервер.
-    /// </summary>
-    public int EffectiveContextSize =>
-        Math.Min(AppSettings.Get().ContextSize, ServerProps.NContext ?? AppSettings.Get().ContextSize);
 }

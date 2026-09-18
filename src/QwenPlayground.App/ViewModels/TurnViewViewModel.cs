@@ -5,6 +5,8 @@ using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Main;
+using QwenPlayground.Core.Runtime;
+using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Settings;
 using QwenPlayground.Core.Templates;
 
@@ -14,11 +16,13 @@ namespace QwenPlayground.App.ViewModels;
 /// Проекция вида хода агента: события TurnPipeline → пузыри чата, статус, живые
 /// реколлы памяти. Доменная оркестрация (бюджет, FSM, AgentLoop, профили, отмена,
 /// рестарт) — в TurnPipeline (Core); здесь только перевод событий в видимое.
-/// Фасад Main приходит целиком — модуль читает Turns/Log/Sessions/MemorySurfacer/
-/// Background, но ничего в них не пишет кроме вида.
+/// Зависимости — свой рантайм (Log/FSM/Turns/MemorySurfacer) и два общих сервиса
+/// (Sessions, Background): окно чата самодостаточно для переноса в отдельное окно.
 /// </summary>
 public sealed class TurnViewViewModel {
-    private readonly Main _main;
+    private readonly ChatRuntime _runtime;
+    private readonly SessionController _sessions;
+    private readonly BackgroundWork _background;
     private readonly ObservableCollection<MessageViewModel> _messages;
     private readonly Func<string> _sessionDir;
     private readonly Action<string> _status;
@@ -26,11 +30,15 @@ public sealed class TurnViewViewModel {
     private AppSettings S => AppSettings.Get();
 
     public TurnViewViewModel(
-        Main main,
+        ChatRuntime runtime,
+        SessionController sessions,
+        BackgroundWork background,
         ObservableCollection<MessageViewModel> messages,
         Func<string> sessionDir,
         Action<string> status) {
-        _main = main;
+        _runtime = runtime;
+        _sessions = sessions;
+        _background = background;
         _messages = messages;
         _sessionDir = sessionDir;
         _status = status;
@@ -45,9 +53,9 @@ public sealed class TurnViewViewModel {
     /// </summary>
     private async Task GenerateCoreAsync(bool continueLastAssistant) {
         var agentic = S.ProjectRoot.Trim().Length > 0;
-        var continued = continueLastAssistant && _main.Log.Count > 0 &&
-            _main.Log[^1].Role == ChatRole.Assistant
-            ? _main.Log[^1]
+        var continued = continueLastAssistant && _runtime.Log.Count > 0 &&
+            _runtime.Log[^1].Role == ChatRole.Assistant
+            ? _runtime.Log[^1]
             : null;
         // Состояние одного хода: локальные мутации обработчиков событий собраны вместе.
         var turn = new TurnState { Continued = continued, Agentic = agentic };
@@ -55,7 +63,7 @@ public sealed class TurnViewViewModel {
             turn.CurrentAssistant = _messages[^1];
             turn.Raw.Append(continued.ToRawOutput());
         }
-        var outcome = await _main.Turns.RunTurnAsync(continueLastAssistant, e => DispatchEvent(turn, e));
+        var outcome = await _runtime.Turns.RunTurnAsync(continueLastAssistant, e => DispatchEvent(turn, e));
         if (outcome.BudgetFailed) {
             // Бюджет не прошёл — статус и сохранение истории уже сделаны пайплайном.
             return;
@@ -123,7 +131,7 @@ public sealed class TurnViewViewModel {
     private void OnToken(TurnState turn, string text) {
         if (turn.CurrentAssistant is null) {
             // Новый стрим: сброс live-реколл окна.
-            _main.MemorySurfacer.ResetLiveWindow();
+            _runtime.MemorySurfacer.ResetLiveWindow();
             turn.CurrentAssistant = AddAssistantView();
             turn.CurrentAssistant.BeginStreaming(turn.Raw.ToString());
             turn.StreamStarted = true;
@@ -136,9 +144,9 @@ public sealed class TurnViewViewModel {
         }
         turn.Raw.Append(text);
         turn.CurrentAssistant.AppendStreamChunk(text);
-        _main.MemorySurfacer.MaybeFireLiveRecall(turn.Agentic, text, turn.Raw, turn.Continued is not null,
-            _main.Log, _main.Sessions.CurrentId == MainAgent.SessionId,
-            S.CompanionEndpoint, _main.Turns.ActiveToken);
+        _runtime.MemorySurfacer.MaybeFireLiveRecall(turn.Agentic, text, turn.Raw, turn.Continued is not null,
+            _runtime.Log, _sessions.CurrentId == MainAgent.SessionId,
+            S.CompanionEndpoint, _runtime.Turns.ActiveToken);
     }
 
     private void OnAssistantMessage(TurnState turn, ChatMessage message) {
@@ -153,12 +161,12 @@ public sealed class TurnViewViewModel {
         turn.Raw.Clear();
         // Ассоциативный реколл: факты подтягиваются между итерациями, фоном на компаньон-модели.
         if (turn.Agentic) {
-            var conversation = _main.Log;
+            var conversation = _runtime.Log;
             var companion = S.CompanionEndpoint;
-            var token = _main.Turns.ActiveToken;
-            _main.Background.Queue("реколл памяти", () =>
-                _main.MemorySurfacer.RecallAfterTurnAsync(
-                    conversation, _main.Sessions.CurrentId == MainAgent.SessionId, companion, token));
+            var token = _runtime.Turns.ActiveToken;
+            _background.Queue("реколл памяти", () =>
+                _runtime.MemorySurfacer.RecallAfterTurnAsync(
+                    conversation, _sessions.CurrentId == MainAgent.SessionId, companion, token));
         }
     }
 
@@ -197,11 +205,11 @@ public sealed class TurnViewViewModel {
             continued.Generation = null;
             currentAssistant.ApplyParsed(continued);
         }
-        else if (_main.Log.Count > 0 && _main.Log[^1].Role == ChatRole.Assistant) {
-            currentAssistant.Source = _main.Log[^1];
+        else if (_runtime.Log.Count > 0 && _runtime.Log[^1].Role == ChatRole.Assistant) {
+            currentAssistant.Source = _runtime.Log[^1];
         }
         else {
-            _main.Log.Add(partial);
+            _runtime.Log.Add(partial);
             currentAssistant.ApplyParsed(partial);
         }
     }

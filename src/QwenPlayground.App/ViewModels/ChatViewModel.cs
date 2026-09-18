@@ -7,6 +7,7 @@ using CommunityToolkit.Mvvm.Input;
 using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
+using QwenPlayground.Core.Heartbeat;
 using QwenPlayground.Core.Main;
 using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.MetaInfo;
@@ -24,11 +25,15 @@ namespace QwenPlayground.App.ViewModels;
 /// LEGO-модули (панель сессий, меню полок, команды сообщений, проекция хода). Стадия A
 /// мультиоконного квеста: самодостаточный элемент, который можно хостить в любом окне.
 /// Композиционный корень приложения (MainViewModel) держит lifecycle, настройки и прочие
-/// вкладки; сюда приходят фасад Main и два делегата (отложенный save настроек, переход
+/// вкладки. Зависимости — рантайм чата (Log/FSM/Turns/...) + три общих сервиса
+/// (Sessions, Heartbeat, Background) и два делегата (отложенный save настроек, переход
 /// на вкладку настроек из шестерёнки чата).
 /// </summary>
 public partial class ChatViewModel : ObservableObject {
-    private readonly Main _main;
+    private readonly ChatRuntime _runtime;
+    private readonly SessionController _sessions;
+    private readonly HeartbeatController _heartbeat;
+    private readonly BackgroundWork _background;
     private readonly Action _scheduleSettingsSave;
     private readonly Action _goToSettings;
 
@@ -53,7 +58,7 @@ public partial class ChatViewModel : ObservableObject {
     }
 
     /// <summary>Чат занят (нельзя принимать новые ходы/ручную компакцию). Вычисляется из FSM.</summary>
-    public bool IsBusy => _main.ChatState.IsBusy;
+    public bool IsBusy => _runtime.ChatState.IsBusy;
 
     private bool CanInteract() => !IsBusy;
 
@@ -73,7 +78,7 @@ public partial class ChatViewModel : ObservableObject {
     public ObservableCollection<PendingAttachment> PendingAttachments { get; } = new();
 
     /// <summary>Живое превью компакции (панель, стадии, стриминг токенов).</summary>
-    public CompactionPreview Compaction => _main.Compaction;
+    public CompactionPreview Compaction => _runtime.Compaction;
 
     public ReasoningEffort ReasoningEffort {
         get => S.ReasoningEffort;
@@ -129,20 +134,29 @@ public partial class ChatViewModel : ObservableObject {
     /// </summary>
     public ShelfUiViewModel Shelves { get; }
 
-    public ChatViewModel(Main main, Action scheduleSettingsSave, Action goToSettings) {
-        _main = main;
+    public ChatViewModel(
+        ChatRuntime runtime,
+        SessionController sessions,
+        HeartbeatController heartbeat,
+        BackgroundWork background,
+        Action scheduleSettingsSave,
+        Action goToSettings) {
+        _runtime = runtime;
+        _sessions = sessions;
+        _heartbeat = heartbeat;
+        _background = background;
         _scheduleSettingsSave = scheduleSettingsSave;
         _goToSettings = goToSettings;
 
         Shelves = new(() => SessionDir());
-        SessionList = new(_main.Sessions, _main.Log, () => IsGenerating, status => StatusText = status);
-        TurnView = new(_main, Messages, SessionDir, status => StatusText = status);
-        MessageCommands = new(Messages, PendingAttachments, _main.Log,
+        SessionList = new(_sessions, _runtime.Log, () => IsGenerating, status => StatusText = status);
+        TurnView = new(_runtime, _sessions, _background, Messages, SessionDir, status => StatusText = status);
+        MessageCommands = new(Messages, PendingAttachments, _runtime.Log,
             CanInteract, () => IsGenerating, continueLast => TurnView.GenerateAsync(continueLast),
             SaveCurrent, RefreshPromptPreview, status => StatusText = status);
 
-        _main.Log.Changed += OnLogChanged;
-        _main.Sessions.SessionChanged += OnSessionChanged;
+        _runtime.Log.Changed += OnLogChanged;
+        _sessions.SessionChanged += OnSessionChanged;
         // Снятие полки (тулом агента или из меню) — доменное событие; реакция UI — в меню.
         ShelfState.Deactivated += Shelves.OnDeactivated;
 
@@ -170,24 +184,24 @@ public partial class ChatViewModel : ObservableObject {
         SessionList.RestoreLast();
         // Восстановить драфт ТЕКУЩЕЙ сессии (main или последней открытой) в окошко ввода:
         // переживает обрыв питания/крах — набранный промпт возвращается.
-        _main.Draft.Restore();
+        _runtime.Draft.Restore();
         StartupTrace.Log("ChatViewModel Initialize: RefreshPromptPreview (startup)");
         RefreshPromptPreview();
     }
 
     /// <summary>Каталог текущей сессии: у каждой сессии своя папка sessions/&lt;id&gt;/ (как у main-агента).</summary>
-    private string SessionDir() => _main.Sessions.DirectoryFor(_main.Sessions.CurrentId);
+    private string SessionDir() => _sessions.DirectoryFor(_sessions.CurrentId);
 
     // Структурные изменения разговора (компакция/загрузка/откат) сами перестраивают вид.
     private void OnLogChanged() => RebuildMessageViews();
 
     public void RebuildMessageViews() {
         var sw = Stopwatch.StartNew();
-        var count = _main.Log.Count;
+        var count = _runtime.Log.Count;
         var sessionDir = SessionDir();
         Messages.Clear();
         var added = 0;
-        foreach (var message in _main.Log) {
+        foreach (var message in _runtime.Log) {
             var view = MessageViewModel.FromMessage(RoleName(message), message);
             view.LoadArtifacts(sessionDir);
             Messages.Add(view);
@@ -207,9 +221,9 @@ public partial class ChatViewModel : ObservableObject {
         InputText = string.Empty;
         // Текст отправлен (стал сообщением) — драфт удаляем, чтобы не восстанавливать
         // отправленное при следующем старте.
-        _main.Draft.ClearOnSend();
+        _runtime.Draft.ClearOnSend();
         var userMessage = ChatMessage.User(text);
-        _main.Log.Add(userMessage); // ID присваивается здесь же — до копирования вложений
+        _runtime.Log.Add(userMessage); // ID присваивается здесь же — до копирования вложений
         var attachments = PendingAttachments.ToList();
         PendingAttachments.Clear();
         var metaStore = new MessageMetaStore(SessionDir());
@@ -262,38 +276,38 @@ public partial class ChatViewModel : ObservableObject {
     private bool CanSend() => !IsBusy && (InputText.Trim().Length > 0 || PendingAttachments.Count > 0) && S.Endpoint.Trim().Length > 0;
 
     [RelayCommand(CanExecute = nameof(IsGenerating))]
-    private void Cancel() => _main.Turns.Cancel();
+    private void Cancel() => _runtime.Turns.Cancel();
 
     /// <summary>
     /// Очистка текущего разговора — программный доступ (Harness). UI-кнопка «Очистить»
     /// убрана (2026-09-02): сценарий покрывает «откат» первого сообщения.
     /// </summary>
     public void Clear() {
-        _main.Log.Clear();
+        _runtime.Log.Clear();
         StatusText = string.Empty;
         SaveCurrent();
     }
 
     /// <summary>Ручная компакция из UI.</summary>
     [RelayCommand(CanExecute = nameof(CanInteract))]
-    private async Task CompactAsync() => await _main.Maintenance.CompactFromUiAsync();
+    private async Task CompactAsync() => await _runtime.Maintenance.CompactFromUiAsync();
 
     /// <summary>Скрыть панель live-превью сжатия («×» на панели).</summary>
     [RelayCommand]
-    private void HideCompactionPanel() => _main.Compaction.Hide();
+    private void HideCompactionPanel() => _runtime.Compaction.Hide();
 
     /// <summary>Открыть панель сжатия из тулбара (кнопка активна, когда в панели есть что показывать).</summary>
     [RelayCommand]
-    private void ShowCompactionPanel() => _main.Compaction.Open();
+    private void ShowCompactionPanel() => _runtime.Compaction.Open();
 
     /// <summary>Ручной wake (кнопка): если есть сигнал — обработать его, иначе обычный heartbeat.</summary>
     [RelayCommand(CanExecute = nameof(CanInteract))]
-    private void WakeNow() => _main.Heartbeat.WakeNow();
+    private void WakeNow() => _heartbeat.WakeNow();
 
     /// <summary>Ход main-агента по инициативе приложения: всегда агентный режим (иначе бессмысленно).</summary>
     public async Task RunHeartbeatTurnAsync(string prompt) {
         var userMessage = ChatMessage.User(prompt);
-        _main.Log.Add(userMessage);
+        _runtime.Log.Add(userMessage);
         Messages.Add(MessageViewModel.FromMessage("user", userMessage));
         await TurnView.GenerateAsync();
         SaveCurrent();
@@ -314,12 +328,12 @@ public partial class ChatViewModel : ObservableObject {
             OrderedKeys(profiles.Samplers.Keys),
             OrderedKeys(profiles.Prompts.Keys),
             OrderedKeys(profiles.StateBlocks.Keys),
-            _main.Sessions.SamplerKey, _main.Sessions.PromptKey, _main.Sessions.StateBlockKey)
+            _sessions.SamplerKey, _sessions.PromptKey, _sessions.StateBlockKey)
         { Owner = System.Windows.Application.Current.MainWindow };
         // Пресеты редактируются в ЕДИНСТВЕННОМ месте — вкладка «Настройки»; диалог закрываем.
         dialog.GoToSettings = _goToSettings;
         if (dialog.ShowDialog() == true) {
-            _main.Sessions.ApplyProfileKeys(
+            _sessions.ApplyProfileKeys(
                 dialog.SelectedSamplerKey, dialog.SelectedPromptKey, dialog.SelectedStateBlockKey);
             RefreshPromptPreview();
             StatusText = "Настройка чата применена: действует со следующего хода.";
@@ -352,7 +366,7 @@ public partial class ChatViewModel : ObservableObject {
     public void RefreshPromptPreview() {
         var sw = Stopwatch.StartNew();
         try {
-            var preview = _main.Pipeline.RenderForPreview();
+            var preview = _runtime.Pipeline.RenderForPreview();
             PromptPreview = preview.Length == 0 ? "(пусто)" : preview;
             _previewRenderCount++;
             if (_previewRenderCount <= 10 || _previewRenderCount % 50 == 0 || sw.ElapsedMilliseconds > 500) {

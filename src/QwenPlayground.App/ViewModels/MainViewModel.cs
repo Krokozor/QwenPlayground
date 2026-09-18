@@ -101,7 +101,8 @@ public partial class MainViewModel : ObservableObject {
         // Окно чата: ядро разговора + LEGO-модули (сессии/полки/команды/проекция хода).
         // Старт чата — после присваивания: Core во время RestoreLast колбэкает хук ввода,
         // который идёт через Chat (в конструкторе Chat ещё null).
-        Chat = new(_main, Settings.ScheduleSave, () => SelectedTabIndex = SettingsTabIndex);
+        Chat = new(_main.Runtime, _main.Sessions, _main.Heartbeat, _main.Background,
+            Settings.ScheduleSave, () => SelectedTabIndex = SettingsTabIndex);
         Chat.Initialize();
         TurnsPanel = new TurnPanel(_main.Background.Turns);
 
