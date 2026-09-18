@@ -61,37 +61,14 @@ public partial class MainViewModel : ObservableObject {
     /// </summary>
     public SummarizationViewModel Summarization { get; }
 
-    // ── Настройки ───────────────────────────────────────────────────────────────────── //
-    // Паттерн NekoBot: источник правды — синглтон AppSettings.Get(), свойства ниже —
-    // тонкие виды над ним (чтение напрямую, запись = мутация + INPC + отложенный Save).
-    // Зеркальные поля и маппинг ToSettings/ApplySettings упразднены: новое поле настроек
-    // добавляется в AppSettings + сюда одним свойством, без правки списков персистенции.
+    /// <summary>
+    /// Вкладка «Настройки»: свой DataContext (инкапсуляция — SettingsView/MemorySettingsView
+    /// биндятся на него, а не на MainViewModel). Зеркала AppSettings + отложенный save.
+    /// </summary>
+    public SettingsViewModel Settings { get; } = new();
 
-    /// <summary>Запись настройки с уведомлением биндинга и отложенным сохранением.</summary>
-    private void Set<T>(T current, T value, Action<AppSettings, T> assign, [System.Runtime.CompilerServices.CallerMemberName] string? propertyName = null) {
-        if (EqualityComparer<T>.Default.Equals(current, value)) 
-            return;
-        
-        var settings = AppSettings.Get();
-        assign(settings, value);
-        OnPropertyChanged(propertyName);
-        ScheduleSettingsSave();
-    }
-
-    /// <summary>Читаемая настройка: <c>S.Endpoint</c> короче, чем AppSettings.Get().Endpoint, в 17 свойствах.</summary>
+    /// <summary>Источник правды настроек — синглтон AppSettings.Get() (тонкие виды UI — в SettingsViewModel).</summary>
     private AppSettings S => AppSettings.Get();
-
-    /// <summary>Адрес llama.cpp-сервера основного хода.</summary>
-    public string Endpoint {
-        get => S.Endpoint;
-        set {
-            var old = S.Endpoint;
-            Set(old, value, (s, v) => s.Endpoint = v);
-            if (old != S.Endpoint) {
-                SendCommand.NotifyCanExecuteChanged();                
-            }
-        }
-    }
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SendCommand))]
@@ -105,16 +82,6 @@ public partial class MainViewModel : ObservableObject {
     [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
     [NotifyCanExecuteChangedFor(nameof(CopyChatCommand))]
     private bool _isGenerating;
-    public int MaxTokens {
-        get => S.MaxTokens;
-        set => Set(S.MaxTokens, value, (s, v) => s.MaxTokens = v);
-    }
-
-    public int ContextSize {
-        get => S.ContextSize;
-        set => Set(S.ContextSize, value, (s, v) => s.ContextSize = v);
-    }
-
     /// <summary>Чат занят (нельзя принимать новые ходы/ручную компакцию). Вычисляется из FSM.</summary>
     public bool IsBusy => _main.ChatState.IsBusy;
 
@@ -124,7 +91,12 @@ public partial class MainViewModel : ObservableObject {
     public ReasoningEffort ReasoningEffort {
         get => S.ReasoningEffort;
         set {
-            Set(S.ReasoningEffort, value, (s, v) => s.ReasoningEffort = v);
+            // Живёт здесь (не в SettingsViewModel): биндинг тулбара чата + реакция превью.
+            var old = S.ReasoningEffort;
+            S.ReasoningEffort = value;
+            if (old != value) {
+                Settings.ScheduleSave();
+            }
             OnPropertyChanged(nameof(ReasoningEffortIndex));
             RefreshPromptPreview();
         }
@@ -142,210 +114,8 @@ public partial class MainViewModel : ObservableObject {
         }
     }
 
-    public bool HeartbeatEnabled {
-        get => S.HeartbeatEnabled;
-        set => Set(S.HeartbeatEnabled, value, (s, v) => s.HeartbeatEnabled = v);
-    }
-
-    public int HeartbeatIntervalMinutes {
-        get => S.HeartbeatIntervalMinutes;
-        set => Set(S.HeartbeatIntervalMinutes, value, (s, v) => s.HeartbeatIntervalMinutes = v);
-    }
-
-    public int MaxIterations {
-        get => S.MaxIterations;
-        set => Set(S.MaxIterations, value, (s, v) => s.MaxIterations = v);
-    }
-
-    public int SanityCheckInterval {
-        get => S.SanityCheckInterval;
-        set => Set(S.SanityCheckInterval, value, (s, v) => s.SanityCheckInterval = v);
-    }
-
-    /// <summary>Пуш на GitHub при самосборке (rebuild_self). По умолчанию выкл.</summary>
-    public bool PushOnRebuild {
-        get => S.PushOnRebuild;
-        set => Set(S.PushOnRebuild, value, (s, v) => s.PushOnRebuild = v);
-    }
-
-    /// <summary>
-    /// Режим диагностики: детальный трейс в logs/diag-YYYYMMDD.log. Включается без
-    /// перезапуска (DiagnosticsLog.SetEnabled) — сразу видно, где процесс стоит.
-    /// </summary>
-    public bool DiagnosticsMode {
-        get => S.DiagnosticsMode;
-        set {
-            Set(S.DiagnosticsMode, value, (s, v) => s.DiagnosticsMode = v);
-            DiagnosticsLog.SetEnabled(value);
-            DiagnosticsLog.Log($"diagnostics mode {(value ? "ON" : "OFF")} (UI)");
-        }
-    }
-
-    /// <summary>Интервал автосохранения драфта окошка ввода (сек). 0 = выключено.</summary>
-    public int DraftSaveIntervalSeconds {
-        get => S.DraftSaveIntervalSeconds;
-        set => Set(S.DraftSaveIntervalSeconds, value, (s, v) => s.DraftSaveIntervalSeconds = v);
-    }
-    public string PushRepo {
-        get => S.PushRepo;
-        set => Set(S.PushRepo, value, (s, v) => s.PushRepo = v);
-    }
-
-    /// <summary>Компаньон-модель (логит-пробы, векторизация памяти) — отдельная машина.</summary>
-    public string CompanionEndpoint {
-        get => S.CompanionEndpoint;
-        set => Set(S.CompanionEndpoint, value, (s, v) => s.CompanionEndpoint = v);
-    }
-    /// <summary>Использовать ли companion-модель для проб (тумблер рядом с адресом). Выкл — пробы не летят, память по тексту; адрес сохранён.</summary>
-    public bool CompanionEnabled {
-        get => S.CompanionEnabled;
-        set => Set(S.CompanionEnabled, value, (s, v) => s.CompanionEnabled = v);
-    }
-    /// <summary>Мастер-переключатель памяти агента (вручную). Выкл — реколл/state-блок/наг/flush и тулы memory_* выключены.</summary>
-    public bool MemoryEnabled {
-        get => S.MemoryEnabled;
-        set => Set(S.MemoryEnabled, value, (s, v) => s.MemoryEnabled = v);
-    }
-    public string CompactKeepRatio {
-        get => S.CompactKeepRatio;
-        set => Set(S.CompactKeepRatio, value, (s, v) => s.CompactKeepRatio = v);
-    }
-    public string ProjectRoot {
-        get => S.ProjectRoot;
-        set => Set(S.ProjectRoot, value, (s, v) => s.ProjectRoot = v);
-    }
-
     [ObservableProperty]
     private string _statusText = string.Empty;
-
-    public string Temperature {
-        get => S.Temperature;
-        set => Set(S.Temperature, value, (s, v) => s.Temperature = v);
-    }
-
-    public string TopP {
-        get => S.TopP;
-        set => Set(S.TopP, value, (s, v) => s.TopP = v);
-    }
-
-    public string TopK {
-        get => S.TopK;
-        set => Set(S.TopK, value, (s, v) => s.TopK = v);
-    }
-
-    public string MinP {
-        get => S.MinP;
-        set => Set(S.MinP, value, (s, v) => s.MinP = v);
-    }
-
-    public string RepeatPenalty {
-        get => S.RepeatPenalty;
-        set => Set(S.RepeatPenalty, value, (s, v) => s.RepeatPenalty = v);
-    }
-
-    public string Seed {
-        get => S.Seed;
-        set => Set(S.Seed, value, (s, v) => s.Seed = v);
-    }
-
-    // ── Память / надмозг ─────────────────────────────────────────────────────────────
-
-    public int MemoryFlushBudget {
-        get => S.MemoryFlushBudget;
-        set => Set(S.MemoryFlushBudget, value, (s, v) => s.MemoryFlushBudget = v);
-    }
-    public int MemoryScanProbeBudget {
-        get => S.MemoryScanProbeBudget;
-        set => Set(S.MemoryScanProbeBudget, value, (s, v) => s.MemoryScanProbeBudget = v);
-    }
-    public int MemorySurfacingThreshold {
-        get => S.MemorySurfacingThreshold;
-        set => Set(S.MemorySurfacingThreshold, value, (s, v) => s.MemorySurfacingThreshold = v);
-    }
-    public int MemoryLiveRecallMinTokens {
-        get => S.MemoryLiveRecallMinTokens;
-        set => Set(S.MemoryLiveRecallMinTokens, value, (s, v) => s.MemoryLiveRecallMinTokens = v);
-    }
-    public int MemoryLiveRecallIntervalSec {
-        get => S.MemoryLiveRecallIntervalSec;
-        set => Set(S.MemoryLiveRecallIntervalSec, value, (s, v) => s.MemoryLiveRecallIntervalSec = v);
-    }
-    public bool MemoryNagEnabled {
-        get => S.MemoryNagEnabled;
-        set => Set(S.MemoryNagEnabled, value, (s, v) => s.MemoryNagEnabled = v);
-    }
-    public int MemoryNagIntervalRenders {
-        get => S.MemoryNagIntervalRenders;
-        set => Set(S.MemoryNagIntervalRenders, value, (s, v) => s.MemoryNagIntervalRenders = v);
-    }
-    public int RecallTopX {
-        get => S.RecallTopX;
-        set => Set(S.RecallTopX, value, (s, v) => s.RecallTopX = v);
-    }
-    public string RecallMinScore {
-        get => S.RecallMinScore.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        set { if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) Set(S.RecallMinScore, v, (s, x) => s.RecallMinScore = x); }
-    }
-    public string SimilaritySimilarMin {
-        get => S.SimilaritySimilarMin.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        set { if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) Set(S.SimilaritySimilarMin, v, (s, x) => s.SimilaritySimilarMin = x); }
-    }
-    public string SimilarityDistinctMax {
-        get => S.SimilarityDistinctMax.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        set { if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) Set(S.SimilarityDistinctMax, v, (s, x) => s.SimilarityDistinctMax = x); }
-    }
-    public string SimilarityConfidentMaxEntropy {
-        get => S.SimilarityConfidentMaxEntropy.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        set { if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) Set(S.SimilarityConfidentMaxEntropy, v, (s, x) => s.SimilarityConfidentMaxEntropy = x); }
-    }
-    public int MemoryDialogueBudgetTokens {
-        get => S.MemoryDialogueBudgetTokens;
-        set => Set(S.MemoryDialogueBudgetTokens, value, (s, v) => s.MemoryDialogueBudgetTokens = v);
-    }
-    public int MemoryDialogueMaxMessages {
-        get => S.MemoryDialogueMaxMessages;
-        set => Set(S.MemoryDialogueMaxMessages, value, (s, v) => s.MemoryDialogueMaxMessages = v);
-    }
-    public int MemoryClassifyNProbs {
-        get => S.MemoryClassifyNProbs;
-        set => Set(S.MemoryClassifyNProbs, value, (s, v) => s.MemoryClassifyNProbs = v);
-    }
-    public int MemoryClassifyNPredict {
-        get => S.MemoryClassifyNPredict;
-        set => Set(S.MemoryClassifyNPredict, value, (s, v) => s.MemoryClassifyNPredict = v);
-    }
-    public int MemoryRerankNProbs {
-        get => S.MemoryRerankNProbs;
-        set => Set(S.MemoryRerankNProbs, value, (s, v) => s.MemoryRerankNProbs = v);
-    }
-    public int MemoryRerankNPredict {
-        get => S.MemoryRerankNPredict;
-        set => Set(S.MemoryRerankNPredict, value, (s, v) => s.MemoryRerankNPredict = v);
-    }
-    public int MemoryRerankMaxCandidates {
-        get => S.MemoryRerankMaxCandidates;
-        set => Set(S.MemoryRerankMaxCandidates, value, (s, v) => s.MemoryRerankMaxCandidates = v);
-    }
-    public int MemoryRerankCandidateContentLength {
-        get => S.MemoryRerankCandidateContentLength;
-        set => Set(S.MemoryRerankCandidateContentLength, value, (s, v) => s.MemoryRerankCandidateContentLength = v);
-    }
-    public string MemoryCategoryWeight {
-        get => S.MemoryCategoryWeight.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        set { if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) Set(S.MemoryCategoryWeight, v, (s, x) => s.MemoryCategoryWeight = x); }
-    }
-    public string MemoryEmojiWeight {
-        get => S.MemoryEmojiWeight.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        set { if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) Set(S.MemoryEmojiWeight, v, (s, x) => s.MemoryEmojiWeight = x); }
-    }
-    public int MemoryMaxFactsPerCompaction {
-        get => S.MemoryMaxFactsPerCompaction;
-        set => Set(S.MemoryMaxFactsPerCompaction, value, (s, v) => s.MemoryMaxFactsPerCompaction = v);
-    }
-    public int MemoryDiaryMaxEntryLength {
-        get => S.MemoryDiaryMaxEntryLength;
-        set => Set(S.MemoryDiaryMaxEntryLength, value, (s, v) => s.MemoryDiaryMaxEntryLength = v);
-    }
 
     [ObservableProperty]
     private string _promptPreview = string.Empty;
@@ -378,12 +148,6 @@ public partial class MainViewModel : ObservableObject {
 
     /// <summary>main-сессия управляется идентичностью — настройка чата для неё закрыта.</summary>
     public bool IsMainSession => _main.Sessions.CurrentId == MainAgent.SessionId;
-
-    /// <summary>
-    /// Редактор статичных профилей чата — ЕДИНСТВЕННОЕ место правки пресетов, живёт во
-    /// вкладке «Настройки» (решение владельца: настройки не размазываются по другим вкладкам).
-    /// </summary>
-    public ChatProfilesEditorViewModel Profiles { get; } = new();
 
     /// <summary>Индекс вкладки «Настройки» в главном окне (для перехода из шестерёнки чата).</summary>
     public const int SettingsTabIndex = 2;
@@ -454,7 +218,7 @@ public partial class MainViewModel : ObservableObject {
         _main.ChatState,
         () => _main.ServerProps.LastActualPromptTokens(_main.Log),
         () => EffectiveContextSize,
-        () => MaxTokens);
+        () => S.MaxTokens);
 
         // Вкладка «Суммаризация»: ре-прогоны и редактирование резюме/слоёв/промптов.
         Summarization = new SummarizationViewModel(RunSummarizationCallAsync);
@@ -526,11 +290,13 @@ public partial class MainViewModel : ObservableObject {
             shutdown: () => _heartbeatTimer.Stop()));
 
         // Настройки: закрытие приложения — единственный синхронный flush (дебаунс не гарантирован).
-        _main.Lifecycle.Register(new DelegateAppService("настройки", shutdown: FlushSettingsSave));
+        _main.Lifecycle.Register(new DelegateAppService("настройки", shutdown: () => Settings.FlushSettingsSave()));
         // Настройки, изменённые агентом изнутри (инструмент set_setting): живой экземпляр уже
         // обновлён и записан, остаётся перерисовать биндинг. Событие может прийти из
         // agent-потока → маришализуем на Dispatcher (см. OnSettingsChangedExternally).
         SettingsStore<AppSettings>.Changed += OnSettingsChangedExternally;
+        // Эндпоинт сменился в настройках — реакция чата: CanExecute SendCommand.
+        Settings.EndpointChanged += () => SendCommand.NotifyCanExecuteChanged();
         StartupTrace.Log("MainViewModel ctor: lifecycle StartAll");
         _main.Lifecycle.StartAll();
         StartupTrace.Log("MainViewModel ctor: done");
@@ -679,7 +445,7 @@ public partial class MainViewModel : ObservableObject {
         _memoryFlushInFlight = true;
 
         try {
-            var endpoint = CompanionEndpoint;
+            var endpoint = S.CompanionEndpoint;
             var token = _main.Turns.ActiveToken;
             var store = new MemoryStore();
             var processed = await MemoryClassifier.FlushAsync(store, endpoint, AppSettings.Get().MemoryFlushBudget, token);
@@ -755,22 +521,6 @@ public partial class MainViewModel : ObservableObject {
         _main.Sessions.StartNew();
         // Реакции вида (список/выбор/превью/полки) — в OnSessionChanged (событие контроллера).
     }    
-    private CancellationTokenSource? _settingsSaveDebounce;
-    /// <summary>
-    /// Отложенная запись настроек на диск: правки полей в UI идут пачками (каждое нажатие
-    /// стрелки в numeric-поле — событие), писать на каждый чанг незачем. 800 мс тишины — пишем.
-    /// </summary>
-    private void ScheduleSettingsSave() {
-        _settingsSaveDebounce?.Cancel();
-        _settingsSaveDebounce?.Dispose();
-        _settingsSaveDebounce = new CancellationTokenSource();
-        var token = _settingsSaveDebounce.Token;
-        _main.Background.Queue("сохранение настроек", async () => {
-            await Task.Delay(800, token);
-            AppSettings.Save();
-        });
-    }
-
     /// <summary>
     /// Настройки изменились извне (инструмент set_setting агента): живой экземпляр уже обновлён
     /// и записан на диск, остаётся перерисовать биндинг. Событие приходит из agent-потока —
@@ -779,26 +529,19 @@ public partial class MainViewModel : ObservableObject {
     private void OnSettingsChangedExternally(AppSettings _) {
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null || dispatcher.CheckAccess()) {
-            RefreshSettingsViews();
+            RefreshSettingsBindings();
         } else {
-            dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(RefreshSettingsViews));
+            dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(RefreshSettingsBindings));
         }
     }
 
     /// <summary>
-    /// Перерисовать биндинг настроек после внешнего изменения. Тонкие виды читают живой
-    /// AppSettings, поэтому достаточно сообщить биндингу, что соответствующие свойства могли
-    /// измениться. Собираем рефлексией по совпадению имени с полем AppSettings: новое поле
-    /// настроек подхватится автоматически, без хрупкого ручного списка.
+    /// Перерисовать биндинги настроек после внешнего изменения: зеркала — SettingsViewModel
+    /// (рефлексия по совпадению имени с AppSettings — новое поле подхватится само),
+    /// остальное — чат (ReasoningEffortIndex живёт здесь, превью промпта).
     /// </summary>
-    private void RefreshSettingsViews() {
-        var settingsType = typeof(AppSettings);
-        foreach (var property in typeof(MainViewModel)
-                     .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                     .Where(p => p.CanRead && p.CanWrite
-                                 && settingsType.GetProperty(p.Name, BindingFlags.Public | BindingFlags.Instance) is not null)) {
-            OnPropertyChanged(property.Name);
-        }
+    private void RefreshSettingsBindings() {
+        Settings.RefreshAll();
         OnPropertyChanged(nameof(ReasoningEffortIndex));
         RefreshPromptPreview();
     }
@@ -1073,7 +816,7 @@ public partial class MainViewModel : ObservableObject {
             : path;
     }
 
-    private bool CanSend() => !IsBusy && (InputText.Trim().Length > 0 || PendingAttachments.Count > 0) && Endpoint.Trim().Length > 0;
+    private bool CanSend() => !IsBusy && (InputText.Trim().Length > 0 || PendingAttachments.Count > 0) && S.Endpoint.Trim().Length > 0;
 
     [RelayCommand(CanExecute = nameof(IsGenerating))]
     private void Cancel() => _main.Turns.Cancel();
@@ -1242,16 +985,6 @@ public partial class MainViewModel : ObservableObject {
             // просмотрщик не открылся — профилактика
         }
     }
-    /// <summary>
-    /// Синхронный flush настроек при закрытии. Дебаунс (800 мс) при выключении приложения
-    /// не гарантирован: отложенный таск может быть отменён или не успеть выполниться до
-    /// завершения процесса — настройки терялись, на старте грузился дефолт.
-    /// </summary>
-    public void FlushSettingsSave() {
-        _settingsSaveDebounce?.Cancel();
-        AppSettings.Save();
-    }
-
     /// <summary>Ручная компакция из UI.</summary>
     [RelayCommand(CanExecute = nameof(CanInteract))]
     private async Task CompactAsync() => await _main.Maintenance.CompactFromUiAsync();
@@ -1270,7 +1003,7 @@ public partial class MainViewModel : ObservableObject {
     /// ContextSize. Для проверки «влезет ли» сравниваем именно с ним — это то, что реально
     /// спрашивает сервер.
     /// </summary>
-    private int EffectiveContextSize => Math.Min(ContextSize, _main.ServerProps.NContext ?? ContextSize);
+    private int EffectiveContextSize => Math.Min(S.ContextSize, _main.ServerProps.NContext ?? S.ContextSize);
     private int _previewRenderCount;
     private void RefreshPromptPreview() {
         var sw = Stopwatch.StartNew();
@@ -1385,7 +1118,7 @@ public partial class MainViewModel : ObservableObject {
         turn.CurrentAssistant.AppendStreamChunk(text);
         _main.MemorySurfacer.MaybeFireLiveRecall(turn.Agentic, text, turn.Raw, turn.Continued is not null,
         _main.Log, _main.Sessions.CurrentId == MainAgent.SessionId,
-        CompanionEndpoint, _main.Turns.ActiveToken);
+        S.CompanionEndpoint, _main.Turns.ActiveToken);
     }
     private void OnAssistantMessage(TurnState turn, ChatMessage message) {
         turn.CurrentAssistant ??= AddAssistantView();
@@ -1400,7 +1133,7 @@ public partial class MainViewModel : ObservableObject {
         // Ассоциативный реколл: факты подтягиваются между итерациями, фоном на компаньон-модели.
         if (turn.Agentic) {
             var conversation = _main.Log;
-            var companion = CompanionEndpoint;
+            var companion = S.CompanionEndpoint;
             var token = _main.Turns.ActiveToken;
             _main.Background.Queue("реколл памяти", () =>
             _main.MemorySurfacer.RecallAfterTurnAsync(

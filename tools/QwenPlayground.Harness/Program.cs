@@ -301,10 +301,10 @@ internal static class Scenarios
         vm.NewSessionCommand.Execute(null); // уводим в свежую сессию, не трогаем main
         // Режимы и ForceNag убраны из VM (2026-08-22): всегда агент, nag без tool-вызовов отключён.
         vm.ReasoningEffortIndex = 1;
-        vm.Endpoint = prefix.TrimEnd('/');
-        vm.MaxTokens = 512;
-        vm.ContextSize = 32768;
-        vm.HeartbeatEnabled = false;
+        vm.Settings.Endpoint = prefix.TrimEnd('/');
+        vm.Settings.MaxTokens = 512;
+        vm.Settings.ContextSize = 32768;
+        vm.Settings.HeartbeatEnabled = false;
         vm.InputText = "простое сообщение";
         var before = vm.Messages.Count;
 
@@ -537,9 +537,9 @@ internal static class Scenarios
 
         var vm = new QwenPlayground.App.ViewModels.MainViewModel();
         vm.ReasoningEffortIndex = 1;
-        vm.Endpoint = prefix.TrimEnd('/');
-        vm.MaxTokens = 512;
-        vm.ContextSize = 32768;
+        vm.Settings.Endpoint = prefix.TrimEnd('/');
+        vm.Settings.MaxTokens = 512;
+        vm.Settings.ContextSize = 32768;
         vm.Clear();
         vm.InputText = "test";
 

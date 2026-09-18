@@ -75,7 +75,7 @@
                 <views:PreviewView DataContext="{Binding}" />
             </TabItem>
             <TabItem Header="Настройки">
-                <views:SettingsView DataContext="{Binding}" />
+                <views:SettingsView DataContext="{Binding Settings}" />
             </TabItem>
             <TabItem Header="Память">
                 <views:MemoryView DataContext="{Binding Memory}" />
