@@ -48,6 +48,12 @@ public sealed class ChatRuntime {
     /// </summary>
     public Func<string> SessionId { get; }
 
+    // Ключи профилей закреплённого рантайма (фабрика). Main-рантайм: null — ключи
+    // знает SessionController (текущая сессия).
+    public string? SamplerKey { get; internal set; }
+    public string? PromptKey { get; internal set; }
+    public string? StateBlockKey { get; internal set; }
+
     private readonly ServerProps _serverProps;
 
     public ChatRuntime(Func<string> sessionId, ServerProps serverProps) {

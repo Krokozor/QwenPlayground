@@ -42,17 +42,22 @@
 
         <!-- LastChildFill=False: иначе последний элемент растягивается на весь остаток ширины. -->
         <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="False">
-            <TextBlock Text="Сессия:" VerticalAlignment="Center" Margin="0,0,4,0" />
-            <ComboBox ItemsSource="{Binding SessionList.Sessions}" SelectedItem="{Binding SessionList.SelectedSession}"
-                      DisplayMemberPath="Title" Width="220" Margin="0,0,4,0" />
-            <Button Content="+" Command="{Binding SessionList.NewSessionCommand}" Padding="8,0" Margin="0,0,4,0" />
-            <!-- «×» виден только для не-main сессий: main удалить нельзя (подтверждение — в команде). -->
-            <Button Content="&#215;" Command="{Binding SessionList.DeleteSessionCommand}" Padding="8,0" Margin="0,0,12,0"
-                    ToolTip="Удалить сессию (с подтверждением)"
-                    Visibility="{Binding SessionList.CanDeleteSelectedSession, Converter={StaticResource BoolToVis}}" />
-            <!-- Настройка чата: назначение кусков профиля (семплер / промпт / state-блок) -->
-            <Button Content="&#9881;" Command="{Binding OpenChatTuningCommand}" Padding="8,0" Margin="0,0,12,0"
-                    ToolTip="Настройка чата: семплер, промпт, state-блок (профили из config/chat-profiles.json). Для main-сессии не действует." />
+            <!-- Селектор сессий + настройка чата: только в главном окне (ShowSessionPicker).
+                 Закреплённое окно (субагент, Pinned) за своей сессией — переключать нечем. -->
+            <StackPanel Orientation="Horizontal"
+                        Visibility="{Binding ShowSessionPicker, Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="Сессия:" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <ComboBox ItemsSource="{Binding SessionList.Sessions}" SelectedItem="{Binding SessionList.SelectedSession}"
+                          DisplayMemberPath="Title" Width="220" Margin="0,0,4,0" />
+                <Button Content="+" Command="{Binding SessionList.NewSessionCommand}" Padding="8,0" Margin="0,0,4,0" />
+                <!-- «×» виден только для не-main сессий: main удалить нельзя (подтверждение — в команде). -->
+                <Button Content="&#215;" Command="{Binding SessionList.DeleteSessionCommand}" Padding="8,0" Margin="0,0,12,0"
+                        ToolTip="Удалить сессию (с подтверждением)"
+                        Visibility="{Binding SessionList.CanDeleteSelectedSession, Converter={StaticResource BoolToVis}}" />
+                <!-- Настройка чата: назначение кусков профиля (семплер / промпт / state-блок) -->
+                <Button Content="&#9881;" Command="{Binding OpenChatTuningCommand}" Padding="8,0" Margin="0,0,12,0"
+                        ToolTip="Настройка чата: семплер, промпт, state-блок (профили из config/chat-profiles.json). Для main-сессии не действует." />
+            </StackPanel>
             <!-- Полки (группы инструментов): тот же механизм, что и у тулов агента
                  activate/deactivate_shelf. Отметка — немедленная активация, снятие — staged
                  (снимется при ближайшей естественной смене промпта). Состояние per-session.
@@ -78,8 +83,10 @@
                     <views:ShelfMenu DataContext="{Binding Shelves}" />
                 </Border>
             </Popup>
+            <!-- Wake — функция main-агента: только в главном окне. -->
             <Button Content="&#9200;" Command="{Binding WakeNowCommand}" ToolTip="Разбудить main-агента: wake-сигнал или heartbeat вне расписания"
-                    Padding="8,0" Margin="0,0,4,0" />
+                    Padding="8,0" Margin="0,0,4,0"
+                    Visibility="{Binding ShowSessionPicker, Converter={StaticResource BoolToVis}}" />
             <Button Content="Сжать" Command="{Binding CompactCommand}" Padding="12,2" Margin="0,0,4,0" />
             <!-- «Сжатие» — открыть панель live-превью сжатия; неактивна, пока в ней пусто. -->
             <Button Content="Сжатие" Command="{Binding ShowCompactionPanelCommand}" Padding="12,2" Margin="0,0,4,0"

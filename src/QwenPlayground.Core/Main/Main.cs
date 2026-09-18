@@ -189,7 +189,11 @@ public sealed class Main
     public ChatRuntime CreatePinnedRuntime(string sessionId, UiHooks hooks,
         string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null)
     {
-        var rt = new ChatRuntime(() => sessionId, ServerProps);
+        var rt = new ChatRuntime(() => sessionId, ServerProps) {
+            SamplerKey = samplerKey,
+            PromptKey = promptKey,
+            StateBlockKey = stateBlockKey
+        };
         rt.PromptAssembler = new SystemPromptAssembler(
             rt.SessionId,
             () => promptKey,

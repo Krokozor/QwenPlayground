@@ -21,6 +21,15 @@ using QwenPlayground.Core.Tools;
 namespace QwenPlayground.App.ViewModels;
 
 /// <summary>
+/// Хост окна чата: DataContext, содержащий ChatViewModel. MainViewModel (главное окно)
+/// и ChatWindowViewModel (отдельное окно чата, стадия C) — оба реализуют; code-behind
+/// ChatView резолвит Chat через этот интерфейс, не зная про конкретного хоста.
+/// </summary>
+public interface IChatHost {
+    ChatViewModel Chat { get; }
+}
+
+/// <summary>
 /// Окно чата: ядро разговора (сообщения, ввод, отправка, превью промпта, статус) и его
 /// LEGO-модули (панель сессий, меню полок, команды сообщений, проекция хода). Стадия A
 /// мультиоконного квеста: самодостаточный элемент, который можно хостить в любом окне.
@@ -28,6 +37,9 @@ namespace QwenPlayground.App.ViewModels;
 /// вкладки. Зависимости — рантайм чата (Log/FSM/Turns/...) + три общих сервиса
 /// (Sessions, Heartbeat, Background) и два делегата (отложенный save настроек, переход
 /// на вкладку настроек из шестерёнки чата).
+///
+/// Pinned (окно субагента, стадия C): рантайм закреплён за своей сессией — селектор
+/// сессий, wake и настройка чата скрыты, сейв идёт через SavePinned.
 /// </summary>
 public partial class ChatViewModel : ObservableObject {
     private readonly ChatRuntime _runtime;
@@ -36,6 +48,12 @@ public partial class ChatViewModel : ObservableObject {
     private readonly BackgroundWork _background;
     private readonly Action _scheduleSettingsSave;
     private readonly Action _goToSettings;
+
+    /// <summary>Закреплённое окно (субагент): своя сессия, селектор сессий скрыт.</summary>
+    public bool Pinned { get; init; }
+
+    /// <summary>Селектор сессий + wake + настройка чата: только в главном окне.</summary>
+    public bool ShowSessionPicker => !Pinned;
 
     /// <summary>Источник правды настроек — синглтон AppSettings.Get() (тонкие виды UI — в SettingsViewModel).</summary>
     private AppSettings S => AppSettings.Get();
@@ -150,7 +168,7 @@ public partial class ChatViewModel : ObservableObject {
 
         Shelves = new(() => SessionDir());
         SessionList = new(_sessions, _runtime.Log, () => IsGenerating, status => StatusText = status);
-        TurnView = new(_runtime, _sessions, _background, Messages, SessionDir, status => StatusText = status);
+        TurnView = new(_runtime, _background, Messages, SessionDir, status => StatusText = status);
         MessageCommands = new(Messages, PendingAttachments, _runtime.Log,
             CanInteract, () => IsGenerating, continueLast => TurnView.GenerateAsync(continueLast),
             SaveCurrent, RefreshPromptPreview, status => StatusText = status);
@@ -178,6 +196,12 @@ public partial class ChatViewModel : ObservableObject {
     /// через Chat — он уже должен быть достижим (в конструкторе Chat ещё null).
     /// </summary>
     public void Initialize() {
+        if (Pinned) {
+            // Закреплённое окно: сессия своя, main/restore не участвуют; драфт не тащим
+            // (окно не переживает рестарт — черновик не нужен).
+            RefreshPromptPreview();
+            return;
+        }
         StartupTrace.Log("ChatViewModel Initialize: EnsureMain");
         SessionList.EnsureMain();
         StartupTrace.Log("ChatViewModel Initialize: RestoreLast");
@@ -189,8 +213,8 @@ public partial class ChatViewModel : ObservableObject {
         RefreshPromptPreview();
     }
 
-    /// <summary>Каталог текущей сессии: у каждой сессии своя папка sessions/&lt;id&gt;/ (как у main-агента).</summary>
-    private string SessionDir() => _sessions.DirectoryFor(_sessions.CurrentId);
+    /// <summary>Каталог сессии рантайма: у каждой сессии своя папка sessions/&lt;id&gt;/ (как у main-агента).</summary>
+    private string SessionDir() => _sessions.DirectoryFor(_runtime.SessionId());
 
     // Структурные изменения разговора (компакция/загрузка/откат) сами перестраивают вид.
     private void OnLogChanged() => RebuildMessageViews();
@@ -344,10 +368,17 @@ public partial class ChatViewModel : ObservableObject {
         keys.OrderBy(k => k == ChatProfileSet.DefaultKey ? 0 : 1).ThenBy(k => k, StringComparer.Ordinal).ToList();
 
     /// <summary>
-    /// Сохранить текущую сессию (chat.json) — после каждого изменения чата. Список
-    /// сессий обновляет SessionList (заголовок/время могли измениться).
+    /// Сохранить разговор — после каждого изменения чата: главное окно — текущую сессию
+    /// (chat.json, список обновляет SessionList); закреплённое — свою (SavePinned).
     /// </summary>
-    public void SaveCurrent() => SessionList.SaveCurrent();
+    public void SaveCurrent() {
+        if (Pinned) {
+            _sessions.SavePinned(_runtime.SessionId(), _runtime.Log,
+                _runtime.SamplerKey, _runtime.PromptKey, _runtime.StateBlockKey);
+        } else {
+            SessionList.SaveCurrent();
+        }
+    }
 
     /// <summary>
     /// Сессия сменилась (событие SessionController): обновить вид — список/выбор/флаг

@@ -21,7 +21,6 @@ namespace QwenPlayground.App.ViewModels;
 /// </summary>
 public sealed class TurnViewViewModel {
     private readonly ChatRuntime _runtime;
-    private readonly SessionController _sessions;
     private readonly BackgroundWork _background;
     private readonly ObservableCollection<MessageViewModel> _messages;
     private readonly Func<string> _sessionDir;
@@ -31,13 +30,11 @@ public sealed class TurnViewViewModel {
 
     public TurnViewViewModel(
         ChatRuntime runtime,
-        SessionController sessions,
         BackgroundWork background,
         ObservableCollection<MessageViewModel> messages,
         Func<string> sessionDir,
         Action<string> status) {
         _runtime = runtime;
-        _sessions = sessions;
         _background = background;
         _messages = messages;
         _sessionDir = sessionDir;
@@ -145,7 +142,7 @@ public sealed class TurnViewViewModel {
         turn.Raw.Append(text);
         turn.CurrentAssistant.AppendStreamChunk(text);
         _runtime.MemorySurfacer.MaybeFireLiveRecall(turn.Agentic, text, turn.Raw, turn.Continued is not null,
-            _runtime.Log, _sessions.CurrentId == MainAgent.SessionId,
+            _runtime.Log, _runtime.SessionId() == MainAgent.SessionId,
             S.CompanionEndpoint, _runtime.Turns.ActiveToken);
     }
 
@@ -166,7 +163,7 @@ public sealed class TurnViewViewModel {
             var token = _runtime.Turns.ActiveToken;
             _background.Queue("реколл памяти", () =>
                 _runtime.MemorySurfacer.RecallAfterTurnAsync(
-                    conversation, _sessions.CurrentId == MainAgent.SessionId, companion, token));
+                    conversation, _runtime.SessionId() == MainAgent.SessionId, companion, token));
         }
     }
 

@@ -12,7 +12,9 @@ namespace QwenPlayground.App.Views;
 
 public partial class ChatView : UserControl
 {
-    private MainViewModel? _viewModel;
+    // Хост (MainViewModel — главное окно, ChatWindowViewModel — отдельное окно чата):
+    // резолвим Chat через IChatHost, не привязываясь к конкретному DataContext.
+    private ChatViewModel? _chat;
     private bool _stickToBottom = true;
 
     public ChatView()
@@ -38,16 +40,16 @@ public partial class ChatView : UserControl
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
-        if (_viewModel is not null)
+        if (_chat is not null)
         {
-            _viewModel.Chat.Messages.CollectionChanged -= OnMessagesChanged;
-            _viewModel.Chat.Compaction.PropertyChanged -= OnCompactionPropertyChanged;
+            _chat.Messages.CollectionChanged -= OnMessagesChanged;
+            _chat.Compaction.PropertyChanged -= OnCompactionPropertyChanged;
         }
-        _viewModel = e.NewValue as MainViewModel;
-        if (_viewModel is not null)
+        _chat = (e.NewValue as IChatHost)?.Chat;
+        if (_chat is not null)
         {
-            _viewModel.Chat.Messages.CollectionChanged += OnMessagesChanged;
-            _viewModel.Chat.Compaction.PropertyChanged += OnCompactionPropertyChanged;
+            _chat.Messages.CollectionChanged += OnMessagesChanged;
+            _chat.Compaction.PropertyChanged += OnCompactionPropertyChanged;
         }
     }
 
@@ -104,7 +106,7 @@ public partial class ChatView : UserControl
     /// </summary>
     private void ShelfButton_Click(object sender, RoutedEventArgs e)
     {
-        _viewModel?.Chat.Shelves.Refresh();
+        _chat?.Shelves.Refresh();
         if (ShelfPopup is null)
         {
             return;
@@ -123,13 +125,13 @@ public partial class ChatView : UserControl
     /// <summary>Ctrl+V: если в буфере картинка — вкладываем её (текстовую вставку не трогаем).</summary>
     private void OnInputPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.V || (Keyboard.Modifiers & ModifierKeys.Control) == 0 || _viewModel is null)
+        if (e.Key != Key.V || (Keyboard.Modifiers & ModifierKeys.Control) == 0 || _chat is null)
         {
             return;
         }
         if (System.Windows.Clipboard.ContainsImage())
         {
-            _viewModel.Chat.MessageCommands.PasteImageCommand.Execute(null);
+            _chat.MessageCommands.PasteImageCommand.Execute(null);
             e.Handled = true;
         }
     }

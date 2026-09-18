@@ -26,7 +26,7 @@ using QwenPlayground.Core.Templates;
 using QwenPlayground.Core.Tools;
 namespace QwenPlayground.App.ViewModels;
 
-public partial class MainViewModel : ObservableObject {
+public partial class MainViewModel : ObservableObject, IChatHost {
     // Композиционный корень (Core/Main): граф сервисов собирается там, UI — протокол-адаптер
     // (пузыри, команды, тонкие виды). Хуки UI — через UiHooks в конструкторе.
     private readonly Main _main;
@@ -444,4 +444,16 @@ public partial class MainViewModel : ObservableObject {
     /// спрашивает сервер.
     /// </summary>
     private int EffectiveContextSize => Math.Min(S.ContextSize, _main.ServerProps.NContext ?? S.ContextSize);
+
+    // ── Окна чата (мультиоконный квест, стадия C) ────────────────────────────────────
+
+    /// <summary>
+    /// Новое окно чата: закреплённая сессия (CreateDetached), свой рантайм (CreatePinnedRuntime),
+    /// свой ChatViewModel (Pinned). Общие сервисы — из Main.
+    /// </summary>
+    [RelayCommand]
+    private void OpenChatWindow() {
+        var window = Views.ChatWindow.Create(_main, () => System.Windows.Application.Current?.Shutdown());
+        window.Show();
+    }
 }
