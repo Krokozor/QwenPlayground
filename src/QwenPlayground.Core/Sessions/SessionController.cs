@@ -172,6 +172,23 @@ public sealed class SessionController
         SaveCurrent(); // редкое событие — пишем сразу, выбор не теряется при закрытии
     }
 
+    /// <summary>
+    /// Новая пустая сессия, не привязанная к текущей (окно субагента, стадия C):
+    /// id возвращается без переключения главного окна и без персистентности LastSessionId.
+    /// Файл создаётся при первом сохранении.
+    /// </summary>
+    public string CreateDetached() => Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// Сохранить историю закреплённой сессии (рантайм субагента), не трогая текущую:
+    /// лог — из рантайма, ключи профилей — из рантайма.
+    /// </summary>
+    public void SavePinned(string id, ChatLog log, string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null)
+    {
+        log.AssignPendingIds();
+        _sessions.Save(id, log, log.NextMessageId, samplerKey: samplerKey, promptKey: promptKey, stateBlockKey: stateBlockKey);
+    }
+
     /// <summary>Перестроить список сессий из хранилища (для UI).</summary>
     public void RefreshList() => _sessions.RefreshList();
 

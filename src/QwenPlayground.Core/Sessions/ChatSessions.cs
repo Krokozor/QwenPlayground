@@ -89,6 +89,14 @@ public sealed class ChatSessions
         _store.Save(CurrentId, messages, title, nextMessageId, purpose, samplerKey, promptKey, stateBlockKey);
     }
 
+    /// <summary>
+    /// Сохранить сессию по id, не трогая CurrentId (закреплённые рантаймы, стадия C).
+    /// Заголовок не проставляется (у закреплённых сессий нет main-заголовка).
+    /// </summary>
+    public void Save(string id, IReadOnlyList<ChatMessage> messages, int nextMessageId, string purpose = "subagent",
+        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null) =>
+        _store.Save(id, messages, null, nextMessageId, purpose, samplerKey, promptKey, stateBlockKey);
+
     /// <summary>Перестроить список из хранилища; main присутствует всегда, даже если ещё не сохранялся.</summary>
     public void RefreshList()
     {

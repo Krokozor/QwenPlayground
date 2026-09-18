@@ -230,4 +230,37 @@ public sealed class SessionControllerTests : IDisposable
         Assert.Equal("prompt-y", _controller.PromptKey);
         Assert.Equal("state-z", _controller.StateBlockKey);
     }
+
+    [Fact]
+    public void CreateDetached_ReturnsNewId_WithoutTouchingCurrentOrLast()
+    {
+        _controller.EnsureMain();
+
+        var id = _controller.CreateDetached();
+
+        Assert.NotEqual(MainAgent.SessionId, id);
+        Assert.Equal(MainAgent.SessionId, _controller.CurrentId);
+        Assert.Equal(_savedLastSessionId, AppSettings.Get().LastSessionId);
+    }
+
+    [Fact]
+    public void SavePinned_WritesPinnedSession_WithoutTouchingCurrent()
+    {
+        _controller.EnsureMain();
+        var pinnedId = _controller.CreateDetached();
+        var pinnedLog = new ChatLog();
+        pinnedLog.Add(new ChatMessage { Role = ChatRole.User, Content = "привет из закреплённого окна" });
+
+        _controller.SavePinned(pinnedId, pinnedLog, samplerKey: "s", promptKey: "p", stateBlockKey: "b");
+
+        var data = new SessionStore(_root).Load(pinnedId);
+        Assert.NotNull(data);
+        Assert.Equal(1, data!.Messages.Count);
+        Assert.Equal("s", data.SamplerKey);
+        Assert.Equal("p", data.PromptKey);
+        Assert.Equal("b", data.StateBlockKey);
+        // Текущая сессия не задета.
+        Assert.Equal(MainAgent.SessionId, _controller.CurrentId);
+        Assert.Equal(_savedLastSessionId, AppSettings.Get().LastSessionId);
+    }
 }

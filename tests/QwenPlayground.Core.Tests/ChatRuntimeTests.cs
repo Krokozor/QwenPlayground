@@ -53,4 +53,28 @@ public sealed class ChatRuntimeTests {
 
         Assert.True(main.Runtime.EffectiveContextSize > 0);
     }
+
+    [Fact]
+    public void CreatePinnedRuntime_IsIndependentFromMainRuntime() {
+        var main = BuildMain();
+        var hooks = new UiHooks(
+            _ => { }, _ => { }, () => string.Empty, _ => { }, () => { },
+            _ => Task.CompletedTask, () => Task.CompletedTask, () => { }, () => { });
+
+        var pinned = main.CreatePinnedRuntime("pinned-test-session", hooks);
+
+        Assert.Equal("pinned-test-session", pinned.SessionId());
+        // Бандл собран.
+        Assert.NotNull(pinned.PromptAssembler);
+        Assert.NotNull(pinned.StateBlocks);
+        Assert.NotNull(pinned.Pipeline);
+        Assert.NotNull(pinned.Maintenance);
+        Assert.NotNull(pinned.Draft);
+        Assert.NotNull(pinned.Turns);
+        // Независим от main-рантайма: свои история/FSM/ход.
+        Assert.NotSame(main.Runtime.Log, pinned.Log);
+        Assert.NotSame(main.Runtime.ChatState, pinned.ChatState);
+        Assert.NotSame(main.Runtime.Turns, pinned.Turns);
+        Assert.NotSame(main.Runtime.MemorySurfacer, pinned.MemorySurfacer);
+    }
 }

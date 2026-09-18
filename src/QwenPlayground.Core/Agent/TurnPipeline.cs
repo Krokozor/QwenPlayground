@@ -30,7 +30,7 @@ public sealed class TurnPipeline
     private readonly StateBlockBuilder _stateBlocks;
     private readonly ContextMaintenance _maintenance;
     private readonly ServerProps _serverProps;
-    private readonly SessionController _sessions;
+    private readonly TurnSessionView _session;
     private readonly SystemPromptAssembler _promptAssembler;
     private readonly MemorySurfacer _memorySurfacer;
     private readonly Action<string> _onStatus;
@@ -48,7 +48,7 @@ public sealed class TurnPipeline
         StateBlockBuilder stateBlocks,
         ContextMaintenance maintenance,
         ServerProps serverProps,
-        SessionController sessions,
+        TurnSessionView session,
         SystemPromptAssembler promptAssembler,
         MemorySurfacer memorySurfacer,
         Action<string> onStatus,
@@ -62,7 +62,7 @@ public sealed class TurnPipeline
         _stateBlocks = stateBlocks;
         _maintenance = maintenance;
         _serverProps = serverProps;
-        _sessions = sessions;
+        _session = session;
         _promptAssembler = promptAssembler;
         _memorySurfacer = memorySurfacer;
         _onStatus = onStatus;
@@ -100,7 +100,7 @@ public sealed class TurnPipeline
             catch (Exception exception)
             {
                 _onStatus($"ошибка проверки бюджета контекста: {exception.Message}");
-                _sessions.SaveCurrent();
+                _session.SaveCurrent();
                 return new TurnOutcome { BudgetFailed = true };
             }
         }
@@ -134,16 +134,16 @@ public sealed class TurnPipeline
         TurnOutcome outcome;
         try
         {
-            var sessionDir = _sessions.DirectoryFor(_sessions.CurrentId);
+            var sessionDir = _session.Directory();
             var settings = AppSettings.Get();
             var multimodal = await MultimodalContext.BuildAsync(sessionDir, settings.Endpoint, _serverProps, _cancellation.Token);
             // Профиль чата: три независимых куска из статичного хранилища (default = как раньше).
             // main-агент ведётся идентичностью — промпт-кусок и отключение state-блока на него не действуют.
-            var isMain = _sessions.CurrentId == MainAgent.SessionId;
+            var isMain = _session.SessionId() == MainAgent.SessionId;
             var profiles = ChatProfiles.Get();
-            var sampler = profiles.ResolveSampler(_sessions.SamplerKey);
-            var prompt = profiles.ResolvePrompt(_sessions.PromptKey);
-            var stateEnabled = isMain || profiles.ResolveStateBlock(_sessions.StateBlockKey).Enabled;
+            var sampler = profiles.ResolveSampler(_session.SamplerKey());
+            var prompt = profiles.ResolvePrompt(_session.PromptKey());
+            var stateEnabled = isMain || profiles.ResolveStateBlock(_session.StateBlockKey()).Enabled;
             var toolsAllowed = agentic && (isMain || prompt.Tools);
             await foreach (var agentEvent in _runLoop(new AgentLoopRequest {
                 Conversation = _log,
@@ -219,7 +219,7 @@ public sealed class TurnPipeline
     /// </summary>
     private void RestartInto(string buildId)
     {
-        _sessions.SaveCurrent();
+        _session.SaveCurrent();
         // Launcher в pointer-режиме (pid + buildId): current.txt = buildId, старт из run/<id>.
         // Старые версии приложения передают только pid — Launcher тогда работает в legacy-режиме.
         var launcher = Path.Combine(SelfBuildPaths.LauncherDir, "QwenPlayground.Launcher.exe");
@@ -238,6 +238,19 @@ public sealed class TurnPipeline
             ? parsed
             : null;
 }
+
+/// <summary>
+/// Вид сессии для хода: профиль-ключи, каталог, сейв. Главное окно — backed SessionController
+/// (текущая сессия, селектор); окна субагентов (мультиоконный квест, стадия C) — закреплённые
+/// за своей сессией. TurnPipeline не знает про контроллер — это шов закреплённого рантайма.
+/// </summary>
+public sealed record TurnSessionView(
+    Func<string> SessionId,
+    Func<string> Directory,
+    Func<string?> SamplerKey,
+    Func<string?> PromptKey,
+    Func<string?> StateBlockKey,
+    Action SaveCurrent);
 
 /// <summary>Итог хода: вид решает, куда показать ошибку (пузырь ответа или статус-строка).</summary>
 public sealed class TurnOutcome

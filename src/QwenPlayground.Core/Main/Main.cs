@@ -154,7 +154,13 @@ public sealed class Main
             rt.StateBlocks,
             rt.Maintenance,
             ServerProps,
-            Sessions,
+            new TurnSessionView(
+                () => Sessions.CurrentId,
+                () => Sessions.DirectoryFor(Sessions.CurrentId),
+                () => Sessions.SamplerKey,
+                () => Sessions.PromptKey,
+                () => Sessions.StateBlockKey,
+                Sessions.SaveCurrent),
             rt.PromptAssembler,
             rt.MemorySurfacer,
             hooks.Status,
@@ -172,5 +178,88 @@ public sealed class Main
             startTurn: hooks.HeartbeatStartTurn,
             flushMemory: hooks.FlushMemory,
             watchdogGuard: WatchdogLauncher.EnsureAlive);
+    }
+
+    /// <summary>
+    /// Рантайм, закреплённый за сессией (окно субагента, мультиоконный квест, стадия C):
+    /// общие сервисы (Tools/ServerProps/ServiceLlm) шарятся с приложением, сессия фиксирована
+    /// — селектор главного окна на неё не влияет. Ключи профилей — из параметров (null = default);
+    /// хуки — UI окна. Идентичность main-агента не участвует (не-main сессия — профиль-промпт).
+    /// </summary>
+    public ChatRuntime CreatePinnedRuntime(string sessionId, UiHooks hooks,
+        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null)
+    {
+        var rt = new ChatRuntime(() => sessionId, ServerProps);
+        rt.PromptAssembler = new SystemPromptAssembler(
+            rt.SessionId,
+            () => promptKey,
+            () => Sessions.DirectoryFor(sessionId),
+            new InjectedIdentity(),
+            new ExternalToolsNote(),
+            Tools);
+        rt.StateBlocks = new StateBlockBuilder(
+            rt.Log.AssignPendingIds,
+            () => rt.Log.NextMessageId,
+            () => rt.EffectiveContextSize,
+            ServerProps,
+            () => rt.Log,
+            () => rt.MemorySurfacer.GetSurfacedForStateBlock(),
+            [rt.MemorySurfacer, new BoardAnnouncer()],
+            () => PairsStore.Pending);
+        rt.Pipeline = new PromptPipeline(
+            () => rt.Log,
+            () => rt.PromptAssembler.ResolveSystemPrompt(),
+            Tools,
+            ServerProps,
+            messages => rt.StateBlocks.Build(),
+            ct => MultimodalContext.BuildAsync(Sessions.DirectoryFor(sessionId), AppSettings.Get().Endpoint, ServerProps, ct),
+            activeShelves: () => rt.PromptAssembler.EffectiveShelves());
+        rt.Maintenance = new ContextMaintenance(
+            rt.Log,
+            rt.ChatState,
+            rt.Compaction,
+            (user, system, onChunk, ct) => ServiceLlm.CompleteStructuredAsync(user, system, onChunk, ct),
+            new MemoryLayerStore(),
+            rt.MemorySurfacer,
+            ct => rt.Pipeline.CountNextTokensAsync(ct),
+            async () =>
+            {
+                await ServerProps.FetchAsync(AppSettings.Get().Endpoint);
+                return rt.EffectiveContextSize;
+            },
+            rt.SessionId,
+            new ContextBackupStore(ChatSessions.Root),
+            new ContextMaintenance.Ui(hooks.Status, hooks.Generating, hooks.SaveCurrent),
+            onCompacted: () =>
+            {
+                rt.PromptAssembler.DeactivateUnusedShelves(rt.Log);
+                hooks.OnCompactedUi();
+            });
+        rt.Draft = new DraftKeeper(
+            hooks.DraftInput,
+            hooks.DraftInputSet,
+            rt.SessionId,
+            new SessionDraftStore(ChatSessions.Root),
+            () => AppSettings.Get().DraftSaveIntervalSeconds);
+        rt.Turns = new TurnPipeline(
+            rt.Log,
+            rt.ChatState,
+            Tools,
+            rt.StateBlocks,
+            rt.Maintenance,
+            ServerProps,
+            new TurnSessionView(
+                rt.SessionId,
+                () => Sessions.DirectoryFor(sessionId),
+                () => samplerKey,
+                () => promptKey,
+                () => stateBlockKey,
+                () => Sessions.SavePinned(sessionId, rt.Log, samplerKey, promptKey, stateBlockKey)),
+            rt.PromptAssembler,
+            rt.MemorySurfacer,
+            hooks.Status,
+            hooks.Generating,
+            hooks.ShutdownApp);
+        return rt;
     }
 }
