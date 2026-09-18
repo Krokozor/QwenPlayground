@@ -69,10 +69,10 @@
         </Expander>
         <TabControl Margin="4" SelectedIndex="{Binding SelectedTabIndex}">
             <TabItem Header="Чат">
-                <views:ChatView DataContext="{Binding}" />
+                <views:ChatView DataContext="{Binding Chat}" />
             </TabItem>
             <TabItem Header="Превью промпта">
-                <views:PreviewView DataContext="{Binding}" />
+                <views:PreviewView DataContext="{Binding Chat}" />
             </TabItem>
             <TabItem Header="Настройки">
                 <views:SettingsView DataContext="{Binding Settings}" />

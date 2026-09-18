@@ -160,14 +160,14 @@ internal static class Scenarios
     {
         var viewModel = new QwenPlayground.App.ViewModels.MainViewModel();
         var message = new QwenPlayground.App.ViewModels.MessageViewModel { Role = "assistant" };
-        viewModel.Messages.Add(message);
+        viewModel.Chat.Messages.Add(message);
 
-        Console.WriteLine($"IsGenerating: {viewModel.IsGenerating}");
-        Console.WriteLine($"EditMessage(msg): {viewModel.MessageCommands.EditMessageCommand.CanExecute(message)}");
-        Console.WriteLine($"Rollback(msg): {viewModel.MessageCommands.RollbackCommand.CanExecute(message)}");
-        Console.WriteLine($"InspectPrompt(msg): {viewModel.MessageCommands.InspectPromptCommand.CanExecute(message)}");
-        Console.WriteLine($"CopyChat(null): {viewModel.MessageCommands.CopyChatCommand.CanExecute(null)}");
-        Console.WriteLine($"Continue(null): {viewModel.MessageCommands.ContinueCommand.CanExecute(null)}");
+        Console.WriteLine($"IsGenerating: {viewModel.Chat.IsGenerating}");
+        Console.WriteLine($"EditMessage(msg): {viewModel.Chat.MessageCommands.EditMessageCommand.CanExecute(message)}");
+        Console.WriteLine($"Rollback(msg): {viewModel.Chat.MessageCommands.RollbackCommand.CanExecute(message)}");
+        Console.WriteLine($"InspectPrompt(msg): {viewModel.Chat.MessageCommands.InspectPromptCommand.CanExecute(message)}");
+        Console.WriteLine($"CopyChat(null): {viewModel.Chat.MessageCommands.CopyChatCommand.CanExecute(null)}");
+        Console.WriteLine($"Continue(null): {viewModel.Chat.MessageCommands.ContinueCommand.CanExecute(null)}");
         return 0;
     }
 
@@ -298,15 +298,15 @@ internal static class Scenarios
         });
 
         var vm = new QwenPlayground.App.ViewModels.MainViewModel();
-        vm.SessionList.NewSessionCommand.Execute(null); // уводим в свежую сессию, не трогаем main
+        vm.Chat.SessionList.NewSessionCommand.Execute(null); // уводим в свежую сессию, не трогаем main
         // Режимы и ForceNag убраны из VM (2026-08-22): всегда агент, nag без tool-вызовов отключён.
-        vm.ReasoningEffortIndex = 1;
+        vm.Chat.ReasoningEffortIndex = 1;
         vm.Settings.Endpoint = prefix.TrimEnd('/');
         vm.Settings.MaxTokens = 512;
         vm.Settings.ContextSize = 32768;
         vm.Settings.HeartbeatEnabled = false;
-        vm.InputText = "простое сообщение";
-        var before = vm.Messages.Count;
+        vm.Chat.InputText = "простое сообщение";
+        var before = vm.Chat.Messages.Count;
 
         // Ловим момент сброса IsGenerating: если FSM ещё busy, кнопка остаётся серой навсегда
         // (NotifyCanExecuteChanged стреляет раньше, чем переход в Idle).
@@ -315,24 +315,24 @@ internal static class Scenarios
         System.ComponentModel.PropertyChangedEventHandler? handler = null;
         handler = (_, e) =>
         {
-            if (e.PropertyName == nameof(vm.IsGenerating) && !vm.IsGenerating)
+            if (e.PropertyName == nameof(vm.Chat.IsGenerating) && !vm.Chat.IsGenerating)
             {
-                canExecWhenReset = vm.MessageCommands.RollbackCommand.CanExecute(vm.Messages.LastOrDefault()).ToString();
+                canExecWhenReset = vm.Chat.MessageCommands.RollbackCommand.CanExecute(vm.Chat.Messages.LastOrDefault()).ToString();
                 fsmWhenReset = vm.Diagnostics.ChatStateName;
                 vm.PropertyChanged -= handler;
             }
         };
         vm.PropertyChanged += handler;
 
-        vm.SendCommand.Execute(null);
-        var finished = await WaitCondition(() => !vm.IsGenerating, 15000);
+        vm.Chat.SendCommand.Execute(null);
+        var finished = await WaitCondition(() => !vm.Chat.IsGenerating, 15000);
         await Task.Delay(300);
         Console.WriteLine($"finished: {finished}");
         Console.WriteLine($"canExec(Rollback) В МОМЕНТ сброса IsGenerating: {canExecWhenReset} (FSM={fsmWhenReset})");
-        Console.WriteLine($"status: '{vm.StatusText}'");
-        Console.WriteLine($"messages after 400: {vm.Messages.Count} (before={before})");
+        Console.WriteLine($"status: '{vm.Chat.StatusText}'");
+        Console.WriteLine($"messages after 400: {vm.Chat.Messages.Count} (before={before})");
 
-        if (vm.Messages.Count == 0)
+        if (vm.Chat.Messages.Count == 0)
         {
             Console.WriteLine("SKIP: контекст пуст (ошибка до добавления сообщения)");
             listener.Stop();
@@ -340,16 +340,16 @@ internal static class Scenarios
             return 2;
         }
 
-        var target = vm.Messages[^1];
-        Console.WriteLine($"last message role={target.Role}, CanExecute(Rollback)={vm.MessageCommands.RollbackCommand.CanExecute(target)}");
-        var canSendAfter = vm.SendCommand.CanExecute(null);
+        var target = vm.Chat.Messages[^1];
+        Console.WriteLine($"last message role={target.Role}, CanExecute(Rollback)={vm.Chat.MessageCommands.RollbackCommand.CanExecute(target)}");
+        var canSendAfter = vm.Chat.SendCommand.CanExecute(null);
         Console.WriteLine($"CanExecute(Send)={canSendAfter}");
-        Console.WriteLine($"IsGenerating={vm.IsGenerating}, IsBusy={vm.IsBusy}");
+        Console.WriteLine($"IsGenerating={vm.Chat.IsGenerating}, IsBusy={vm.Chat.IsBusy}");
 
-        if (vm.MessageCommands.RollbackCommand.CanExecute(target))
+        if (vm.Chat.MessageCommands.RollbackCommand.CanExecute(target))
         {
-            vm.MessageCommands.RollbackCommand.Execute(target);
-            Console.WriteLine($"after rollback: messages={vm.Messages.Count}, conversation persisted via SaveCurrent");
+            vm.Chat.MessageCommands.RollbackCommand.Execute(target);
+            Console.WriteLine($"after rollback: messages={vm.Chat.Messages.Count}, conversation persisted via SaveCurrent");
         }
 
         listener.Stop();
@@ -536,15 +536,15 @@ internal static class Scenarios
         });
 
         var vm = new QwenPlayground.App.ViewModels.MainViewModel();
-        vm.ReasoningEffortIndex = 1;
+        vm.Chat.ReasoningEffortIndex = 1;
         vm.Settings.Endpoint = prefix.TrimEnd('/');
         vm.Settings.MaxTokens = 512;
         vm.Settings.ContextSize = 32768;
-        vm.Clear();
-        vm.InputText = "test";
+        vm.Chat.Clear();
+        vm.Chat.InputText = "test";
 
-        vm.SendCommand.Execute(null);
-        var started = await WaitCondition(() => vm.IsGenerating, 5000);
+        vm.Chat.SendCommand.Execute(null);
+        var started = await WaitCondition(() => vm.Chat.IsGenerating, 5000);
         if (!started)
         {
             Console.WriteLine("FAIL: generation did not start");
@@ -553,20 +553,20 @@ internal static class Scenarios
         }
 
         await Task.Delay(700);
-        vm.CancelCommand.Execute(null);
-        await WaitCondition(() => !vm.IsGenerating, 5000);
-        var first = vm.Messages[^1].Content;
+        vm.Chat.CancelCommand.Execute(null);
+        await WaitCondition(() => !vm.Chat.IsGenerating, 5000);
+        var first = vm.Chat.Messages[^1].Content;
         Console.WriteLine($"after stop1: '{first}'");
 
-        if (!vm.MessageCommands.ContinueCommand.CanExecute(null))
+        if (!vm.Chat.MessageCommands.ContinueCommand.CanExecute(null))
         {
             Console.WriteLine("FAIL: Continue disabled after stop");
             listener.Stop();
             return 1;
         }
 
-        vm.MessageCommands.ContinueCommand.Execute(null);
-        started = await WaitCondition(() => vm.IsGenerating, 5000);
+        vm.Chat.MessageCommands.ContinueCommand.Execute(null);
+        started = await WaitCondition(() => vm.Chat.IsGenerating, 5000);
         if (!started)
         {
             Console.WriteLine("FAIL: continue did not start");
@@ -575,9 +575,9 @@ internal static class Scenarios
         }
 
         await Task.Delay(700);
-        vm.CancelCommand.Execute(null);
-        await WaitCondition(() => !vm.IsGenerating, 5000);
-        var second = vm.Messages[^1].Content;
+        vm.Chat.CancelCommand.Execute(null);
+        await WaitCondition(() => !vm.Chat.IsGenerating, 5000);
+        var second = vm.Chat.Messages[^1].Content;
         Console.WriteLine($"after stop2: '{second}'");
 
         listener.Stop();

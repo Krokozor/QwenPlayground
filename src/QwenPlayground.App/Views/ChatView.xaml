@@ -22,7 +22,7 @@
                                    VerticalAlignment="Center" />
                         <Button Content="&#215;" Padding="2,0" Margin="0,2,0,0" FontSize="10" Foreground="#e06c75"
                                 HorizontalAlignment="Left"
-                                Command="{Binding DataContext.MessageCommands.RemoveAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                Command="{Binding DataContext.Chat.MessageCommands.RemoveAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                 CommandParameter="{Binding}" />
                     </StackPanel>
                 </StackPanel>
@@ -131,20 +131,20 @@
                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                                                 Visibility="{Binding IsSystem, Converter={StaticResource InverseBoolToVis}}">
                                         <Button Content="промпт" Padding="8,0" Margin="4,0,0,0" FontSize="11"
-                                                Command="{Binding DataContext.MessageCommands.InspectPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Command="{Binding DataContext.Chat.MessageCommands.InspectPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}" />
                                         <Button Content="правка" Padding="8,0" Margin="4,0,0,0" FontSize="11"
-                                                Command="{Binding DataContext.MessageCommands.EditMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Command="{Binding DataContext.Chat.MessageCommands.EditMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}" />
                                         <Button Content="копировать" Padding="8,0" Margin="4,0,0,0" FontSize="11"
-                                                Command="{Binding DataContext.MessageCommands.CopyMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Command="{Binding DataContext.Chat.MessageCommands.CopyMessageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}" />
                                         <Button Content="реролл" Padding="8,0" Margin="4,0,0,0" FontSize="11"
-                                                Command="{Binding DataContext.MessageCommands.RerollCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Command="{Binding DataContext.Chat.MessageCommands.RerollCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}"
                                                 Visibility="{Binding IsAssistant, Converter={StaticResource BoolToVis}}" />
                                         <Button Content="откат" Padding="8,0" Margin="4,0,0,0" FontSize="11"
-                                                Command="{Binding DataContext.MessageCommands.RollbackCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Command="{Binding DataContext.Chat.MessageCommands.RollbackCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}" />
                                     </StackPanel>
                                 </DockPanel>
@@ -181,7 +181,7 @@
                                                 <StackPanel>
                                                     <Button Background="Transparent" BorderThickness="0" Padding="0"
                                                             HorizontalContentAlignment="Stretch"
-                                                            Command="{Binding DataContext.MessageCommands.OpenAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            Command="{Binding DataContext.Chat.MessageCommands.OpenAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                             CommandParameter="{Binding}"
                                                             ToolTip="Открыть файл">
                                                         <StackPanel>

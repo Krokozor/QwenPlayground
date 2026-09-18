@@ -23,7 +23,7 @@ public partial class MainWindow : Window
             if (vm is null) return;
             try
             {
-                vm.SaveCurrent();
+                vm.Chat.SaveCurrent();
                 vm.Shutdown();
             }
             catch (Exception exception)

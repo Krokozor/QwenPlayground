@@ -40,14 +40,14 @@ public partial class ChatView : UserControl
     {
         if (_viewModel is not null)
         {
-            _viewModel.Messages.CollectionChanged -= OnMessagesChanged;
-            _viewModel.Compaction.PropertyChanged -= OnCompactionPropertyChanged;
+            _viewModel.Chat.Messages.CollectionChanged -= OnMessagesChanged;
+            _viewModel.Chat.Compaction.PropertyChanged -= OnCompactionPropertyChanged;
         }
         _viewModel = e.NewValue as MainViewModel;
         if (_viewModel is not null)
         {
-            _viewModel.Messages.CollectionChanged += OnMessagesChanged;
-            _viewModel.Compaction.PropertyChanged += OnCompactionPropertyChanged;
+            _viewModel.Chat.Messages.CollectionChanged += OnMessagesChanged;
+            _viewModel.Chat.Compaction.PropertyChanged += OnCompactionPropertyChanged;
         }
     }
 
@@ -104,7 +104,7 @@ public partial class ChatView : UserControl
     /// </summary>
     private void ShelfButton_Click(object sender, RoutedEventArgs e)
     {
-        _viewModel?.Shelves.Refresh();
+        _viewModel?.Chat.Shelves.Refresh();
         if (ShelfPopup is null)
         {
             return;
@@ -129,7 +129,7 @@ public partial class ChatView : UserControl
         }
         if (System.Windows.Clipboard.ContainsImage())
         {
-            _viewModel.MessageCommands.PasteImageCommand.Execute(null);
+            _viewModel.Chat.MessageCommands.PasteImageCommand.Execute(null);
             e.Handled = true;
         }
     }
