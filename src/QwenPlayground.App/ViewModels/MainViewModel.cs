@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -120,18 +120,7 @@ public partial class MainViewModel : ObservableObject {
     [ObservableProperty]
     private string _promptPreview = string.Empty;
 
-    [ObservableProperty]
-    private SessionInfo? _selectedSession;
-
-    /// <summary>
-    /// Кнопка «×» (удаление сессии) видна только для не-main сессий: main удалить нельзя,
-    /// поэтому нажимать на кнопку у main незачем.
-    /// </summary>
-    public bool CanDeleteSelectedSession =>
-        SelectedSession is not null && SelectedSession.Id != MainAgent.SessionId;
-
     public ObservableCollection<MessageViewModel> Messages { get; } = new();
-    public ObservableCollection<SessionInfo> Sessions { get; } = new();
 
     /// <summary>
     /// Прикреплённые к следующему сообщению файлы (картинки и т.п.). Копируются в
@@ -146,8 +135,11 @@ public partial class MainViewModel : ObservableObject {
     // Ключи кусков живут в SessionController (перистируются в SessionData), VM читает их
     // через контроллер.
 
-    /// <summary>main-сессия управляется идентичностью — настройка чата для неё закрыта.</summary>
-    public bool IsMainSession => _main.Sessions.CurrentId == MainAgent.SessionId;
+    /// <summary>
+    /// Панель сессий в тулбаре чата (селектор + «+»/«×»): список, выбор, команды.
+    /// Логика — в SessionController (Core); реакции на смену — в OnSessionChanged.
+    /// </summary>
+    public SessionListViewModel SessionList { get; }
 
     /// <summary>Индекс вкладки «Настройки» в главном окне (для перехода из шестерёнки чата).</summary>
     public const int SettingsTabIndex = 2;
@@ -172,6 +164,8 @@ public partial class MainViewModel : ObservableObject {
             () => System.Windows.Application.Current?.Shutdown()),
             typeof(AgentTool).Assembly, // Core: базовые инструменты
             typeof(MainViewModel).Assembly); // App: UI-инструменты (screenshot, switch_tab)
+        // LEGO-модули UI: панель сессий и меню полок (свои DataContext, события — швы).
+        SessionList = new(_main.Sessions, _main.Log, () => IsGenerating, status => StatusText = status);
         _main.Log.Changed += OnLogChanged;
         _main.Sessions.SessionChanged += OnSessionChanged;
         // Снятие полки (тулом агента или из меню) — доменное событие; реакция UI — в меню.
@@ -204,10 +198,10 @@ public partial class MainViewModel : ObservableObject {
         // Вложения к следующему сообщению: SendCommand.canexec меняется (можно отправить
         // и картинку без текста) + чипсы в UI.
         PendingAttachments.CollectionChanged += (_, _) => SendCommand.NotifyCanExecuteChanged();
-        StartupTrace.Log("MainViewModel ctor: EnsureMainSession");
-        EnsureMainSession();
-        StartupTrace.Log("MainViewModel ctor: RestoreLastSession");
-        RestoreLastSession();
+        StartupTrace.Log("MainViewModel ctor: EnsureMain");
+        SessionList.EnsureMain();
+        StartupTrace.Log("MainViewModel ctor: RestoreLast");
+        SessionList.RestoreLast();
         // Восстановить драфт ТЕКУЩЕЙ сессии (main или последней открытой) в окошко ввода:
         // переживает обрыв питания/крах — набранный промпт возвращается.
         _main.Draft.Restore();
@@ -425,10 +419,7 @@ public partial class MainViewModel : ObservableObject {
     /// иначе начинаем с чистого разговора. Логика — в SessionController; здесь только
     /// обновление списка сессий (вид).
     /// </summary>
-    private void EnsureMainSession() {
-        _main.Sessions.EnsureMain();
-        RefreshSessions();
-    }
+
 
     /// <summary>
     /// Flush-векторизация памяти: факты без слоёв или со старой LayersVersion классифицируются
@@ -500,28 +491,6 @@ public partial class MainViewModel : ObservableObject {
         SaveCurrent();
     }
 
-    partial void OnSelectedSessionChanged(SessionInfo? value) {
-        OnPropertyChanged(nameof(CanDeleteSelectedSession));
-        if (value is null || value.Id == _main.Sessions.CurrentId || IsGenerating) 
-            return;
-        
-        if (_main.Sessions.Load(value.Id))
-            StatusText = string.Empty;
-        // Реакции вида (список/превью/полки) — в OnSessionChanged (событие контроллера).
-    }
-
-    [RelayCommand]
-    private void NewSession() {
-        if (IsGenerating) 
-            return;        
-
-        if (_main.Log.Count > 0) 
-            SaveCurrent();        
-
-        _main.Log.Clear();
-        _main.Sessions.StartNew();
-        // Реакции вида (список/выбор/превью/полки) — в OnSessionChanged (событие контроллера).
-    }    
     /// <summary>
     /// Настройки изменились извне (инструмент set_setting агента): живой экземпляр уже обновлён
     /// и записан на диск, остаётся перерисовать биндинг. Событие приходит из agent-потока —
@@ -545,28 +514,6 @@ public partial class MainViewModel : ObservableObject {
         Settings.RefreshAll();
         OnPropertyChanged(nameof(ReasoningEffortIndex));
         RefreshPromptPreview();
-    }
-
-    [RelayCommand]
-    private void DeleteSession() {
-        if (IsGenerating || SelectedSession is null) 
-            return;
-        
-        if(SelectedSession.Id == MainAgent.SessionId){
-            StatusText = "основную сессию нельзя удалить";
-            return;
-        }
-
-        // Удаление необратимо (chat.json + artifacts сессии) — подтверждаем.
-        var confirm = new Views.ConfirmWindow($"Удалить сессию «{SelectedSession.Title}»?")
-        {
-            Owner = System.Windows.Application.Current.MainWindow
-        };
-        if (confirm.ShowDialog() != true)
-            return;
-
-        _main.Sessions.Delete(SelectedSession.Id);
-        // Реакции вида (список/превью/полки) — в OnSessionChanged (событие контроллера).
     }
 
     // ── Профили чата: резолверы хода и диалог настройки (шестерёнка) ────────────────
@@ -603,7 +550,7 @@ public partial class MainViewModel : ObservableObject {
     /// </summary>
     [RelayCommand]
     private void OpenChatTuning() {
-        if (IsMainSession || IsGenerating)
+        if (SessionList.IsMainSession || IsGenerating)
             return;
         var profiles = ChatProfiles.Get();
         var dialog = new ChatTuningDialog(
@@ -626,35 +573,17 @@ public partial class MainViewModel : ObservableObject {
         keys.OrderBy(k => k == ChatProfileSet.DefaultKey ? 0 : 1).ThenBy(k => k, StringComparer.Ordinal).ToList();
 
     /// <summary>
-    /// Восстановить последнюю открытую сессию (из settings.json). Логика — в
-    /// SessionController; реакции вида — в OnSessionChanged.
+    /// Сохранить текущую сессию (chat.json) — после каждого изменения чата. Список
+    /// сессий обновляет SessionList (заголовок/время могли измениться).
     /// </summary>
-    private void RestoreLastSession() {
-        _main.Sessions.RestoreLast();
-    }
-
-    public void SaveCurrent() {
-        _main.Sessions.SaveCurrent();
-        RefreshSessions(); // заголовок/время в списке могли измениться
-    }
-
-    private void RefreshSessions() {
-        _main.Sessions.RefreshList();
-        Sessions.Clear();
-        foreach (var info in _main.Sessions.List) {
-            Sessions.Add(info);
-        }
-
-        SelectedSession = Sessions.FirstOrDefault(s => s.Id == _main.Sessions.CurrentId);
-    }
+    public void SaveCurrent() => SessionList.SaveCurrent();
 
     /// <summary>
-    /// Сессия сменилась (событие SessionController): обновить вид — флаг main, список +
-    /// выбор (селектор следует за CurrentId), превью, меню полок (полки per-session).
+    /// Сессия сменилась (событие SessionController): обновить вид — список/выбор/флаг
+    /// main (в SessionList), превью, меню полок (полки per-session).
     /// </summary>
     private void OnSessionChanged() {
-        OnPropertyChanged(nameof(IsMainSession));
-        RefreshSessions();
+        SessionList.Refresh();
         RefreshPromptPreview();
         Shelves.Refresh();
     }

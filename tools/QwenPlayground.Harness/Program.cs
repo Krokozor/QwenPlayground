@@ -298,7 +298,7 @@ internal static class Scenarios
         });
 
         var vm = new QwenPlayground.App.ViewModels.MainViewModel();
-        vm.NewSessionCommand.Execute(null); // уводим в свежую сессию, не трогаем main
+        vm.SessionList.NewSessionCommand.Execute(null); // уводим в свежую сессию, не трогаем main
         // Режимы и ForceNag убраны из VM (2026-08-22): всегда агент, nag без tool-вызовов отключён.
         vm.ReasoningEffortIndex = 1;
         vm.Settings.Endpoint = prefix.TrimEnd('/');

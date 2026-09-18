@@ -43,13 +43,13 @@
         <!-- LastChildFill=False: иначе последний элемент растягивается на весь остаток ширины. -->
         <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="False">
             <TextBlock Text="Сессия:" VerticalAlignment="Center" Margin="0,0,4,0" />
-            <ComboBox ItemsSource="{Binding Sessions}" SelectedItem="{Binding SelectedSession}"
+            <ComboBox ItemsSource="{Binding SessionList.Sessions}" SelectedItem="{Binding SessionList.SelectedSession}"
                       DisplayMemberPath="Title" Width="220" Margin="0,0,4,0" />
-            <Button Content="+" Command="{Binding NewSessionCommand}" Padding="8,0" Margin="0,0,4,0" />
+            <Button Content="+" Command="{Binding SessionList.NewSessionCommand}" Padding="8,0" Margin="0,0,4,0" />
             <!-- «×» виден только для не-main сессий: main удалить нельзя (подтверждение — в команде). -->
-            <Button Content="&#215;" Command="{Binding DeleteSessionCommand}" Padding="8,0" Margin="0,0,12,0"
+            <Button Content="&#215;" Command="{Binding SessionList.DeleteSessionCommand}" Padding="8,0" Margin="0,0,12,0"
                     ToolTip="Удалить сессию (с подтверждением)"
-                    Visibility="{Binding CanDeleteSelectedSession, Converter={StaticResource BoolToVis}}" />
+                    Visibility="{Binding SessionList.CanDeleteSelectedSession, Converter={StaticResource BoolToVis}}" />
             <!-- Настройка чата: назначение кусков профиля (семплер / промпт / state-блок) -->
             <Button Content="&#9881;" Command="{Binding OpenChatTuningCommand}" Padding="8,0" Margin="0,0,12,0"
                     ToolTip="Настройка чата: семплер, промпт, state-блок (профили из config/chat-profiles.json). Для main-сессии не действует." />
