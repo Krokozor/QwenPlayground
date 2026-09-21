@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Windows;
 using System.Windows.Threading;
 using QwenPlayground.Core.Crash;
-using QwenPlayground.Core.SelfBuild;
 
 namespace QwenPlayground.App;
 

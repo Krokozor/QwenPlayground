@@ -4,8 +4,6 @@ using System.Text.Json;
 using System.Windows;
 using QwenPlayground.Core.SelfBuild;
 using System.Windows.Interop;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 

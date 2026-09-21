@@ -1,9 +1,7 @@
 using System.Collections.ObjectModel;
-using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using QwenPlayground.Core.Runtime;
-using QwenPlayground.Core.Settings;
 
 namespace QwenPlayground.App.ViewModels;
 

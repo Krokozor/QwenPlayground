@@ -1,4 +1,3 @@
-using System.Text;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Settings;
 

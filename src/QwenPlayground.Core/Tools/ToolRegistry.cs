@@ -69,15 +69,6 @@ public sealed class ToolRegistry
         return true;
     }
 
-    /// <summary>Удалить инструмент по имени (для MCP: переподключение/отключение сервера).</summary>
-    public bool Unregister(string name)
-    {
-        if (!_tools.Remove(name))
-            return false;
-        _definitions.RemoveAll(d => d.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-        return true;
-    }
-
     /// <summary>Удалить все инструменты с указанным префиксом (например, "blender_").</summary>
     public int UnregisterByPrefix(string prefix)
     {

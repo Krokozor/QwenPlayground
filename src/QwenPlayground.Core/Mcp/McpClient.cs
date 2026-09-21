@@ -597,8 +597,11 @@ public sealed class McpClient : IAsyncDisposable
             catch { /* best effort */ }
         }
 
-        try { await _stderrPump?.WaitAsync(CancellationToken.None); }
-        catch { /* насос может быть уже мёртв */ }
+        if (_stderrPump is { } pump)
+        {
+            try { await pump.WaitAsync(CancellationToken.None); }
+            catch { /* насос может быть уже мёртв */ }
+        }
 
         KillProcess();
         _http.Dispose();

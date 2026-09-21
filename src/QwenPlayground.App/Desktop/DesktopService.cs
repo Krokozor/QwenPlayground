@@ -275,31 +275,6 @@ public static class DesktopService
         return path;
     }
 
-    /// <summary>Capture a specific window by handle to a PNG file.</summary>
-    public static async Task<string> ScreenshotWindowAsync(IntPtr windowHandle)
-    {
-        return await Task.Run(() =>
-        {
-            if (!GetWindowRect(windowHandle, out var rect))
-                throw new InvalidOperationException("Cannot get window rect.");
-
-            int w = rect.Right - rect.Left;
-            int h = rect.Bottom - rect.Top;
-            if (w <= 0 || h <= 0)
-                throw new InvalidOperationException("Window has zero size.");
-
-            using var bitmap = new Bitmap(w, h, PixelFormat.Format32bppArgb);
-            using (var graphics = Graphics.FromImage(bitmap))
-            {
-                graphics.CopyFromScreen(new Point(rect.Left, rect.Top), Point.Empty, new Size(w, h));
-            }
-
-            var path = Path.Combine(Path.GetTempPath(), $"desktop_win_{DateTime.Now:HHmmss_fff}.png");
-            bitmap.Save(path, ImageFormat.Png);
-            return path;
-        });
-    }
-
     // ─── Mouse ────────────────────────────────────────────────
 
     /// <summary>Move the cursor to screen coordinates (x, y).</summary>

@@ -30,7 +30,8 @@ namespace QwenPlayground.Core.Roslyn;
     "whole solution (find heavy classes referenced by one element). " +
     "Refs = C# references (excluding the declaration, like VS CodeLens) + XAML references " +
     "(bindings and element tags — real references for a WPF app; breakdown in the note column). " +
-    "Accessors and backing fields are folded into their property/event (not listed separately). " +
+    "Accessors, backing fields and source-generated methods (MVVM On*Changed in .g.cs) are folded " +
+    "into their property/event (not listed separately); references in obj/*.g.cs are not counted. " +
     "0 refs = candidate, not proof: [Tool] members are marked 'via reflection', test-project types " +
     "'test framework', delegate indirection (f = x => M(x)) and string-based lookups are not visible. " +
     "Filters: maxRefs (0 = dead only, 1 = dead + single-use), minRefs (hotspots), access, kinds, " +
@@ -329,6 +330,13 @@ public sealed class CSharpReferenceReportTool : AgentTool
             {
                 return false;
             }
+            // Сгенерированные sourcе-генератором методы (MVVM Toolkit: On*Changed/
+            // On*Changing в .g.cs) — шум: зеркалят observable-свойства, их «0 refs»
+            // после отсечения obj/-ссылок затирает реальные строки репорта.
+            if (DeclaredInGeneratedCode(method))
+            {
+                return false;
+            }
             return method.MethodKind is not (MethodKind.PropertyGet or MethodKind.PropertySet
                                               or MethodKind.EventAdd or MethodKind.EventRemove);
         }
@@ -337,6 +345,21 @@ public sealed class CSharpReferenceReportTool : AgentTool
             return !field.IsImplicitlyDeclared;
         }
         return true;
+    }
+
+    /// <summary>Символ объявлен в сгенерированном коде (obj/, *.g.cs).</summary>
+    private static bool DeclaredInGeneratedCode(ISymbol symbol)
+    {
+        foreach (var reference in symbol.DeclaringSyntaxReferences)
+        {
+            var path = reference.GetSyntax().GetLocation()?.GetLineSpan().Path;
+            if (path is not null &&
+                (path.Contains("\\obj\\") || path.Contains("/obj/") || path.EndsWith(".g.cs")))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static bool MatchesKind(ISymbol member, string kinds)
@@ -402,10 +425,19 @@ public sealed class CSharpReferenceReportTool : AgentTool
         {
             foreach (var referenceLocation in reference.Locations)
             {
-                if (referenceLocation.Location.IsInSource)
+                if (!referenceLocation.Location.IsInSource)
                 {
-                    locations.Add(referenceLocation.Location);
+                    continue;
                 }
+                // Сгенерированный код (obj/, *.g.cs — MVVM-генераторы и пр.) —
+                // не реальные ссылки, иначе «1 ref» оказывается шиком .g.cs.
+                var path = referenceLocation.Location.GetLineSpan().Path;
+                if (path is not null &&
+                    (path.Contains("\\obj\\") || path.Contains("/obj/") || path.EndsWith(".g.cs")))
+                {
+                    continue;
+                }
+                locations.Add(referenceLocation.Location);
             }
         }
         return locations;

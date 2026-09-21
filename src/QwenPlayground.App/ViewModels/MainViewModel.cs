@@ -1,16 +1,10 @@
-using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
-using System.Reflection;
-using System.Text.Json.Nodes;
 using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using QwenPlayground.App.Desktop;
-using QwenPlayground.App.Tools;
 using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
-using QwenPlayground.Core.Compaction;
 using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Mcp;
 using QwenPlayground.Core.Inference;
@@ -22,7 +16,6 @@ using QwenPlayground.Core.Runtime;
 using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Settings;
-using QwenPlayground.Core.Templates;
 using QwenPlayground.Core.Tools;
 namespace QwenPlayground.App.ViewModels;
 

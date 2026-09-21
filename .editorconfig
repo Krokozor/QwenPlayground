@@ -1,0 +1,5 @@
+root = true
+
+[*.cs]
+# Неиспользуемые using — предупреждение на сборке (иначе IDE0005 молчит в build).
+dotnet_diagnostic.IDE0005.severity = warning

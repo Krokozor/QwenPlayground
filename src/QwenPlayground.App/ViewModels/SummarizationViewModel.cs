@@ -7,7 +7,6 @@ using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
 using QwenPlayground.Core.Memory;
-using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Templates;
 
