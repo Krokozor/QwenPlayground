@@ -360,12 +360,21 @@ static class Program
 
     static async Task EnsureBridgeAsync()
     {
-        for (int i = 0; i < 20; i++) // up to ~30s
+        // Domain reloads take ~37s on this machine — wait generously and try
+        // connecting directly, so a tool call issued DURING a reload simply
+        // blocks until the bridge is back (no client-side sleep rituals).
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.Elapsed < TimeSpan.FromSeconds(120))
         {
             Bridge? b;
             lock (BridgeLock) b = _bridge;
             if (b != null && b.Connected) return;
-            await Task.Delay(1500);
+            if (await TryConnectBridge())
+            {
+                Log.Write($"bridge ready after {sw.Elapsed.TotalSeconds:F0}s");
+                return;
+            }
+            await Task.Delay(2000);
         }
     }
 
@@ -404,17 +413,40 @@ static class Program
         var name = p.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
         var arguments = p.TryGetProperty("arguments", out var a) ? a.Clone() : JsonSerializer.Deserialize<JsonElement>("{}");
 
-        await EnsureBridgeAsync();
-        Bridge? b;
-        lock (BridgeLock) b = _bridge;
-        if (b == null || !b.Connected)
+        // Retry across domain reloads: if the bridge dies mid-call (e.g. the
+        // tool entered play mode), wait for it to come back and re-send the
+        // request. A fresh execution on the reconnected bridge is intended —
+        // tools must be idempotent w.r.t. re-execution after a reload.
+        const int MaxAttempts = 3;
+        JsonElement? resp = null;
+        for (int attempt = 1; attempt <= MaxAttempts; attempt++)
         {
-            await WriteErrorAsync(stdout, enc, id, -32000, "Not connected to Unity MCP bridge (is the editor open?)");
-            return;
+            await EnsureBridgeAsync();
+            Bridge? b;
+            lock (BridgeLock) b = _bridge;
+            if (b == null || !b.Connected)
+            {
+                await WriteErrorAsync(stdout, enc, id, -32000, "Not connected to Unity MCP bridge (is the editor open?)");
+                return;
+            }
+
+            Log.Write($"tool call: {name} (attempt {attempt}/{MaxAttempts})");
+            resp = await b.CallAsync(name, arguments, TimeSpan.FromSeconds(600));
+            if (resp != null) break;
+
+            // No response: either a timeout (bridge still alive) or a
+            // disconnection (bridge died, e.g. domain reload). Only retry
+            // on disconnection — a timeout means the op took too long.
+            bool alive;
+            lock (BridgeLock) alive = _bridge?.Connected ?? false;
+            if (alive)
+            {
+                Log.Write($"tool call {name} timed out (bridge alive) — not retrying");
+                break;
+            }
+            Log.Write($"tool call {name} lost (bridge died) — waiting for reconnect before retry");
         }
 
-        Log.Write($"tool call: {name}");
-        var resp = await b.CallAsync(name, arguments, TimeSpan.FromSeconds(180));
         if (resp == null)
         {
             await WriteErrorAsync(stdout, enc, id, -32000, "No response from Unity bridge (timeout or disconnected)");

@@ -9,7 +9,10 @@ namespace QwenPlayground.Core.Tools.Builtins;
 /// При обрезке ответ подсказывает продолжить чтение через offset/limit.
 /// </summary>
 [Tool("read_file", "Read a text file from the project. Returns numbered lines. " +
-                   "Long lines and total output are capped; if truncated, continue with offset.")]
+                   "Auto-cap: WITHOUT explicit offset/limit any output over 8 KB is truncated to a " +
+                    "~2 KB preview (full text saved to an attachment) — so pass offset/limit to read " +
+                    "exactly the amount you want; explicit reads are never auto-capped. " +
+                    "Long lines are capped at 400 chars; if truncated, continue with offset.")]
 public sealed class ReadFileTool : AgentTool
 {
     private const int MaxLineChars = 400;
