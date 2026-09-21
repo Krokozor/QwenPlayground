@@ -135,13 +135,13 @@ public sealed class McpServerManager
         var serverName = toolName[..underscoreIdx];
         var mcpToolName = toolName[(underscoreIdx + 1)..];
 
-        McpClient client;
+        McpClient? client;
         lock (_lock)
         {
             if (!_clients.TryGetValue(serverName, out client))
                 throw new McpException(-1, $"MCP server '{serverName}' is not connected");
         }
 
-        return await client.CallToolAsync(mcpToolName, arguments, ct);
+        return await client!.CallToolAsync(mcpToolName, arguments, ct);
     }
 }

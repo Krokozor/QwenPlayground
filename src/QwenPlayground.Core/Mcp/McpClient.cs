@@ -18,8 +18,6 @@ public sealed class McpClient : IAsyncDisposable
     private readonly McpServerConfig _config;
     private readonly HttpClient _http;
     private Process? _process;
-    private StreamWriter? _stdin;
-    private readonly object _writeLock = new();
     private int _nextId = 1;
     private bool _initialized;
     private string? _sessionId;
@@ -98,6 +96,10 @@ public sealed class McpClient : IAsyncDisposable
             Tools.Clear();
             foreach (var t in toolsArr)
             {
+                if (t is null)
+                {
+                    continue;
+                }
                 Tools.Add(new McpToolInfo
                 {
                     Name = t["name"]?.GetValue<string>() ?? "",
@@ -138,6 +140,10 @@ public sealed class McpClient : IAsyncDisposable
             var parts = new List<string>();
             foreach (var item in contentArr)
             {
+                if (item is null)
+                {
+                    continue;
+                }
                 if (item["type"]?.GetValue<string>() == "text")
                     parts.Add(item["text"]?.GetValue<string>() ?? "");
             }
@@ -335,7 +341,6 @@ public sealed class McpClient : IAsyncDisposable
         }
         finally
         {
-            _stdin?.Dispose();
             if (_process is not null)
             {
                 try { _process.Kill(entireProcessTree: true); } catch { }
@@ -344,22 +349,6 @@ public sealed class McpClient : IAsyncDisposable
             _http.Dispose();
             IsConnected = false;
         }
-    }
-}
-
-/// <summary>Helper for thread-safe async writes to StreamWriter.</summary>
-internal static class StreamWriterExtensions
-{
-    public static async Task LockAndWriteAsync(this StreamWriter writer, string line, object lockObj, CancellationToken ct)
-    {
-        // Use a semaphore-like pattern: lock for the sync part, async for the rest
-        var tcs = new TaskCompletionSource();
-        lock (lockObj)
-        {
-            // Write synchronously to the buffer (fast, no IO)
-            writer.WriteLine(line);
-        }
-        await writer.FlushAsync(ct);
     }
 }
 

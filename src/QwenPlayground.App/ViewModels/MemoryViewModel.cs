@@ -151,56 +151,8 @@ public partial class MemoryViewModel : ObservableObject
             ? $"классификация: {UnvectorizedCount} без векторов"
             : "скан дубликатов: векторы у всех";
 
-    // ── Настройки надмоза (строковые обёртки над AppSettings: TextBox-биндинг, безопасный парс;
-    //    мусорный ввод игнорируется — свойство просто не меняется) ─────────────────────────
-
-    public string ScanBudgetText
-    {
-        get => AppSettings.Get().MemoryScanProbeBudget.ToString();
-        set { if (int.TryParse(value, out var v) && v > 0) { AppSettings.Get().MemoryScanProbeBudget = v; OnPropertyChanged(); } }
-    }
-
-    public string RecallMinScoreText
-    {
-        get => AppSettings.Get().RecallMinScore.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        set { if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) { AppSettings.Get().RecallMinScore = v; OnPropertyChanged(); } }
-    }
-
-    public string SimilarMinText
-    {
-        get => AppSettings.Get().SimilaritySimilarMin.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        set { if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) { AppSettings.Get().SimilaritySimilarMin = v; OnPropertyChanged(); } }
-    }
-
-    public string DistinctMaxText
-    {
-        get => AppSettings.Get().SimilarityDistinctMax.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        set { if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) { AppSettings.Get().SimilarityDistinctMax = v; OnPropertyChanged(); } }
-    }
-
-    public string EntropyMaxText
-    {
-        get => AppSettings.Get().SimilarityConfidentMaxEntropy.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        set { if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) { AppSettings.Get().SimilarityConfidentMaxEntropy = v; OnPropertyChanged(); } }
-    }
-
-    public string FlushBudgetText
-    {
-        get => AppSettings.Get().MemoryFlushBudget.ToString();
-        set { if (int.TryParse(value, out var v) && v > 0) { AppSettings.Get().MemoryFlushBudget = v; OnPropertyChanged(); } }
-    }
-
-    public string RecallTopXText
-    {
-        get => AppSettings.Get().RecallTopX.ToString();
-        set { if (int.TryParse(value, out var v) && v > 0) { AppSettings.Get().RecallTopX = v; OnPropertyChanged(); } }
-    }
-
-    public string NagIntervalText
-    {
-        get => AppSettings.Get().MemoryNagIntervalRenders.ToString();
-        set { if (int.TryParse(value, out var v) && v >= 0) { AppSettings.Get().MemoryNagIntervalRenders = v; OnPropertyChanged(); } }
-    }
+    // Настройки надмоза редактируются во вкладке «Настройки» (SettingsViewModel — зеркала
+    // AppSettings); мёртвые строковые обёртки удалены в ревью 2026-09-21.
 
     public MemoryViewModel()
     {
@@ -308,28 +260,6 @@ public partial class MemoryViewModel : ObservableObject
         _pairs.UnmarkDistinct(pair.IdA, pair.IdB);
         RefreshPairs();
         Status = $"Пара {pair.IdA} ~ {pair.IdB} возвращена в кандидаты.";
-    }
-
-    private int CountDistinct()
-    {
-        // Разведённые не отдаются списком (могут быть сотни) — только счётчик.
-        var file = Path.Combine(_store.Root, "pairs.json");
-        if (!File.Exists(file))
-        {
-            return 0;
-        }
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(file));
-            return document.RootElement.TryGetProperty("Distinct", out var distinct) &&
-                   distinct.ValueKind == JsonValueKind.Array
-                ? distinct.GetArrayLength()
-                : 0;
-        }
-        catch (JsonException)
-        {
-            return 0;
-        }
     }
 
     private static string Preview(string? content)

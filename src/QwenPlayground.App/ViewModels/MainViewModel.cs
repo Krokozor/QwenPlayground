@@ -87,14 +87,14 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         // Хуки чата ссылаются на Chat лямбдами (лениво): Chat создаётся ниже, хуки
         // срабатывают только после конструирования.
         _main = new Main(new UiHooks(
-            status => Chat.StatusText = status,
-            generating => Chat.IsGenerating = generating,
-            () => Chat.InputText,
-            text => Chat.InputText = text,
-            () => Chat.SaveCurrent(),
-            prompt => Chat.RunHeartbeatTurnAsync(prompt),
+            status => Chat!.StatusText = status,
+            generating => Chat!.IsGenerating = generating,
+            () => Chat!.InputText,
+            text => Chat!.InputText = text,
+            () => Chat!.SaveCurrent(),
+            prompt => Chat!.RunHeartbeatTurnAsync(prompt),
             FlushMemoryVectorsAsync,
-            () => Chat.Shelves.Refresh(), // меню должно показать снятые полки
+            () => Chat!.Shelves.Refresh(), // меню должно показать снятые полки
             () => System.Windows.Application.Current?.Shutdown()),
             typeof(AgentTool).Assembly, // Core: базовые инструменты
             typeof(MainViewModel).Assembly); // App: UI-инструменты (screenshot, switch_tab)
@@ -330,13 +330,6 @@ public partial class MainViewModel : ObservableObject, IChatHost {
     }
 
     /// <summary>
-    /// Сессия main-агента — сессия по умолчанию: грузим её из sessions/main/chat.json,
-    /// иначе начинаем с чистого разговора. Логика — в SessionController; здесь только
-    /// обновление списка сессий (вид).
-    /// </summary>
-
-
-    /// <summary>
     /// Flush-векторизация памяти: факты без слоёв или со старой LayersVersion классифицируются
     /// на компаньон-модели на фоне (троттлинг + бюджет за проход), чтобы не забивать поток чата.
     /// Ошибки глотаются — не критичный путь; следующее сердцебиение повторит попытку.
@@ -418,12 +411,6 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         Chat.RefreshPromptPreview();
     }
 
-    // ── Профили чата: резолверы хода и диалог настройки (шестерёнка) ────────────────
-
-    /// <summary>
-    /// Единый с превью и ходом источник системного промпта: main-сессия — динамическая
-    /// идентичность, специализированная — кусок-промпт из статичного хранилища профилей.
-    /// </summary>
     /// <summary>
     /// Зарегистрировать MCP-тулы в реестре (вызывается после MCP init и при mcp_reload).
     /// </summary>

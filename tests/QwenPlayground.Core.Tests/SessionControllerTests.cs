@@ -40,7 +40,7 @@ public sealed class SessionControllerTests : IDisposable
         _draft = new DraftKeeper(
             () => _input,
             text => _input = text,
-            () => _controller.CurrentId,
+            () => _controller!.CurrentId,
             new SessionDraftStore(_root),
             () => 15);
         _controller = new SessionController(_log, _draft, _surfacer, _root);
@@ -180,7 +180,7 @@ public sealed class SessionControllerTests : IDisposable
 
         Assert.True(deletedCurrent);
         Assert.NotEqual(secondId, _controller.CurrentId);
-        Assert.Equal(0, _log.Count);
+        Assert.Empty(_log);
         Assert.Null(_controller.SamplerKey);
     }
 
@@ -199,7 +199,7 @@ public sealed class SessionControllerTests : IDisposable
         var deletedCurrent = _controller.Delete(firstOther);
 
         Assert.False(deletedCurrent);
-        Assert.Equal(1, _log.Count);
+        Assert.Single(_log);
         Assert.Equal("s", _controller.SamplerKey);
     }
 
@@ -255,7 +255,7 @@ public sealed class SessionControllerTests : IDisposable
 
         var data = new SessionStore(_root).Load(pinnedId);
         Assert.NotNull(data);
-        Assert.Equal(1, data!.Messages.Count);
+        Assert.Single(data!.Messages);
         Assert.Equal("s", data.SamplerKey);
         Assert.Equal("p", data.PromptKey);
         Assert.Equal("b", data.StateBlockKey);

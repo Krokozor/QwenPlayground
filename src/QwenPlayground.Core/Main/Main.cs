@@ -86,13 +86,14 @@ public sealed class Main
 
         // ── Рантайм main-агента: пер-разговорные сервисы (бандл — ChatRuntime) ──────
         // Сессия динамична: селектор главного окна переключает сессии, хуки ссылаются
-        // на Sessions лениво (заполняется ниже).
-        Runtime = new ChatRuntime(() => Sessions.CurrentId, ServerProps);
+        // на Sessions лениво (заполняется ниже; ! — присвоение гарантированно до вызова
+        // лямбд, компилятор через порядок конструктора не видит).
+        Runtime = new ChatRuntime(() => Sessions!.CurrentId, ServerProps);
         var rt = Runtime;
         rt.PromptAssembler = new SystemPromptAssembler(
             rt.SessionId,
-            () => Sessions.PromptKey,
-            () => Sessions.DirectoryFor(Sessions.CurrentId),
+            () => Sessions!.PromptKey,
+            () => Sessions!.DirectoryFor(Sessions.CurrentId),
             _identity,
             _externalTools,
             Tools);
@@ -113,7 +114,7 @@ public sealed class Main
             Tools,
             ServerProps,
             messages => rt.StateBlocks.Build(),
-            ct => MultimodalContext.BuildAsync(Sessions.DirectoryFor(Sessions.CurrentId), AppSettings.Get().Endpoint, ServerProps, ct),
+            ct => MultimodalContext.BuildAsync(Sessions!.DirectoryFor(Sessions.CurrentId), AppSettings.Get().Endpoint, ServerProps, ct),
             activeShelves: () => rt.PromptAssembler.EffectiveShelves());
         rt.Maintenance = new ContextMaintenance(
             rt.Log,

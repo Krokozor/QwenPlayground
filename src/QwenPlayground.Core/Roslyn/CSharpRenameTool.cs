@@ -53,7 +53,7 @@ public sealed class CSharpRenameTool : AgentTool
         {
             return outcome.Error;
         }
-        if (outcome.ChangedFiles is null)
+        if (outcome.ChangedFiles is null || outcome.ChangedDocuments is null || outcome.Modified is null)
         {
             return "no changes";
         }
@@ -426,7 +426,12 @@ internal static class CSharpRenameCore
         var afterErrors = new List<string>();
         foreach (var projectId in projects)
         {
-            var compilationBefore = await before.GetProject(projectId).GetCompilationAsync(ct);
+            var projBefore = before.GetProject(projectId);
+            if (projBefore is null)
+            {
+                continue;
+            }
+            var compilationBefore = await projBefore.GetCompilationAsync(ct);
             if (compilationBefore is not null)
             {
                 foreach (var diagnostic in compilationBefore.GetDiagnostics(ct))
@@ -437,7 +442,12 @@ internal static class CSharpRenameCore
                     }
                 }
             }
-            var compilationAfter = await after.GetProject(projectId).GetCompilationAsync(ct);
+            var projAfter = after.GetProject(projectId);
+            if (projAfter is null)
+            {
+                continue;
+            }
+            var compilationAfter = await projAfter.GetCompilationAsync(ct);
             if (compilationAfter is not null)
             {
                 foreach (var diagnostic in compilationAfter.GetDiagnostics(ct))

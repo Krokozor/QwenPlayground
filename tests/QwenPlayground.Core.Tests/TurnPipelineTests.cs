@@ -35,7 +35,7 @@ public sealed class TurnPipelineTests : IDisposable
     private AgentLoopRequest? _observedRequest;
     private readonly TurnPipeline _pipeline;
     private readonly string _projectRootBackup;
-    private readonly string _lastSessionIdBackup;
+    private string? _lastSessionIdBackup;
 
     public TurnPipelineTests()
     {
@@ -48,7 +48,7 @@ public sealed class TurnPipelineTests : IDisposable
         var draft = new DraftKeeper(
             () => string.Empty,
             _ => { },
-            () => _sessions.CurrentId,
+            () => _sessions!.CurrentId,
             new SessionDraftStore(_root),
             () => 30);
         _sessions = new SessionController(_log, draft, _surfacer, _root);
@@ -248,6 +248,7 @@ public sealed class TurnPipelineTests : IDisposable
         Assert.NotNull(_observedRequest);
         var request = _observedRequest!;
         Assert.True(request.AllowToolExecution); // agentic (ProjectRoot задан) && main-сессия
+        Assert.NotNull(request.ToolDefinitions);
         Assert.NotEmpty(request.ToolDefinitions);
     }
 

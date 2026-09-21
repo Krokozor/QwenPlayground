@@ -196,29 +196,6 @@ public static class BrowserService
         }
     }
 
-    /// <summary>
-    /// Positions the WebView2 controller OFF-SCREEN.
-    /// The browser renders at 1280x800 but at (-5000,-5000) so the user never sees it.
-    /// </summary>
-    private static void UpdateControllerBounds(WebView2 webView)
-    {
-        // Controller stays off-screen always. Size is fixed at 1280x800.
-        // No-op for now — the position is set once in GetCoreAsync.
-    }
-
-    /// <summary>Call when the panel is resized. No-op — controller is off-screen.</summary>
-    public static void OnPanelResized()
-    {
-        // Controller is off-screen, no need to update bounds on resize.
-    }
-
-    /// <summary>Show or hide the native WebView2 window.</summary>
-    public static void SetVisible(bool visible)
-    {
-        // Controller must stay visible for rendering. This is a no-op.
-        // (WebView2 won't navigate if IsVisible=false)
-    }
-
     // ─── Navigation ───────────────────────────────────────────
 
     public static async Task<string> NavigateAsync(string url, CancellationToken ct = default)
@@ -949,7 +926,7 @@ public static class BrowserService
     /// </summary>
     public static async Task<string> WaitForDownloadAsync(int timeoutMs)
     {
-        DownloadEntry ready;
+        DownloadEntry? ready = null;
         lock (_downloadsLock)
         {
             ready = _downloads.LastOrDefault(d => !d.Consumed);
@@ -1020,8 +997,11 @@ public static class BrowserService
             var result = evJson.RootElement.GetProperty("result");
             if (!result.TryGetProperty("objectId", out var oid))
                 return $"Error: not found: {selector}";
+            var objectId = oid.GetString();
+            if (objectId is null)
+                return $"Error: not found: {selector}";
             await CdpAsync("DOM.setFileInputFiles",
-                $"{{\"files\":[{JsStr(abs)}],\"objectId\":{JsStr(oid.GetString())}}}");
+                $"{{\"files\":[{JsStr(abs)}],\"objectId\":{JsStr(objectId)}}}");
         }
 
         // change-событие — чтобы React/формы заметили файл.

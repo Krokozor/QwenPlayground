@@ -53,6 +53,10 @@ public sealed class CSharpMoveTypeTool : AgentTool
         {
             return outcome.Error;
         }
+        if (outcome.FileWrites is null || outcome.ChangedFiles is null || outcome.UsagesPerFile is null)
+        {
+            return "no changes";
+        }
 
         // 1. Диск (до ApplyChanges: _loadedAt=Now покрывает новые write-time файлов).
         foreach (var (path, text) in outcome.FileWrites)
@@ -167,6 +171,10 @@ internal static class CSharpMoveTypeCore
         }
         var oldDocument = solution.GetDocument(oldDocumentId)!;
         var oldRoot = await declaration.SourceTree!.GetRootAsync(ct);
+        if (oldRoot is null)
+        {
+            return new Outcome { Error = "could not read source root" };
+        }
         var typeNode = oldRoot.FindNode(declaration.SourceSpan) as TypeDeclarationSyntax;
         if (typeNode is null)
         {
@@ -210,8 +218,11 @@ internal static class CSharpMoveTypeCore
         var typeText = Indent(typeNode.WithoutLeadingTrivia().GetText().ToString().TrimEnd(), 4);
         var newFileText = BuildNewFileText(string.Join("\n", usingLines), targetNamespace, typeText);
 
-        // 5. Старый файл: тип удалён.
+        // 5. Старый файл: тип удалён. (pragma: ложное CS8602 на oldRoot — гвард на null
+        // есть выше, но компилятор 5.6/SDK 10 не несёт null-состояние до этого места).
+#pragma warning disable CS8602
         var newOldText = oldRoot.RemoveNode(typeNode, SyntaxRemoveOptions.KeepNoTrivia).GetText().ToString();
+#pragma warning restore CS8602
 
         // 6. Ссылки: использования (в этой версии Roslyn FindReferences их и возвращает).
         var usagesByDocument = new Dictionary<DocumentId, List<int>>();
@@ -522,7 +533,12 @@ internal static class CSharpMoveTypeCore
         var afterErrors = new List<string>();
         foreach (var projectId in projects)
         {
-            var compilationBefore = await before.GetProject(projectId).GetCompilationAsync(ct);
+            var projBefore = before.GetProject(projectId);
+            if (projBefore is null)
+            {
+                continue;
+            }
+            var compilationBefore = await projBefore.GetCompilationAsync(ct);
             if (compilationBefore is not null)
             {
                 foreach (var diagnostic in compilationBefore.GetDiagnostics(ct))
@@ -533,7 +549,12 @@ internal static class CSharpMoveTypeCore
                     }
                 }
             }
-            var compilationAfter = await after.GetProject(projectId).GetCompilationAsync(ct);
+            var projAfter = after.GetProject(projectId);
+            if (projAfter is null)
+            {
+                continue;
+            }
+            var compilationAfter = await projAfter.GetCompilationAsync(ct);
             if (compilationAfter is not null)
             {
                 foreach (var diagnostic in compilationAfter.GetDiagnostics(ct))

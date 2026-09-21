@@ -40,7 +40,6 @@ public sealed class SessionController
     }
 
     public string CurrentId => _sessions.CurrentId;
-    public string? LastOpenedId => _sessions.LastOpenedId;
     public string DirectoryFor(string id) => _sessions.DirectoryFor(id);
     public string? SamplerKey => _samplerKey;
     public string? PromptKey => _promptKey;
@@ -191,9 +190,6 @@ public sealed class SessionController
 
     /// <summary>Перестроить список сессий из хранилища (для UI).</summary>
     public void RefreshList() => _sessions.RefreshList();
-
-    /// <summary>Запомнить текущую сессию как «последнюю открытую».</summary>
-    public void PersistCurrentId() => _sessions.PersistCurrentId();
 
     /// <summary>
     /// У старой main-сессии system-сообщение — запечённая идентичность (+старое резюме).
