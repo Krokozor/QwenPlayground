@@ -76,7 +76,10 @@ public partial class McpSettingsView : UserControl
             await manager.DisconnectAsync(vm.Config.Name);
             var client = await manager.ConnectAsync(vm.Config, CancellationToken.None);
             var tools = string.Join(", ", client.Tools.Select(t => t.Name));
-            vm.SetStatus($"✓ Подключено. {client.Tools.Count} тул(ов): {tools}", false);
+            var stderr = client.StderrLineCount > 0
+                ? $" | stderr: {client.StderrLineCount} стр. → {client.StderrLogPath}"
+                : "";
+            vm.SetStatus($"✓ Подключено. {client.Tools.Count} тул(ов): {tools}{stderr}", false);
         }
         catch (Exception ex)
         {

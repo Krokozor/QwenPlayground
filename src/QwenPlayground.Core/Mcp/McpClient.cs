@@ -6,18 +6,44 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using QwenPlayground.Core.Crash;
+using QwenPlayground.Core.MetaInfo;
+using QwenPlayground.Core.SelfBuild;
 
 namespace QwenPlayground.Core.Mcp;
 
 /// <summary>
 /// MCP (Model Context Protocol) client. Supports stdio and HTTP transports.
 /// Implements the JSON-RPC 2.0 protocol as specified by MCP.
+///
+/// Диагностика (принцип: ничего не глотать молча):
+/// - stderr сервера — его диагностический канал (по спеке протокол только по stdout).
+///   Каждое stdio-подключение поднимает фоновый насос: полный захват в
+///   logs/mcp/&lt;сервер&gt;.stderr.log (ротация при 1 МБ) + хвост в памяти для ошибок.
+/// - Ответ сопоставляется по id запроса; чужие строки stdout (нотификации, запросы
+///   от сервера, мусор) не теряются — пишутся в DiagnosticsLog, первый случай — на доску
+///   анонсов (виден в state-блоке).
+/// - Любой сбой после старта процесса → kill дерева (нет осиротевших процессов);
+///   в текст ошибки попадают код выхода, хвост stderr и путь к полному логу.
 /// </summary>
 public sealed class McpClient : IAsyncDisposable
 {
+    /// <summary>Бюджет хвоста stderr в памяти (для текста ошибок); полный лог — на диске.</summary>
+    private const int StderrTailBudget = 8192;
+
+    /// <summary>Лимит одного файла stderr-лога; дальше — ротация в .1 (старое отбрасывается).</summary>
+    private const long StderrLogMaxBytes = 1024 * 1024;
+
     private readonly McpServerConfig _config;
     private readonly HttpClient _http;
     private Process? _process;
+    private Task? _stderrPump;
+    private readonly object _stderrTailLock = new();
+    private readonly Queue<string> _stderrTail = new();
+    private int _stderrTailBytes;
+    private int _stderrLines;
+    private string? _stderrLogPath;
+    private int _skippedNoted;
+    private bool _shutdownInitiated;
     private int _nextId = 1;
     private bool _initialized;
     private string? _sessionId;
@@ -31,6 +57,12 @@ public sealed class McpClient : IAsyncDisposable
     public string Name => _config.Name;
     public bool IsConnected { get; private set; }
 
+    /// <summary>Сколько строк сервер написал в stderr с момента подключения.</summary>
+    public int StderrLineCount => Volatile.Read(ref _stderrLines);
+
+    /// <summary>Путь к полному stderr-логу (stdio-серверы; null, пока не запущен процесс).</summary>
+    public string? StderrLogPath => _stderrLogPath;
+
     public McpClient(McpServerConfig config)
     {
         _config = config;
@@ -41,76 +73,83 @@ public sealed class McpClient : IAsyncDisposable
     /// Connect to the MCP server: launch process (stdio) or set up HTTP,
     /// then perform the initialize handshake and discover tools.
     /// Times out after 15 seconds if the server doesn't respond.
+    /// Любой сбой после запуска процесса → kill (осиротевший процесс не остаётся).
     /// </summary>
     public async Task InitializeAsync(CancellationToken ct = default)
     {
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        var token = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        using var token = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
         if (_config.Transport == "stdio")
-            await StartStdioAsync(token.Token);
+            StartStdio();
         else
             IsConnected = true;
 
-        // MCP initialize handshake
-        JsonObject? initResult;
         try
         {
-            initResult = await SendRequestAsync("initialize", new JsonObject
+            // MCP initialize handshake
+            JsonObject? initResult;
+            try
             {
-                ["protocolVersion"] = "2024-11-05",
-                ["capabilities"] = new JsonObject(),
-                ["clientInfo"] = new JsonObject
+                initResult = await SendRequestAsync("initialize", new JsonObject
                 {
-                    ["name"] = "QwenPlayground",
-                    ["version"] = "1.0"
-                }
-            }, token.Token);
-        }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
-        {
-            // Timeout — capture stderr for diagnostics
-            var stderr = _process?.StandardError.ReadToEnd() ?? "(no process)";
-            var exited = _process?.HasExited == true;
-            var exitCode = _process?.ExitCode.ToString() ?? "?";
-            throw new McpException(-1,
-                $"MCP handshake timeout (15s). Process exited={exited} code={exitCode}. Stderr: {stderr[..Math.Min(stderr.Length, 500)]}");
-        }
-
-        if (initResult is not null)
-        {
-            ServerInfo = new McpServerInfo
-            {
-                Name = initResult["serverInfo"]?["name"]?.GetValue<string>() ?? "unknown",
-                Version = initResult["serverInfo"]?["version"]?.GetValue<string>() ?? "unknown"
-            };
-        }
-
-        // Send initialized notification (no response expected)
-        await SendNotificationAsync("notifications/initialized", new JsonObject(), token.Token);
-
-        // Discover tools
-        var toolsResult = await SendRequestAsync("tools/list", new JsonObject(), token.Token);
-        if (toolsResult?["tools"] is JsonArray toolsArr)
-        {
-            Tools.Clear();
-            foreach (var t in toolsArr)
-            {
-                if (t is null)
-                {
-                    continue;
-                }
-                Tools.Add(new McpToolInfo
-                {
-                    Name = t["name"]?.GetValue<string>() ?? "",
-                    Description = t["description"]?.GetValue<string>() ?? "",
-                    InputSchema = t["inputSchema"]?.DeepClone()
-                });
+                    ["protocolVersion"] = "2024-11-05",
+                    ["capabilities"] = new JsonObject(),
+                    ["clientInfo"] = new JsonObject
+                    {
+                        ["name"] = "QwenPlayground",
+                        ["version"] = "1.0"
+                    }
+                }, token.Token);
             }
-        }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+            {
+                // Таймаут — диагностика из НЕБЛОКИРУЮЩИХ источников (насос stderr уже всё ловит).
+                throw new McpException(-1,
+                    $"MCP handshake timeout (15s). {ProcessDiagnostics()}");
+            }
 
-        _initialized = true;
-        IsConnected = true;
+            if (initResult is not null)
+            {
+                ServerInfo = new McpServerInfo
+                {
+                    Name = initResult["serverInfo"]?["name"]?.GetValue<string>() ?? "unknown",
+                    Version = initResult["serverInfo"]?["version"]?.GetValue<string>() ?? "unknown"
+                };
+            }
+
+            // Send initialized notification (no response expected)
+            await SendNotificationAsync("notifications/initialized", new JsonObject(), token.Token);
+
+            // Discover tools
+            var toolsResult = await SendRequestAsync("tools/list", new JsonObject(), token.Token);
+            if (toolsResult?["tools"] is JsonArray toolsArr)
+            {
+                Tools.Clear();
+                foreach (var t in toolsArr)
+                {
+                    if (t is null)
+                    {
+                        continue;
+                    }
+                    Tools.Add(new McpToolInfo
+                    {
+                        Name = t["name"]?.GetValue<string>() ?? "",
+                        Description = t["description"]?.GetValue<string>() ?? "",
+                        InputSchema = t["inputSchema"]?.DeepClone()
+                    });
+                }
+            }
+
+            _initialized = true;
+            IsConnected = true;
+        }
+        finally
+        {
+            // Любая неудача (таймаут, ошибка протокола, процесс умер) — процесс не остаётся.
+            if (!_initialized)
+                KillProcess();
+        }
     }
 
     /// <summary>
@@ -156,7 +195,7 @@ public sealed class McpClient : IAsyncDisposable
 
     private async Task<JsonObject?> SendRequestAsync(string method, JsonObject @params, CancellationToken ct)
     {
-        int id = _nextId++;
+        int id = Interlocked.Increment(ref _nextId);
         DiagnosticsLog.Log($"MCP '{Name}': {method} begin");
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var request = new JsonObject
@@ -167,7 +206,7 @@ public sealed class McpClient : IAsyncDisposable
             ["params"] = @params
         };
 
-        var response = await SendAsync(request, ct);
+        var response = await SendAsync(request, id, ct);
         DiagnosticsLog.Log($"MCP '{Name}': {method} done ({sw.ElapsedMilliseconds}ms)");
         if (response is null) return null;
 
@@ -207,16 +246,16 @@ public sealed class McpClient : IAsyncDisposable
         }
     }
 
-    private async Task<JsonObject?> SendAsync(JsonObject message, CancellationToken ct)
+    private async Task<JsonObject?> SendAsync(JsonObject message, int id, CancellationToken ct)
     {
         if (_config.Transport == "stdio")
-            return await SendStdioAsync(message, ct);
+            return await SendStdioAsync(message, id, ct);
         return await SendHttpAsync(message, ct);
     }
 
     // ── stdio transport ──
 
-    private async Task StartStdioAsync(CancellationToken ct)
+    private void StartStdio()
     {
         if (string.IsNullOrEmpty(_config.Command))
             throw new McpException(-1, $"No command configured for stdio MCP server '{_config.Name}'");
@@ -237,14 +276,162 @@ public sealed class McpClient : IAsyncDisposable
         foreach (var (key, val) in _config.Env)
             psi.Environment[key] = val;
 
-        _process = new Process { StartInfo = psi };
-        if (!_process.Start())
+        var process = new Process { StartInfo = psi };
+        if (!process.Start())
             throw new McpException(-1, $"Failed to start process: {_config.Command}");
 
+        _process = process;
         IsConnected = true;
+
+        // Насос stderr: без него сервер, написавший в stderr больше пайп-буфера (~4 КБ),
+        // блокируется на write и виснет. Полный захват в файл + хвост в памяти.
+        try
+        {
+            Directory.CreateDirectory(StderrLogDirectory);
+            _stderrLogPath = Path.Combine(StderrLogDirectory, SanitizeFileName(_config.Name) + ".stderr.log");
+            _stderrPump = Task.Run(() => PumpStderrAsync(process));
+        }
+        catch (Exception ex)
+        {
+            // Насос не критичен для протокола, но его отсутствие — потеря диагностики: фиксируем.
+            DiagnosticsLog.Log($"MCP '{Name}': stderr pump failed to start: {ex.Message}");
+        }
     }
 
-    private async Task<JsonObject?> SendStdioAsync(JsonObject message, CancellationToken ct)
+    private static string StderrLogDirectory =>
+        Path.Combine(SelfBuildPaths.WorkspaceRoot, "logs", "mcp");
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var chars = name.Select(c => invalid.Contains(c) ? '_' : c).ToArray();
+        var result = new string(chars);
+        return result.Length == 0 ? "server" : result;
+    }
+
+    /// <summary>
+    /// Фоновый дренаж stderr до EOF процесса: каждая строка — в лог-файл (полный захват,
+    /// ротация при лимите) и в хвост в памяти. Никогда не бросает: смерть насоса не должна
+    /// влиять на протокол.
+    /// </summary>
+    private async Task PumpStderrAsync(Process process)
+    {
+        try
+        {
+            if (_stderrLogPath is null) return;
+            string? line;
+            while ((line = await process.StandardError.ReadLineAsync()) is not null)
+            {
+                await AppendStderrLogAsync(line);
+                OnStderrLine(line);
+            }
+        }
+        catch
+        {
+            // Смерть процесса / закрытый поток — нормальный конец насоса.
+        }
+
+        // EOF stderr: процесс ушёл. Если сессия была жива — это неожиданный выход.
+        if (_initialized && !_shutdownInitiated)
+        {
+            int? code = null;
+            try { if (process.HasExited) code = process.ExitCode; } catch { }
+            DiagnosticsLog.Log($"MCP '{Name}': process exited during session" + (code is null ? "" : $" (code {code})"));
+            AnnouncementBoard.Push("mcp:" + Name,
+                "процесс сервера завершился во время сессии" + (code is null ? "" : $" (код {code})") + $" — stderr: {StderrLogPath}");
+        }
+    }
+
+    /// <summary>Дописывает строку в stderr-лог; при превышении лимита — ротация в .1.</summary>
+    private Task AppendStderrLogAsync(string line)
+    {
+        var path = _stderrLogPath;
+        if (path is null) return Task.CompletedTask;
+        return Task.Run(async () =>
+        {
+            try
+            {
+                long size = 0;
+                try { size = new FileInfo(path).Length; } catch { }
+                if (size > StderrLogMaxBytes)
+                {
+                    // Ротация: текущий → .1 (старое .1 отбрасывается), начинаем заново.
+                    var rotated = path + ".1";
+                    if (File.Exists(rotated)) File.Delete(rotated);
+                    File.Move(path, rotated);
+                }
+                await File.AppendAllTextAsync(path, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {line}\n");
+            }
+            catch
+            {
+                // Запись лога best-effort: насос не должен умирать из-за диска.
+            }
+        });
+    }
+
+    private void OnStderrLine(string line)
+    {
+        Interlocked.Increment(ref _stderrLines);
+        lock (_stderrTailLock)
+        {
+            _stderrTail.Enqueue(line);
+            _stderrTailBytes += line.Length + 1;
+            while (_stderrTailBytes > StderrTailBudget && _stderrTail.Count > 1)
+            {
+                _stderrTailBytes -= _stderrTail.Dequeue().Length + 1;
+            }
+        }
+        DiagnosticsLog.Log($"MCP '{Name}': stderr: {Truncate(line, 200)}");
+    }
+
+    /// <summary>Хвост stderr для сообщений об ошибках (последние строки, без таймстампов).</summary>
+    public string StderrTail(int maxChars = 500)
+    {
+        lock (_stderrTailLock)
+        {
+            var all = string.Join("\n", _stderrTail);
+            return all.Length <= maxChars ? all : all[^maxChars..];
+        }
+    }
+
+    /// <summary>Диагностика процесса для сообщений об ошибках (неблокирующая).</summary>
+    private string ProcessDiagnostics()
+    {
+        var parts = new List<string>();
+        if (_process is { } p)
+        {
+            bool exited;
+            int? code = null;
+            try
+            {
+                exited = p.HasExited;
+                if (exited) code = p.ExitCode;
+            }
+            catch
+            {
+                exited = false;
+            }
+            parts.Add($"process exited={exited}" + (code is null ? "" : $" code={code}"));
+        }
+        else
+        {
+            parts.Add("no process");
+        }
+
+        int lines = StderrLineCount;
+        var tail = StderrTail();
+        if (lines > 0)
+            parts.Add($"stderr ({lines} lines, last): {Truncate(tail, 500)}");
+        if (_stderrLogPath is not null)
+            parts.Add($"full stderr log: {_stderrLogPath}");
+
+        return string.Join(" | ", parts);
+    }
+
+    private static string Truncate(string text, int max) =>
+        text.Length <= max ? text : text[^max..];
+
+    private async Task<JsonObject?> SendStdioAsync(JsonObject message, int id, CancellationToken ct)
     {
         if (_process is null || _process.HasExited)
             throw new McpException(-1, $"stdio process not running (exited={_process?.HasExited}, code={_process?.ExitCode})");
@@ -258,16 +445,77 @@ public sealed class McpClient : IAsyncDisposable
             _process.StandardInput.Flush();
         }, ct);
 
-        // Read response line (skip non-JSON lines)
-        string? line;
-        do
+        // Читаем до ответа С НАШИМ id. Чужие строки (нотификации/запросы от сервера, мусор)
+        // не глотаем молча: DiagnosticsLog + первый случай — на доску анонсов.
+        int skipped = 0;
+        while (true)
         {
-            line = await _process.StandardOutput.ReadLineAsync(ct);
-        } while (line is not null && !line.TrimStart().StartsWith('{'));
+            string? line = await _process.StandardOutput.ReadLineAsync(ct);
+            if (line is null)
+                throw new McpException(-1,
+                    $"stdio process closed stdout without responding (id={id}, skipped {skipped} line(s). {ProcessDiagnostics()})");
 
-        if (line is null)
-            throw new McpException(-1, "stdio process closed stdout without responding");
-        return JsonNode.Parse(line) as JsonObject;
+            var trimmed = line.TrimStart();
+            if (!trimmed.StartsWith('{'))
+            {
+                LogSkippedLine(line, "non-JSON");
+                skipped++;
+                continue;
+            }
+
+            JsonObject? obj;
+            try
+            {
+                obj = JsonNode.Parse(line) as JsonObject;
+            }
+            catch (JsonException)
+            {
+                obj = null;
+            }
+            if (obj is null)
+            {
+                LogSkippedLine(line, "not a JSON object");
+                skipped++;
+                continue;
+            }
+
+            var respId = obj["id"];
+            if (respId is null)
+            {
+                // id нет — нотификация или запрос от сервера, не ответ на наш запрос.
+                LogSkippedLine(line, $"server→client ({obj["method"]?.GetValue<string>() ?? "no method"})");
+                skipped++;
+                continue;
+            }
+
+            int theirId;
+            try
+            {
+                theirId = respId.GetValue<int>();
+            }
+            catch
+            {
+                theirId = -1;
+            }
+            if (theirId != id)
+            {
+                LogSkippedLine(line, $"id={theirId} != {id}");
+                skipped++;
+                continue;
+            }
+
+            return obj;
+        }
+    }
+
+    private void LogSkippedLine(string line, string reason)
+    {
+        DiagnosticsLog.Log($"MCP '{Name}': skipped stdout line ({reason}): {Truncate(line, 200)}");
+        if (Interlocked.Exchange(ref _skippedNoted, 1) == 0)
+        {
+            AnnouncementBoard.Push("mcp:" + Name,
+                $"сервер шлёт неожиданные сообщения по stdout ({reason}) — детали в logs/diag-*.log");
+        }
     }
 
     // ── HTTP transport ──
@@ -330,24 +578,40 @@ public sealed class McpClient : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        try
+        _shutdownInitiated = true;
+        // MCP не имеет «shutdown»-запроса (notifications/cancelled требует requestId —
+        // слать его с пустыми params — нарушение протокола). Корректное завершение:
+        // закрыть stdin (сервер увидит EOF) и дать процессу уйти самому; не уйдёт — kill.
+        if (_process is { } p)
         {
-            // Send shutdown notification
-            if (_initialized && IsConnected)
+            try
             {
-                try { await SendNotificationAsync("notifications/cancelled", new JsonObject(), CancellationToken.None); }
-                catch { /* best effort */ }
+                if (!p.HasExited)
+                {
+                    p.StandardInput.Close();
+                    if (!p.WaitForExit(3000))
+                        p.Kill(entireProcessTree: true);
+                }
             }
+            catch { /* best effort */ }
         }
-        finally
+
+        try { await _stderrPump?.WaitAsync(CancellationToken.None); }
+        catch { /* насос может быть уже мёртв */ }
+
+        KillProcess();
+        _http.Dispose();
+        IsConnected = false;
+    }
+
+    /// <summary>Убивает процесс (дерево) и освобождает ресурсы. Идемпотентно.</summary>
+    private void KillProcess()
+    {
+        if (_process is not null)
         {
-            if (_process is not null)
-            {
-                try { _process.Kill(entireProcessTree: true); } catch { }
-                _process.Dispose();
-            }
-            _http.Dispose();
-            IsConnected = false;
+            try { if (!_process.HasExited) _process.Kill(entireProcessTree: true); } catch { }
+            try { _process.Dispose(); } catch { }
+            _process = null;
         }
     }
 }
@@ -360,7 +624,7 @@ public sealed class McpToolInfo
     public JsonNode? InputSchema { get; set; }
 }
 
-/// <summary>Server info from MCP initialize response.</summary>
+/// <summary>Server info from MCP server initialize response.</summary>
 public sealed class McpServerInfo
 {
     public string Name { get; set; } = "";

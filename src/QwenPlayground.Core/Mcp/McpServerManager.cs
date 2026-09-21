@@ -40,6 +40,9 @@ public sealed class McpServerManager
             {
                 StartupTrace.Log($"MCP connect: '{config.Name}' FAILED ({sw.ElapsedMilliseconds}ms): {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"[MCP] Failed to connect to '{config.Name}': {ex}");
+                // Сбой коннекта — важное событие: на доску анонсов (видно в state-блоке).
+                QwenPlayground.Core.MetaInfo.AnnouncementBoard.Push("mcp:" + config.Name,
+                    "не подключился на старте: " + ex.Message);
                 // Also write to a log file for debugging
                 try
                 {
