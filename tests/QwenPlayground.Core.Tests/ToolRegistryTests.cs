@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.Core.Tests;
@@ -165,6 +166,55 @@ public sealed class ToolRegistryTests : IDisposable
 
         Assert.Contains("files=only.txt", result);
         Assert.Contains("counts=;map=;flag=False", result);
+    }
+
+    [Fact]
+    public async Task Concurrency_RegisterWhileReading_NoCrash_ConsistentSnapshots()
+    {
+        // MCP-регистрация/отключение идут с фоновых потоков, Definitions читает
+        // сборка промпта — реестр должен пережить параллельные мутации и чтения,
+        // а каждый снапшот быть целым (отсортированным) на момент выдачи.
+        var registry = new ToolRegistry(Array.Empty<IToolProvider>());
+        ToolEntry MakeEntry(string name) => new()
+        {
+            Definition = new ToolDefinition { Name = name, Description = "t", Parameters = new JsonObject() },
+            Execute = (_, _, _) => Task.FromResult(new ToolExecutionResult("ok", null))
+        };
+
+        var tasks = new List<Task>();
+        // Писатели: регистрация + снятие префикса с разных потоков.
+        for (var w = 0; w < 4; w++)
+        {
+            var id = w;
+            tasks.Add(Task.Run(async () =>
+            {
+                for (var i = 0; i < 200; i++)
+                {
+                    registry.TryRegister(MakeEntry($"tool_{id}_{i % 50:D3}"));
+                    registry.UnregisterByPrefix($"tool_{id}_");
+                    await Task.Yield();
+                }
+            }));
+        }
+        // Читатели: перечисление (как сборка промпта) — без лока, по снапшотам.
+        for (var r = 0; r < 4; r++)
+        {
+            tasks.Add(Task.Run(async () =>
+            {
+                for (var i = 0; i < 500; i++)
+                {
+                    var snapshot = registry.Definitions;
+                    for (var j = 1; j < snapshot.Count; j++)
+                    {
+                        Assert.True(string.CompareOrdinal(snapshot[j - 1].Name, snapshot[j].Name) <= 0,
+                            $"снапшот не отсортирован: {snapshot[j - 1].Name} > {snapshot[j].Name}");
+                    }
+                    _ = registry.DefinitionsByGroup(ToolGroup.Core);
+                    await Task.Yield();
+                }
+            }));
+        }
+        await Task.WhenAll(tasks);
     }
 }
 

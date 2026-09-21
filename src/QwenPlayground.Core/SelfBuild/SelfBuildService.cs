@@ -4,7 +4,7 @@ using System.Xml.Linq;
 
 namespace QwenPlayground.Core.SelfBuild;
 
-public sealed record BuildResult(string Id, int ExitCode, string OutputTail);
+public sealed record BuildResult(string Id, int ExitCode, string OutputTail, string? Warnings = null);
 
 /// <summary>Упавший тест (из TRX): имя и первое сообщение ошибки.</summary>
 public sealed record FailedTest(string Name, string Error);
@@ -119,18 +119,51 @@ public static class SelfBuildService
         await DeployLauncherAsync(cancellationToken);
         await DeployWatchdogAsync(cancellationToken);
 
+        // Ворнинги сборки и гейта — в отчёт (НЕ блокируют: pass остаётся pass для пуша,
+        // но предупреждения видны сразу, а не «где-то в build.log»).
+        var warnings = ExtractWarnings(build.Output + "\n" + gate.Output);
+        var finalTail = Tail(build.Output) + (warnings ?? string.Empty);
         BuildJournal.Append(SelfBuildPaths.RunRoot, new BuildJournalEntry
         {
             Id = id,
             Timestamp = DateTime.Now,
             BuildExitCode = 0,
-            BuildOutputTail = Tail(build.Output),
+            BuildOutputTail = finalTail,
             Status = "pending",
             BuildLogPath = buildLogPath,
             GateLogPath = gateLogPath,
             GateExitCode = 0
         });
-        return new BuildResult(id, 0, Tail(build.Output));
+        return new BuildResult(id, 0, finalTail, warnings);
+    }
+
+    /// <summary>
+    /// Строки «: warning CODE:» из вывода dotnet, дедуплицированные (одно предупреждение
+    /// печатается по разу на каждый проект графа). null — предупреждений нет.
+    /// </summary>
+    private static string? ExtractWarnings(string dotnetOutput)
+    {
+        var lines = dotnetOutput.Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.Contains(": warning ", StringComparison.Ordinal))
+            .Distinct()
+            .ToList();
+        if (lines.Count == 0)
+        {
+            return null;
+        }
+        var sb = new StringBuilder();
+        sb.AppendLine();
+        sb.AppendLine($"Build warnings: {lines.Count} (non-blocking — pass stays pass, but see them):");
+        foreach (var line in lines.Take(20))
+        {
+            sb.AppendLine("  " + line);
+        }
+        if (lines.Count > 20)
+        {
+            sb.AppendLine($"  ... ({lines.Count - 20} more in build.log)");
+        }
+        return sb.ToString();
     }
 
     /// <summary>

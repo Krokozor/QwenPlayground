@@ -14,12 +14,19 @@ namespace QwenPlayground.Core.Tools;
 /// <see cref="ExecuteDetailedAsync"/> для исполнения (с опциональной финализацией —
 /// см. <see cref="ToolEntry.Execute"/>). Дубликат имени — ошибка регистрации, не
 /// молчаливый last-wins: спрятанный инструмент — потерянная способность агента.
+///
+/// Потоки: мутации (MCP-регистрация/отключение) идут с фоновых потоков, а
+/// <see cref="Definitions"/> читает сборка промпта и UI — с других. Поэтому
+/// <c>_tools</c> — ConcurrentDictionary, а <c>_definitions</c> — неизменяемый
+/// снапшот (массив), атомарно заменяемый при мутации: читатель никогда не видит
+/// полуобновлённый список и не берёт лок.
 /// </summary>
 public sealed class ToolRegistry
 {
     // Порядок определений стабилен (Ordinal) — промпт не «дышит» между ходами.
-    private readonly Dictionary<string, ToolEntry> _tools = new(StringComparer.OrdinalIgnoreCase);
-    private readonly List<ToolDefinition> _definitions = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ToolEntry> _tools = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _mutationLock = new();
+    private volatile ToolDefinition[] _definitions = [];
 
     /// <summary>Классический сценарий: встроенные инструменты из сборок (пусто → Core).</summary>
     public ToolRegistry(params Assembly[] assemblies)
@@ -45,15 +52,17 @@ public sealed class ToolRegistry
     /// </summary>
     public void Register(ToolEntry entry)
     {
-        if (!_tools.TryAdd(entry.Definition.Name, entry))
+        lock (_mutationLock)
         {
-            throw new InvalidOperationException(
-                $"duplicate tool name '{entry.Definition.Name}': уже зарегистрирован");
+            if (!_tools.TryAdd(entry.Definition.Name, entry))
+            {
+                throw new InvalidOperationException(
+                    $"duplicate tool name '{entry.Definition.Name}': уже зарегистрирован");
+            }
+            // Регистрации единичны (старт + подключение MCP) — пересорт снапшота дешёв,
+            // зато порядок определений в промпте всегда стабилен и не «дышит» между ходами.
+            RepublishDefinitions();
         }
-        _definitions.Add(entry.Definition);
-        // Регистрации единичны (старт + подключение MCP) — пересорт дешёв, зато порядок
-        // определений в промпте всегда стабилен и не «дышит» между ходами.
-        _definitions.Sort((a, b) => StringComparer.Ordinal.Compare(a.Name, b.Name));
     }
 
     /// <summary>
@@ -62,23 +71,51 @@ public sealed class ToolRegistry
     /// </summary>
     public bool TryRegister(ToolEntry entry)
     {
-        if (!_tools.TryAdd(entry.Definition.Name, entry))
-            return false;
-        _definitions.Add(entry.Definition);
-        _definitions.Sort((a, b) => StringComparer.Ordinal.Compare(a.Name, b.Name));
-        return true;
+        lock (_mutationLock)
+        {
+            if (!_tools.TryAdd(entry.Definition.Name, entry))
+            {
+                return false;
+            }
+            RepublishDefinitions();
+            return true;
+        }
     }
 
     /// <summary>Удалить все инструменты с указанным префиксом (например, "blender_").</summary>
     public int UnregisterByPrefix(string prefix)
     {
-        var toRemove = _definitions.Where(d => d.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
-        foreach (var def in toRemove)
+        lock (_mutationLock)
         {
-            _tools.Remove(def.Name);
-            _definitions.Remove(def);
+            var removed = 0;
+            foreach (var name in _tools.Keys
+                         .Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                         .ToList())
+            {
+                if (_tools.TryRemove(name, out _))
+                {
+                    removed++;
+                }
+            }
+            if (removed > 0)
+            {
+                RepublishDefinitions();
+            }
+            return removed;
         }
-        return toRemove.Count;
+    }
+
+    /// <summary>
+    /// Новый отсортированный снапшот определений из текущего состояния <c>_tools</c>.
+    /// Вызывается только под <c>_mutationLock</c>; замена volatile-поля атомарна,
+    /// поэтому читатели (Definitions/DefinitionsByGroup) работают без лока.
+    /// </summary>
+    private void RepublishDefinitions()
+    {
+        _definitions = _tools.Values
+            .Select(t => t.Definition)
+            .OrderBy(d => d.Name, StringComparer.Ordinal)
+            .ToArray();
     }
 
     public IReadOnlyList<ToolDefinition> Definitions => _definitions;

@@ -816,42 +816,58 @@ public static class BrowserService
     // ─── Network Diagnostics ──────────────────────────────────
 
     private static List<Dictionary<string, string>>? _networkLog;
+    // Гонка: запись — из события WebView2, чтение — из потока тула. Лок + снапшот при чтении.
+    private static readonly object _networkLogLock = new();
 
     /// <summary>Enable network monitoring via WebResourceResponseReceived event.</summary>
     public static async Task EnableNetworkMonitoringAsync()
     {
         var core = await GetCoreAsync();
-        _networkLog = new List<Dictionary<string, string>>();
+        lock (_networkLogLock)
+        {
+            _networkLog = new List<Dictionary<string, string>>();
+        }
 
         core.WebResourceResponseReceived += (s, e) =>
         {
-            try
+            // Мутация списка — только под локом (чтение идёт с потока тула).
+            // Обработчик тотален (все доступы null-условные) — без try/catch:
+            // если вдруг исключение, лучше краш со стеком, чем молча потерянный лог.
+            var entry = new Dictionary<string, string>
             {
-                var uri = e.Request?.Uri ?? "";
-                var status = e.Response?.StatusCode ?? 0;
-                _networkLog?.Add(new Dictionary<string, string>
+                // Метод реального запроса (раньше хардкодился "GET" — POST/PUT показывались GET).
+                ["method"] = e.Request?.Method ?? "GET",
+                ["url"] = e.Request?.Uri ?? "",
+                ["status"] = (e.Response?.StatusCode ?? 0).ToString(),
+                ["type"] = ""
+            };
+            lock (_networkLogLock)
+            {
+                _networkLog?.Add(entry);
+                if (_networkLog is { Count: > 200 })
                 {
-                    // Метод реального запроса (раньше хардкодился "GET" — POST/PUT показывались GET).
-                    ["method"] = e.Request?.Method ?? "GET",
-                    ["url"] = uri,
-                    ["status"] = status.ToString(),
-                    ["type"] = ""
-                });
-                if (_networkLog!.Count > 200) _networkLog.RemoveAt(0);
+                    _networkLog.RemoveAt(0);
+                }
             }
-            catch { }
         };
     }
 
     /// <summary>Get recent network requests (for diagnostics).</summary>
     public static string GetNetworkLog()
     {
-        if (_networkLog is null || _networkLog.Count == 0)
-            return "No network requests captured yet. Call browser_network after navigating.";
-        var recent = _networkLog.TakeLast(30);
+        List<Dictionary<string, string>> snapshot;
+        lock (_networkLogLock)
+        {
+            if (_networkLog is null || _networkLog.Count == 0)
+            {
+                return "No network requests captured yet. Call browser_network after navigating.";
+            }
+            snapshot = _networkLog.ToList();
+        }
+        var recent = snapshot.TakeLast(30);
         var lines = recent.Select(r =>
             $"{r["method"]} {r.GetValueOrDefault("status", "?")} [{r.GetValueOrDefault("type", "")}] {r["url"][..Math.Min(r["url"].Length, 100)]}");
-        return $"Last {recent.Count()} requests (of {_networkLog.Count} total):\n" + string.Join("\n", lines);
+        return $"Last {recent.Count()} requests (of {snapshot.Count} total):\n" + string.Join("\n", lines);
     }
 
     // ─── Downloads / Uploads ──────────────────────────────────
@@ -1030,34 +1046,55 @@ public static class BrowserService
         if (_suspendTimerStarted) return;
         _suspendTimerStarted = true;
         var timer = new System.Timers.Timer(120_000) { AutoReset = true }; // 2 min
-        timer.Elapsed += async (_, _) =>
+        timer.Elapsed += (_, _) =>
         {
-            // Всё тело в try: таймер живёт на потоке пула, и любое исключение
-            // (например IsSuspended на disposed core после закрытия окна) без
-            // обработчика убивает процесс.
-            try
+            // Таймер живёт на потоке пула, а CoreWebView2 — только UI-поток:
+            // с suspend-вызовом идем через Dispatcher. Снаружи читаем только
+            // статические поля (ссылка/DateTime — атомарно), WebView2 не трогаем.
+            var core = _core;
+            if (core is null || (DateTime.Now - _lastActivity).TotalMinutes < 2) return;
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher is null || dispatcher.HasShutdownStarted) return;
+            _ = dispatcher.InvokeAsync(async () =>
             {
-                var core = _core;
-                if ((DateTime.Now - _lastActivity).TotalMinutes >= 2 && core is not null && !core.IsSuspended)
+                try
                 {
-                    await core.TrySuspendAsync();
+                    if (!core.IsSuspended)
+                        await core.TrySuspendAsync();
                 }
-            }
-            catch
-            {
-            }
+                catch
+                {
+                    // core мог быть disposed между проверкой и выполнением —
+                    // таймер не должен убивать процесс.
+                }
+            });
         };
         timer.Start();
     }
 
-    /// <summary>Resume the browser if suspended. Call before any operation.</summary>
+    /// <summary>
+    /// Resume the browser if suspended. Call before any operation.
+    /// CoreWebView2 доступим только с UI-потока (поток, создавший контроллер),
+    /// а тулы работают на фоновых — поэтому check+resume маришуем через Dispatcher.
+    /// Пауза-пробуждение ждём на своём (фоновом) потоке, не блокируя UI.
+    /// </summary>
     public static async Task EnsureResumedAsync()
     {
-        if (_core is not null && _core.IsSuspended)
-        {
-            _core.Resume();
+        if (_core is not { } core) return;
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null) return; // UI нет — браузера нет
+        bool resumed = dispatcher.CheckAccess()
+            ? ResumeIfSuspended(core)
+            : await dispatcher.InvokeAsync(() => ResumeIfSuspended(core));
+        if (resumed)
             await Task.Delay(200); // Give it a moment to wake up
-        }
+    }
+
+    private static bool ResumeIfSuspended(CoreWebView2 core)
+    {
+        if (!core.IsSuspended) return false;
+        core.Resume();
+        return true;
     }
 
     // ─── Cursor Overlay ───────────────────────────────────────

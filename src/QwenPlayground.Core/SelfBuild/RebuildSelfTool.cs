@@ -41,8 +41,10 @@ public sealed class RebuildSelfTool : AgentTool
         var pushInfo = MaybePush();
 
         SelfBuildService.RequestRestart(result.Id);
+        // Ворнинги (если были) — в конце отчёта: не блокируют, но должны быть видны.
+        var warningsInfo = result.Warnings is null ? string.Empty : $"\n{result.Warnings}";
         return $"Build {result.Id} succeeded. The application will now restart into the new version.\n" +
-               $"Git: {gitInfo}" + (pushInfo is null ? string.Empty : $"\n{pushInfo}");
+               $"Git: {gitInfo}" + (pushInfo is null ? string.Empty : $"\n{pushInfo}") + warningsInfo;
     }
 
     /// <summary>
