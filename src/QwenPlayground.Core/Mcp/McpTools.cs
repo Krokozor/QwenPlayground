@@ -32,7 +32,7 @@ public sealed class McpStatusTool : AgentTool
         {
             var name = kvp.Key;
             var client = kvp.Value;
-            sb.AppendLine($"🔌 {name} (v{client.ServerInfo?.Version ?? "?"}) — {client.Tools.Count} tools, transport: {client.Name}");
+            sb.AppendLine($"🔌 {name} (v{client.ServerInfo?.Version ?? "?"}) — {client.Tools.Count} tools, transport: {client.Transport}");
             if (client.StderrLineCount > 0 || client.StderrLogPath is not null)
             {
                 sb.AppendLine($"   stderr: {client.StderrLineCount} line(s)" +

@@ -133,11 +133,9 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         // Вкладка «Суммаризация»: ре-прогоны и редактирование резюме/слоёв/промптов.
         Summarization = new SummarizationViewModel(RunSummarizationCallAsync);
 
-        // MCP: register tools after initial connection completes (non-blocking).
-        // Dispatch на UI-поток (ToolRegistry — общий с UI). Если MainWindow ещё не
-        // создан (редкий гонок) — ретрай через DispatcherTimer, пока не появится.
-        // Хук перерегистрации MCP-тулов (mcp_reload): Core не знает про UI, UI знает
-        // про поток реестра (паттерн AgentInteraction).
+        // MCP: хук перерегистрации тулов (mcp_reload) вызывается из Core на фоновом
+        // потоке; реестр владеет UI, поэтому мутация — на UI-потоке (паттерн
+        // AgentInteraction: маршрут интерактива регистрирует владелец UI).
         McpService.ReRegisterTools = () =>
         {
             var app = System.Windows.Application.Current;
@@ -150,45 +148,26 @@ public partial class MainViewModel : ObservableObject, IChatHost {
                 RegisterMcpTools();
             }
         };
+        // Начальная регистрация: ждём завершения MCP-init (любой исход) и регистрируем
+        // на UI-потоке. `this` захватывается напрямую — VM конструируется на UI-потоке,
+        // искать MainWindow.DataContext не нужно (headless-харнес: Application.Current
+        // null — регистрация не нужна, тулы не в реестре).
         _ = McpService.Ready.ContinueWith(_ =>
         {
-            StartupTrace.Log("MCP: Ready fired (background thread)");
-            var app = System.Windows.Application.Current;
-            if (app is null)
+            try
             {
-                StartupTrace.Log("MCP: Application.Current is null, cannot register.");
-                System.Diagnostics.Debug.WriteLine("[MCP] Application.Current is null, cannot register.");
-                return;
-            }
-            void TryRegister(int attempt)
-            {
-                var vm = app.MainWindow?.DataContext as MainViewModel;
-                if (vm is null)
-                {
-                    if (attempt < 20)
-                    {
-                        StartupTrace.Log($"MCP: MainWindow not ready (attempt {attempt}), retrying.");
-                        System.Diagnostics.Debug.WriteLine($"[MCP] MainWindow not ready (attempt {attempt}), retrying.");
-                        var timer = new System.Windows.Threading.DispatcherTimer
-                            { Interval = TimeSpan.FromMilliseconds(250) };
-                        timer.Tick += (_, _) => { timer.Stop(); TryRegister(attempt + 1); };
-                        timer.Start();
-                    }
-                    else
-                    {
-                        StartupTrace.Log("MCP: MainWindow never appeared, MCP tools NOT registered.");
-                        System.Diagnostics.Debug.WriteLine("[MCP] MainWindow never appeared, MCP tools NOT registered.");
-                    }
-                    return;
-                }
+                var app = System.Windows.Application.Current;
+                if (app is null) return;
                 StartupTrace.Log("MCP: RegisterMcpTools begin (UI thread)");
                 var sw = Stopwatch.StartNew();
-                vm.RegisterMcpTools();
+                app.Dispatcher.Invoke(RegisterMcpTools);
                 StartupTrace.Log($"MCP: RegisterMcpTools done ({sw.ElapsedMilliseconds}ms)");
             }
-            StartupTrace.Log("MCP: Dispatcher.Invoke dispatched");
-            app.Dispatcher.Invoke(() => TryRegister(1));
-            StartupTrace.Log("MCP: Dispatcher.Invoke returned");
+            catch (Exception ex)
+            {
+                // Гонка с закрытием (диспетчер остановлен) — регистрировать некуда.
+                StartupTrace.Log($"MCP: initial registration skipped: {ex.Message}");
+            }
         }, TaskScheduler.Default);
 
         // Качание тиков heartbeat — за UI (паттерн NekoBot: DispatcherTimer UI качает

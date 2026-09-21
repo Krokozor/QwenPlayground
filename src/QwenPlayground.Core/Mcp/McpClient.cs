@@ -55,6 +55,7 @@ public sealed class McpClient : IAsyncDisposable
     public McpServerInfo? ServerInfo { get; private set; }
 
     public string Name => _config.Name;
+    public string Transport => _config.Transport;
     public bool IsConnected { get; private set; }
 
     /// <summary>Сколько строк сервер написал в stderr с момента подключения.</summary>

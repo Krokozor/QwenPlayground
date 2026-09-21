@@ -90,83 +90,23 @@ public sealed class Main
         // лямбд, компилятор через порядок конструктора не видит).
         Runtime = new ChatRuntime(() => Sessions!.CurrentId, ServerProps);
         var rt = Runtime;
-        rt.PromptAssembler = new SystemPromptAssembler(
-            rt.SessionId,
-            () => Sessions!.PromptKey,
-            () => Sessions!.DirectoryFor(Sessions.CurrentId),
+        WireRuntimeCore(rt, new RuntimeWiring(
+            hooks,
+            SessionDirectory: () => Sessions!.DirectoryFor(Sessions.CurrentId),
+            PromptKey: () => Sessions!.PromptKey,
             _identity,
             _externalTools,
-            Tools);
-        // Доска сообщений state-блока: pull-анонсеры (состояние на момент рендера) +
-        // BoardAnnouncer — дрейн статичной мусорки (push из кода без интерфейса).
-        rt.StateBlocks = new StateBlockBuilder(
-            rt.Log.AssignPendingIds,
-            () => rt.Log.NextMessageId,
-            () => rt.EffectiveContextSize,
-            ServerProps,
-            () => rt.Log,
-            () => rt.MemorySurfacer.GetSurfacedForStateBlock(),
-            [rt.MemorySurfacer, new BoardAnnouncer()],
-            () => PairsStore.Pending);
-        rt.Pipeline = new PromptPipeline(
-            () => rt.Log,
-            () => rt.PromptAssembler.ResolveSystemPrompt(),
-            Tools,
-            ServerProps,
-            messages => rt.StateBlocks.Build(),
-            ct => MultimodalContext.BuildAsync(Sessions!.DirectoryFor(Sessions.CurrentId), AppSettings.Get().Endpoint, ServerProps, ct),
-            activeShelves: () => rt.PromptAssembler.EffectiveShelves());
-        rt.Maintenance = new ContextMaintenance(
-            rt.Log,
-            rt.ChatState,
-            rt.Compaction,
-            (user, system, onChunk, ct) => ServiceLlm.CompleteStructuredAsync(user, system, onChunk, ct),
-            _layerStore,
-            rt.MemorySurfacer,
-            ct => rt.Pipeline.CountNextTokensAsync(ct),
-            async () =>
-            {
-                // Реальный n_ctx сервера (кэш), иначе настроенный ContextSize.
-                await ServerProps.FetchAsync(AppSettings.Get().Endpoint);
-                return rt.EffectiveContextSize;
-            },
-            rt.SessionId,
-            new ContextBackupStore(ChatSessions.Root),
-            new ContextMaintenance.Ui(hooks.Status, hooks.Generating, hooks.SaveCurrent),
-            onCompacted: () =>
-            {
-                rt.PromptAssembler.DeactivateUnusedShelves(rt.Log);
-                hooks.OnCompactedUi();
-            });
-        // Драфт окошка ввода: создаём ДО сессий — Load пользуется Draft (Flush/Restore).
-        rt.Draft = new DraftKeeper(
-            hooks.DraftInput,
-            hooks.DraftInputSet,
-            rt.SessionId,
-            new SessionDraftStore(ChatSessions.Root),
-            () => AppSettings.Get().DraftSaveIntervalSeconds);
-        // Сессии: после драфта (Load пользуется драфтом).
+            _layerStore));
+        // Сессии: после драфта (WireRuntimeCore создаёт Draft последним — Load пользуется драфтом).
         Sessions = new SessionController(rt.Log, rt.Draft, rt.MemorySurfacer);
         // Ход: после сессий (пользуется их ключами/каталогом) и maintenance (бюджет-гард).
-        rt.Turns = new TurnPipeline(
-            rt.Log,
-            rt.ChatState,
-            Tools,
-            rt.StateBlocks,
-            rt.Maintenance,
-            ServerProps,
-            new TurnSessionView(
-                () => Sessions.CurrentId,
-                () => Sessions.DirectoryFor(Sessions.CurrentId),
-                () => Sessions.SamplerKey,
-                () => Sessions.PromptKey,
-                () => Sessions.StateBlockKey,
-                Sessions.SaveCurrent),
-            rt.PromptAssembler,
-            rt.MemorySurfacer,
-            hooks.Status,
-            hooks.Generating,
-            hooks.ShutdownApp);
+        WireTurns(rt, hooks, new TurnSessionView(
+            () => Sessions.CurrentId,
+            () => Sessions.DirectoryFor(Sessions.CurrentId),
+            () => Sessions.SamplerKey,
+            () => Sessions.PromptKey,
+            () => Sessions.StateBlockKey,
+            Sessions.SaveCurrent));
         // ── Main-специфичное ─────────────────────────────────────────────────────────
         // Heartbeat: опрос wake/ и расписания. Период опроса фиксированный (20 с),
         // частота реальных пробуждений — HeartbeatIntervalMinutes; сигналы не ждут расписания.
@@ -195,13 +135,54 @@ public sealed class Main
             PromptKey = promptKey,
             StateBlockKey = stateBlockKey
         };
-        rt.PromptAssembler = new SystemPromptAssembler(
-            rt.SessionId,
-            () => promptKey,
-            () => Sessions.DirectoryFor(sessionId),
+        // Пinned-рантайм: свои identity/layer-store (изоляция от main-агента),
+        // каталог и ключи — фиксированные (сессию не переключают).
+        WireRuntimeCore(rt, new RuntimeWiring(
+            hooks,
+            SessionDirectory: () => Sessions.DirectoryFor(sessionId),
+            PromptKey: () => promptKey,
             new InjectedIdentity(),
             new ExternalToolsNote(),
+            new MemoryLayerStore()));
+        WireTurns(rt, hooks, new TurnSessionView(
+            rt.SessionId,
+            () => Sessions.DirectoryFor(sessionId),
+            () => samplerKey,
+            () => promptKey,
+            () => stateBlockKey,
+            () => Sessions.SavePinned(sessionId, rt.Log, samplerKey, promptKey, stateBlockKey)));
+        return rt;
+    }
+
+    /// <summary>
+    /// Различия рантаймов в общей проводке: хуки (UI окна), источники каталога сессии
+    /// и профильного ключа (main — динамические, pinned — фиксированные), идентичность
+    /// и слой-стор памяти (main — общие поля, pinned — собственные).
+    /// </summary>
+    private sealed record RuntimeWiring(
+        UiHooks Hooks,
+        Func<string> SessionDirectory,
+        Func<string?> PromptKey,
+        InjectedIdentity Identity,
+        ExternalToolsNote ExternalTools,
+        MemoryLayerStore LayerStore);
+
+    /// <summary>
+    /// Общие пер-разговорные сервисы — идентичны для main- и pinned-рантаймов:
+    /// Assembler → StateBlocks → Pipeline → Maintenance → Draft. Порядок важен:
+    /// Draft создаётся последним, ДО сессий (SessionController.Load пользуется драфтом).
+    /// </summary>
+    private void WireRuntimeCore(ChatRuntime rt, RuntimeWiring w)
+    {
+        rt.PromptAssembler = new SystemPromptAssembler(
+            rt.SessionId,
+            w.PromptKey,
+            w.SessionDirectory,
+            w.Identity,
+            w.ExternalTools,
             Tools);
+        // Доска сообщений state-блока: pull-анонсеры (состояние на момент рендера) +
+        // BoardAnnouncer — дрейн статичной мусорки (push из кода без интерфейса).
         rt.StateBlocks = new StateBlockBuilder(
             rt.Log.AssignPendingIds,
             () => rt.Log.NextMessageId,
@@ -217,35 +198,45 @@ public sealed class Main
             Tools,
             ServerProps,
             messages => rt.StateBlocks.Build(),
-            ct => MultimodalContext.BuildAsync(Sessions.DirectoryFor(sessionId), AppSettings.Get().Endpoint, ServerProps, ct),
+            ct => MultimodalContext.BuildAsync(w.SessionDirectory(), AppSettings.Get().Endpoint, ServerProps, ct),
             activeShelves: () => rt.PromptAssembler.EffectiveShelves());
         rt.Maintenance = new ContextMaintenance(
             rt.Log,
             rt.ChatState,
             rt.Compaction,
             (user, system, onChunk, ct) => ServiceLlm.CompleteStructuredAsync(user, system, onChunk, ct),
-            new MemoryLayerStore(),
+            w.LayerStore,
             rt.MemorySurfacer,
             ct => rt.Pipeline.CountNextTokensAsync(ct),
             async () =>
             {
+                // Реальный n_ctx сервера (кэш), иначе настроенный ContextSize.
                 await ServerProps.FetchAsync(AppSettings.Get().Endpoint);
                 return rt.EffectiveContextSize;
             },
             rt.SessionId,
             new ContextBackupStore(ChatSessions.Root),
-            new ContextMaintenance.Ui(hooks.Status, hooks.Generating, hooks.SaveCurrent),
+            new ContextMaintenance.Ui(w.Hooks.Status, w.Hooks.Generating, w.Hooks.SaveCurrent),
             onCompacted: () =>
             {
                 rt.PromptAssembler.DeactivateUnusedShelves(rt.Log);
-                hooks.OnCompactedUi();
+                w.Hooks.OnCompactedUi();
             });
+        // Драфт окошка ввода.
         rt.Draft = new DraftKeeper(
-            hooks.DraftInput,
-            hooks.DraftInputSet,
+            w.Hooks.DraftInput,
+            w.Hooks.DraftInputSet,
             rt.SessionId,
             new SessionDraftStore(ChatSessions.Root),
             () => AppSettings.Get().DraftSaveIntervalSeconds);
+    }
+
+    /// <summary>
+    /// Пайплайн хода — последний в цепи: нужен сессионный вид (main — динамический,
+    /// pinned — фиксированный) и (для main) уже созданный SessionController.
+    /// </summary>
+    private void WireTurns(ChatRuntime rt, UiHooks hooks, TurnSessionView sessionView)
+    {
         rt.Turns = new TurnPipeline(
             rt.Log,
             rt.ChatState,
@@ -253,18 +244,11 @@ public sealed class Main
             rt.StateBlocks,
             rt.Maintenance,
             ServerProps,
-            new TurnSessionView(
-                rt.SessionId,
-                () => Sessions.DirectoryFor(sessionId),
-                () => samplerKey,
-                () => promptKey,
-                () => stateBlockKey,
-                () => Sessions.SavePinned(sessionId, rt.Log, samplerKey, promptKey, stateBlockKey)),
+            sessionView,
             rt.PromptAssembler,
             rt.MemorySurfacer,
             hooks.Status,
             hooks.Generating,
             hooks.ShutdownApp);
-        return rt;
     }
 }
