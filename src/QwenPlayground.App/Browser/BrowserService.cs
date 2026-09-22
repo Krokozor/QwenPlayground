@@ -177,6 +177,8 @@ public static class BrowserService
             // «разрешить несколько автоматических загрузок» и т.п. — разрешаем автоматически.
             core.PermissionRequested += (s, e) =>
             {
+                // e.State может бросить, если событие уже обработано — разрешения
+                // best-effort: страница просто не получит автоматическое «разрешить».
                 try { e.State = CoreWebView2PermissionState.Allow; } catch { }
             };
 
@@ -901,7 +903,7 @@ public static class BrowserService
                     var last = seg.Substring(seg.LastIndexOf('/') + 1);
                     if (!string.IsNullOrWhiteSpace(last)) name = Uri.UnescapeDataString(last);
                 }
-                catch { }
+                catch { /* некорректный URL — имя по умолчанию (download_HHmmss) */ }
                 var path = Path.Combine(DownloadDir, name);
                 var i = 1;
                 while (File.Exists(path))
@@ -918,14 +920,14 @@ public static class BrowserService
                     {
                         if (op.State != CoreWebView2DownloadState.Completed) return;
                         long size = 0;
-                        try { size = new FileInfo(op.ResultFilePath).Length; } catch { }
+                        try { size = new FileInfo(op.ResultFilePath).Length; } catch { /* файл ещё не записан — size 0 */ }
                         lock (_downloadsLock)
                         {
                             _downloads.Add(new DownloadEntry(op.ResultFilePath, Path.GetFileName(op.ResultFilePath), size, DateTime.Now));
                             if (_downloads.Count > 50) _downloads.RemoveAt(0);
                         }
                     }
-                    catch { }
+                    catch { /* op мог быть disposed (закрытие браузера) — потеря записи в журнале допустима, файл на диске */ }
                 };
             }
             catch { /* путь по умолчанию лучше, чем падение на скачивании */ }

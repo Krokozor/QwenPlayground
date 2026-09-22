@@ -336,7 +336,7 @@ public sealed class McpClient : IAsyncDisposable
         if (_initialized && !_shutdownInitiated)
         {
             int? code = null;
-            try { if (process.HasExited) code = process.ExitCode; } catch { }
+            try { if (process.HasExited) code = process.ExitCode; } catch { /* ExitCode может бросить, если процесс не был дождён — код в сообщении опционален */ }
             DiagnosticsLog.Log($"MCP '{Name}': process exited during session" + (code is null ? "" : $" (code {code})"));
             AnnouncementBoard.Push("mcp:" + Name,
                 "процесс сервера завершился во время сессии" + (code is null ? "" : $" (код {code})") + $" — stderr: {StderrLogPath}");
@@ -353,7 +353,7 @@ public sealed class McpClient : IAsyncDisposable
             try
             {
                 long size = 0;
-                try { size = new FileInfo(path).Length; } catch { }
+                try { size = new FileInfo(path).Length; } catch { /* лог-файл ещё не создан — размер 0, ротация не нужна */ }
                 if (size > StderrLogMaxBytes)
                 {
                     // Ротация: текущий → .1 (старое .1 отбрасывается), начинаем заново.
@@ -621,6 +621,8 @@ public sealed class McpClient : IAsyncDisposable
     {
         if (_process is not null)
         {
+            // Идемпотентная уборка: процесс может быть уже мёртв/disposed —
+            // исключения здесь не несут информации.
             try { if (!_process.HasExited) _process.Kill(entireProcessTree: true); } catch { }
             try { _process.Dispose(); } catch { }
             _process = null;

@@ -45,7 +45,9 @@ public partial class App : Application
         // Маркер чистого завершения — до выхода процесса: watchdog отличает
         // «пользователь закрыл» от «умерло посреди ничего».
         WatchdogLauncher.MarkClean();
-        // MCP: disconnect all servers
+        // MCP: disconnect all servers. Сбой отключения на выходе не должен мешать
+        // завершению процесса: процесс уходит в любом случае, дочерние процессы
+        // заберёт ОС.
         try { McpService.ShutdownAsync().GetAwaiter().GetResult(); } catch { }
         base.OnExit(e);
     }

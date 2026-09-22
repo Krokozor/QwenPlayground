@@ -47,6 +47,7 @@ public sealed class RebuildLauncherTool : AgentTool
         if (launcherCode != 0)
         {
             // Билд упал — watchdog всё равно перезапускаем (не бросаем приложение без стража).
+            // Хук не должен маскировать ошибку билда.
             try { SelfBuildService.PostDeployTools?.Invoke(); } catch { }
             return $"Error: launcher build failed (exit {launcherCode}).\n{launcherOutput}";
         }
@@ -54,6 +55,7 @@ public sealed class RebuildLauncherTool : AgentTool
         var (watchdogCode, watchdogOutput) = await RunDotnetBuild(watchdogProject, outputDir, cancellationToken);
         if (watchdogCode != 0)
         {
+            // То же, что в launcher-ветке: watchdog не бросаем, хук не маскирует ошибку.
             try { SelfBuildService.PostDeployTools?.Invoke(); } catch { }
             return $"Error: watchdog build failed (exit {watchdogCode}).\n{watchdogOutput}";
         }

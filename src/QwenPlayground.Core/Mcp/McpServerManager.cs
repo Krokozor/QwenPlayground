@@ -43,7 +43,8 @@ public sealed class McpServerManager
                 // Сбой коннекта — важное событие: на доску анонсов (видно в state-блоке).
                 QwenPlayground.Core.MetaInfo.AnnouncementBoard.Push("mcp:" + config.Name,
                     "не подключился на старте: " + ex.Message);
-                // Also write to a log file for debugging
+                // Also write to a log file for debugging. Сбой записи в лог не должен
+                // ломать цикл коннекта — сама ошибка уже анонсирована выше.
                 try
                 {
                     var logPath = Path.Combine(QwenPlayground.Core.SelfBuild.SelfBuildPaths.WorkspaceRoot, "logs", "mcp_errors.log");
