@@ -57,40 +57,15 @@ public static class ContextCompactor
         }
 
         var firstKept = messages.Count > 0 && messages[0].Role == ChatRole.System ? 1 : 0;
-        // Граница — НА user-сообщении (чистый поворот, хвост начинается с user). Если в
-        // хвосте user-а НЕТ (длинный тул-цикл: агент крутит инструменты, последний
-        // user-запрос давно в голове) — не «нечего сжимать», а откат к последнему user
-        // ДО начала хвоста: запрос пользователя остаётся в хвосте дословно, хвост
-        // выходит больше бюджета (безопасное направление — сжимаем меньше).
-        var nextUser = -1;
-        for (var i = boundary; i < messages.Count; i++)
-        {
-            if (messages[i].Role == ChatRole.User)
-            {
-                nextUser = i;
-                break;
-            }
-        }
-        if (nextUser >= 0)
-        {
-            boundary = nextUser;
-        }
-        else
-        {
-            var lastUser = -1;
-            for (var i = Math.Min(boundary, messages.Count) - 1; i >= firstKept; i--)
-            {
-                if (messages[i].Role == ChatRole.User)
-                {
-                    lastUser = i;
-                    break;
-                }
-            }
-            boundary = lastUser >= 0 ? lastUser : firstKept;
-        }
-        // Граница не может стоять сразу после assistant с tool_calls: tool-результаты
-        // остались бы в хвосте без своего вызова — шаблон отрендерит битый чат.
-        while (boundary > firstKept && messages[boundary - 1].ToolCalls is { Count: > 0 })
+        // Единственное жёсткое ограничение: хвост не может НАЧИНАТЬСЯ с tool-сообщения
+        // (tool-результат без своего вызова — шаблон отрендерит битый чат), т.е. цепочка
+        // assistant(tool_calls) → tool[ → tool...] не должна резаться. Привязки к
+        // user-сообщениям нет намеренно: user-запрос — триггер, а ценный контекст — работа
+        // ассистента (тулы, выводы); резать границу под user-а значит отдавать в суммаризацию
+        // самое ценное и дословно хранить самое дешёвое. Бюджетное место в середине
+        // тул-цепочки — цепочка целиком (с assistant'ом) уходит в хвост: хвост растёт на
+        // пару сообщений, безопасное направление.
+        while (boundary > firstKept && boundary < messages.Count && messages[boundary].Role == ChatRole.Tool)
         {
             boundary--;
         }

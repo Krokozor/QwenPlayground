@@ -20,7 +20,9 @@ public sealed class ContextCompactorTests
         var boundary = ContextCompactor.FindCompactionBoundary(messages, 0.5);
 
         Assert.InRange(boundary, 8, 14);
-        Assert.Equal(ChatRole.User, messages[boundary].Role);
+        // Граница — ровно по бюджету, привязки к user-ролям нет (хвост может начинаться
+        // с assistant); жёстко только «не с tool-сообщения».
+        Assert.NotEqual(ChatRole.Tool, messages[boundary].Role);
     }
 
     [Fact]
@@ -38,7 +40,7 @@ public sealed class ContextCompactorTests
 
         // Маленькое окно не даёт удержать 90%: с окном хвост короче.
         Assert.True(withWindow > withoutWindow, $"withWindow={withWindow} должно быть больше withoutWindow={withoutWindow}");
-        Assert.Equal(ChatRole.User, messages[withWindow].Role);
+        Assert.NotEqual(ChatRole.Tool, messages[withWindow].Role);
     }
 
     [Fact]
@@ -59,16 +61,50 @@ public sealed class ContextCompactorTests
 
         var boundary = ContextCompactor.FindCompactionBoundary(messages, 0.5);
 
-        Assert.Equal(ChatRole.User, messages[boundary].Role);
         Assert.True(boundary > 0);
+        // Хвост не начинается с tool-сообщения (результат без вызова — битый рендер).
+        Assert.NotEqual(ChatRole.Tool, messages[boundary].Role);
     }
 
     [Fact]
-    public void Boundary_TailWithoutUser_FallsBackToLastUser_NotZero()
+    public void Boundary_ParallelToolChain_NotSplit()
     {
-        // Регрессия: длинный тул-цикл — хвост (по keepRatio) целиком из assistant/tool,
-        // последний user-запрос — ДО начала хвоста. Раньше граница уезжала за конец
-        // («нечего сжимать» при полном контексте); теперь — откат к последнему user.
+        // assistant с ДВУМЯ вызовами + два tool-результата: бюджетное место может попасть
+        // на второй tool — вся цепочка (с assistant'ом) уходит в хвост целиком.
+        var messages = new List<ChatMessage>();
+        for (var i = 0; i < 3; i++)
+        {
+            messages.Add(ChatMessage.User(new string('u', 400)));
+            messages.Add(new ChatMessage
+            {
+                Role = ChatRole.Assistant,
+                Content = new string('a', 200),
+                ToolCalls = new List<ToolCall>
+                {
+                    new() { Name = "read_file", Arguments = JsonNode.Parse("""{"path":"a"}""")! },
+                    new() { Name = "read_file", Arguments = JsonNode.Parse("""{"path":"b"}""")! }
+                }
+            });
+            messages.Add(ChatMessage.Tool(new string('t', 400)));
+            messages.Add(ChatMessage.Tool(new string('t', 400)));
+        }
+
+        var boundary = ContextCompactor.FindCompactionBoundary(messages, 0.5);
+
+        Assert.Equal(5, boundary);
+        Assert.Equal(ChatRole.Assistant, messages[boundary].Role);
+        Assert.Equal(2, messages[boundary].ToolCalls!.Count);
+        Assert.Equal(ChatRole.Tool, messages[boundary + 1].Role);
+        Assert.Equal(ChatRole.Tool, messages[boundary + 2].Role);
+    }
+
+    [Fact]
+    public void Boundary_LongToolLoop_LandsInChain_KeepsChainIntact()
+    {
+        // Регрессия «нечего сжимать» при полном контексте: длинный тул-цикл — хвост
+        // (по keepRatio) целиком из assistant/tool, user-запрос давно в голове.
+        // Раньше граница уезжала за конец списка (0); теперь садится по бюджету,
+        // и если место — в середине тул-цепочки, цепочка уходит в хвост целиком.
         var messages = new List<ChatMessage>
         {
             ChatMessage.User(new string('u', 400)),
@@ -88,8 +124,11 @@ public sealed class ContextCompactorTests
         var boundary = ContextCompactor.FindCompactionBoundary(messages, 0.5);
 
         Assert.NotEqual(0, boundary);
-        Assert.Equal(1, boundary);                     // на последнем user (хвост — с его запроса)
-        Assert.Equal(ChatRole.User, messages[boundary].Role);
+        Assert.NotEqual(ChatRole.Tool, messages[boundary].Role);
+        // Бюджетное место (21) — tool; цепочка отодвинулась на assistant с вызовом.
+        Assert.Equal(20, boundary);
+        Assert.Equal(ChatRole.Assistant, messages[boundary].Role);
+        Assert.NotNull(messages[boundary].ToolCalls);
     }
 
     [Fact]
