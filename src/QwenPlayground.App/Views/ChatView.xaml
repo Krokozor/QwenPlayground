@@ -138,6 +138,7 @@
                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                                                 Visibility="{Binding IsSystem, Converter={StaticResource InverseBoolToVis}}">
                                         <Button Content="промпт" Padding="8,0" Margin="4,0,0,0" FontSize="11"
+                                                Visibility="{Binding HasPrompt, Converter={StaticResource BoolToVis}}"
                                                 Command="{Binding DataContext.Chat.MessageCommands.InspectPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}" />
                                         <Button Content="правка" Padding="8,0" Margin="4,0,0,0" FontSize="11"

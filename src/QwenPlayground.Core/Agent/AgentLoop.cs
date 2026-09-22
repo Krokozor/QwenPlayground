@@ -184,9 +184,12 @@ public sealed class AgentLoop
             // остаёмся с null («неизвестно», UI показывает ?), никаких оценок chars/4.
             var promptTokens = client.LastUsage?.PromptTokens
                                ?? await client.CountTokensAsync(prompt, cancellationToken);
+            // Полный промпт — копия растущего чата на каждый ход: по умолчанию не пишем в
+            // историю (Setting SaveGenerationPrompts), чтобы не раздувать chat.json. Вкл —
+            // сохраняем, кнопка «промпт» в UI даст точный срез для диагностики.
             message.Generation = new GenerationInfo
             {
-                Prompt = prompt,
+                Prompt = AppSettings.Get().SaveGenerationPrompts ? prompt : string.Empty,
                 RawOutput = raw.ToString(),
                 PromptTokens = promptTokens,
                 CompletionTokens = client.LastUsage?.CompletionTokens

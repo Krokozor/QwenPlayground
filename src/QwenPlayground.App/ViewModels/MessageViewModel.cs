@@ -175,6 +175,10 @@ public partial class MessageViewModel : ObservableObject
     [ObservableProperty]
     private bool _hasGeneration;
 
+    /// <summary>Есть ли сохранённый промпт (Generation.Prompt непустой). Кнопка «промпт» видна только тогда.</summary>
+    [ObservableProperty]
+    private bool _hasPrompt;
+
     [ObservableProperty]
     private bool _thinkingClosed = true;
 
@@ -323,6 +327,7 @@ public partial class MessageViewModel : ObservableObject
             TokenInfo = $"tokens: {prompt} + {completion}";
         }
         HasGeneration = message.Generation is not null;
+        HasPrompt = message.Generation?.Prompt.Length > 0;
     }
 
     public static MessageViewModel FromMessage(string role, ChatMessage message)

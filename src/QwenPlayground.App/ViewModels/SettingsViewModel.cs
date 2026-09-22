@@ -165,6 +165,12 @@ public sealed class SettingsViewModel : ObservableObject {
         set => Set(S.ProjectRoot, value, (s, v) => s.ProjectRoot = v);
     }
 
+    /// <summary>Хранить ли полный промпт каждого хода в истории (chat.json). По умолчанию выкл.</summary>
+    public bool SaveGenerationPrompts {
+        get => S.SaveGenerationPrompts;
+        set => Set(S.SaveGenerationPrompts, value, (s, v) => s.SaveGenerationPrompts = v);
+    }
+
     // ── Heartbeat / сервисы ─────────────────────────────────────────────────────────
 
     public bool HeartbeatEnabled {
