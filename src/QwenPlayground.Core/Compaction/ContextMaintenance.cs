@@ -12,11 +12,15 @@ namespace QwenPlayground.Core.Compaction;
 
 /// <summary>
 /// Сжатие контекста и обслуживание бюджета (домен, вытащенный из MainViewModel):
-/// бэкап сессии → резюме ветки (обычные сессии) ИЛИ слоистый конвейер L1/L2/L3 (main) →
-/// извлечение долговременных фактов в memories/.
+/// бэкап сессии → слоистый конвейер L1/L2/L3 (per-session, sessions/<id>/layers.json) →
+/// извлечение долговременных фактов в memories/ (main).
 ///
-/// FSM-контракт: вызов из бюджет-гварда цикла приходит УЖЕ в состоянии Compacting;
-/// ручной вызов сам переводит Idle → Compacting и вернёт Idle, авто — вернёт Generating.
+/// Граница компакции — на серверных счётчиках: точные токены сообщений из якорей
+/// Generation.PromptTokens + точный размер следующего промпта (бюджет-гварда, /tokenize);
+/// без счётчиков (свежая сессия / сервер недоступен) — оценка chars/4.
+///
+/// FSM-контракт: ручной вызов сам переводит Idle → Compacting и вернёт Idle;
+/// авто-вызов (бюджет-гварда) не трогает FSM — цикл остаётся в Generating.
 /// Ошибки сжатия наружу не бросаются — уходят в статус (бэкап уже снят, история цела).
 /// Ручная компакция во время Generating не блокирует цикл, а ставится в очередь флагом.
 /// </summary>
@@ -94,20 +98,48 @@ public sealed class ContextMaintenance
         _requested = false;
         if (compact)
         {
-            await RunAsync(fromAgentLoop: true);
+            // Точный размер следующего промпта уже посчитан гвардой — передаём:
+            // граница компакции строится на серверных счётчиках (см. MessageTokenWeights).
+            await RunAsync(fromAgentLoop: true, nextPromptTokens: estimated);
         }
     }
 
     /// <summary>Ручная компакция из UI.</summary>
-    public async Task CompactFromUiAsync() => await RunAsync(fromAgentLoop: false);
+    public async Task CompactFromUiAsync() => await RunAsync(fromAgentLoop: false, nextPromptTokens: null);
 
-    private async Task RunAsync(bool fromAgentLoop)
+    private async Task RunAsync(bool fromAgentLoop, int? nextPromptTokens)
     {
         DiagnosticsLog.Log($"compaction: begin (fromAgentLoop={fromAgentLoop}, messages={_conversation.Count})");
         var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // Ручная компакция: если мы в Generating — ставим флаг, а не блокируем цикл.
+        // Проверяем ДО счёта: в Generating точный промпт всё ещё меняется, считать зря.
+        if (!fromAgentLoop && _chat.Current == ChatState.Generating)
+        {
+            _requested = true;
+            _ui.SetStatus("компакция запрошена — выполнится между итерациями");
+            return;
+        }
+
         var effective = await _effectiveSize();
         var keepRatio = ParseKeepRatio(AppSettings.Get().CompactKeepRatio);
-        var boundary = ContextCompactor.FindCompactionBoundary(_conversation, keepRatio, effective);
+        if (nextPromptTokens is null)
+        {
+            // Ручная: точный следующий промпт через серверный счётчик (/tokenize).
+            // Сервер недоступен — не блокируем ручное сжатие, граница по chars/4.
+            try
+            {
+                nextPromptTokens = await _countNextTokens(CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                DiagnosticsLog.Log($"compaction: exact next prompt unavailable: {exception.Message}");
+            }
+        }
+        var weights = nextPromptTokens is { } exact
+            ? MessageTokenWeights.Compute(_conversation, exact)
+            : null;
+        var boundary = ContextCompactor.FindCompactionBoundary(_conversation, keepRatio, effective, weights);
         if (boundary == 0)
         {
             _ui.SetStatus("нечего сжимать");
@@ -118,18 +150,11 @@ public sealed class ContextMaintenance
 
         if (fromAgentLoop)
         {
-            // Вызов из contextBudgetGuard: FSM уже в Compacting (переведён guard'ом).
+            // Вызов из contextBudgetGuard: FSM остаётся в Generating (цикл продолжается).
             _ui.SetStatus("авто-компакция между итерациями...");
         }
         else
         {
-            // Ручная компакция: если мы в Generating — ставим флаг, а не блокируем цикл.
-            if (_chat.Current == ChatState.Generating)
-            {
-                _requested = true;
-                _ui.SetStatus("компакция запрошена — выполнится между итерациями");
-                return;
-            }
             _chat.Transition(ChatState.Compacting);
             _ui.SetGenerating(true);
             _ui.SetStatus("сжатие контекста...");
@@ -155,9 +180,10 @@ public sealed class ContextMaintenance
         {
             _preview.End();
             DiagnosticsLog.Log($"compaction: done ({sw.ElapsedMilliseconds}ms, boundary={boundary})");
-            // FSM: Compacting → Idle (ручная) или → Generating (авто между итерациями).
-            // Сначала FSM, потом SetGenerating(false): уведомление CanExecuteChanged должно
-            // стрельнуть, когда IsBusy уже false, иначе кнопка отката останется серой.
+            // FSM: ручная — Compacting → Idle; авто не переводил FSM (цикл в Generating) —
+            // guard не срабатывает. Сначала FSM, потом SetGenerating(false): уведомление
+            // CanExecuteChanged должно стрельнуть, когда IsBusy уже false, иначе кнопка
+            // отката останется серой.
             if (_chat.Current == ChatState.Compacting)
             {
                 _chat.Transition(fromAgentLoop ? ChatState.Generating : ChatState.Idle);

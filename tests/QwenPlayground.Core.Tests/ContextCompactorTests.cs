@@ -64,6 +64,53 @@ public sealed class ContextCompactorTests
     }
 
     [Fact]
+    public void Boundary_TailWithoutUser_FallsBackToLastUser_NotZero()
+    {
+        // Регрессия: длинный тул-цикл — хвост (по keepRatio) целиком из assistant/tool,
+        // последний user-запрос — ДО начала хвоста. Раньше граница уезжала за конец
+        // («нечего сжимать» при полном контексте); теперь — откат к последнему user.
+        var messages = new List<ChatMessage>
+        {
+            ChatMessage.User(new string('u', 400)),
+            ChatMessage.User(new string('v', 400))
+        };
+        for (var i = 0; i < 20; i++)
+        {
+            messages.Add(new ChatMessage
+            {
+                Role = ChatRole.Assistant,
+                Content = new string('a', 400),
+                ToolCalls = new List<ToolCall> { new() { Name = "shell", Arguments = JsonNode.Parse("""{"command":"x"}""")! } }
+            });
+            messages.Add(ChatMessage.Tool(new string('t', 400)));
+        }
+
+        var boundary = ContextCompactor.FindCompactionBoundary(messages, 0.5);
+
+        Assert.NotEqual(0, boundary);
+        Assert.Equal(1, boundary);                     // на последнем user (хвост — с его запроса)
+        Assert.Equal(ChatRole.User, messages[boundary].Role);
+    }
+
+    [Fact]
+    public void Boundary_UsesExactMessageTokens_WhenProvided()
+    {
+        // Явные серверные веса определяют границу, а не длина текста: первые 5 сообщений
+        // крошечные по символам, но тяжёлые по токенам (крупные tool-выводы в реальном
+        // промпте). По chars/4 граница была бы ~5; по весам — 2.
+        var messages = new List<ChatMessage>();
+        for (var i = 0; i < 10; i++)
+        {
+            messages.Add(ChatMessage.User("x"));
+        }
+        var tokens = new[] { 1000, 1000, 1000, 1000, 1000, 10, 10, 10, 10, 10 };
+
+        var boundary = ContextCompactor.FindCompactionBoundary(messages, 0.5, messageTokens: tokens);
+
+        Assert.Equal(2, boundary);
+    }
+
+    [Fact]
     public void Boundary_TooShortConversation_ReturnsZero()
     {
         var messages = new List<ChatMessage>

@@ -16,23 +16,28 @@ public static class ContextCompactor
     /// </summary>
     public const int CompactionReserveTokens = 1000;
 
-    public static int EstimateTokens(IEnumerable<ChatMessage> messages)
-    {
-        var chars = 0;
-        foreach (var message in messages)
-        {
-            chars += EstimateChars(message);
-        }
-        return chars / 4;
-    }
-
     /// <summary>
     /// keepRatio — доля недавних сообщений, сохраняемая дословно; остальное уходит в резюме.
     /// windowSize — окно модели: хвост не превышает ~70% окна, иначе следующая генерация не влезет.
+    /// messageTokens — точные токены сообщений (серверные счётчики, см. <see cref="MessageTokenWeights"/>);
+    /// null — оценка chars/4 (фолбэк: нет якорей Generation.PromptTokens / сервер недоступен).
     /// </summary>
-    public static int FindCompactionBoundary(IReadOnlyList<ChatMessage> messages, double keepRatio, int windowSize = 0)
+    public static int FindCompactionBoundary(
+        IReadOnlyList<ChatMessage> messages,
+        double keepRatio,
+        int windowSize = 0,
+        int[]? messageTokens = null)
     {
-        var total = EstimateTokens(messages);
+        int Estimate(int index) =>
+            messageTokens is not null && index < messageTokens.Length
+                ? messageTokens[index]
+                : EstimateChars(messages[index]) / 4;
+
+        var total = 0;
+        for (var i = 0; i < messages.Count; i++)
+        {
+            total += Estimate(i);
+        }
         var keepBudget = (int)(total * keepRatio);
         if (windowSize > 0)
         {
@@ -43,19 +48,45 @@ public static class ContextCompactor
         var tail = 0;
         for (var i = messages.Count - 1; i >= 0; i--)
         {
-            var estimate = EstimateChars(messages[i]) / 4;
             if (tail >= keepBudget)
             {
                 break;
             }
-            tail += estimate;
+            tail += Estimate(i);
             boundary = i;
         }
 
         var firstKept = messages.Count > 0 && messages[0].Role == ChatRole.System ? 1 : 0;
-        while (boundary < messages.Count && messages[boundary].Role != ChatRole.User)
+        // Граница — НА user-сообщении (чистый поворот, хвост начинается с user). Если в
+        // хвосте user-а НЕТ (длинный тул-цикл: агент крутит инструменты, последний
+        // user-запрос давно в голове) — не «нечего сжимать», а откат к последнему user
+        // ДО начала хвоста: запрос пользователя остаётся в хвосте дословно, хвост
+        // выходит больше бюджета (безопасное направление — сжимаем меньше).
+        var nextUser = -1;
+        for (var i = boundary; i < messages.Count; i++)
         {
-            boundary++;
+            if (messages[i].Role == ChatRole.User)
+            {
+                nextUser = i;
+                break;
+            }
+        }
+        if (nextUser >= 0)
+        {
+            boundary = nextUser;
+        }
+        else
+        {
+            var lastUser = -1;
+            for (var i = Math.Min(boundary, messages.Count) - 1; i >= firstKept; i--)
+            {
+                if (messages[i].Role == ChatRole.User)
+                {
+                    lastUser = i;
+                    break;
+                }
+            }
+            boundary = lastUser >= 0 ? lastUser : firstKept;
         }
         // Граница не может стоять сразу после assistant с tool_calls: tool-результаты
         // остались бы в хвосте без своего вызова — шаблон отрендерит битый чат.
@@ -64,6 +95,20 @@ public static class ContextCompactor
             boundary--;
         }
         return boundary > firstKept && boundary < messages.Count ? boundary : 0;
+    }
+
+    /// <summary>Символов в сообщении (content + reasoning + tool-вызовы + шаблонные маркеры ~8).</summary>
+    public static int EstimateChars(ChatMessage message)
+    {
+        var chars = message.Content.Length + (message.Reasoning?.Length ?? 0);
+        if (message.ToolCalls is not null)
+        {
+            foreach (var call in message.ToolCalls)
+            {
+                chars += call.Name.Length + call.Arguments.ToJsonString().Length;
+            }
+        }
+        return chars + 8;
     }
 
     // Транскрипт суммаризации не должен переполнять окно модели.
@@ -102,19 +147,6 @@ public static class ContextCompactor
             transcript.Append('\n');
         }
         return transcript.ToString();
-    }
-
-    private static int EstimateChars(ChatMessage message)
-    {
-        var chars = message.Content.Length + (message.Reasoning?.Length ?? 0);
-        if (message.ToolCalls is not null)
-        {
-            foreach (var call in message.ToolCalls)
-            {
-                chars += call.Name.Length + call.Arguments.ToJsonString().Length;
-            }
-        }
-        return chars + 8;
     }
 
     private static string Cap(string text, int limit) =>
