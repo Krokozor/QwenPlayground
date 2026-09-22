@@ -84,7 +84,14 @@ public sealed class CSharpUnusedUsingsTool : AgentTool
                         continue;
                     }
 
-                    var sym = model.GetSymbolInfo(usingDirective.Name, cancellationToken).Symbol;
+                    // Name == null для alias-директив (using X = Y;) — пропускаем
+                    // (консервативно: не отчитываемся о них).
+                    var usingName = usingDirective.Name;
+                    if (usingName is null)
+                    {
+                        continue;
+                    }
+                    var sym = model.GetSymbolInfo(usingName, cancellationToken).Symbol;
                     if (sym is null)
                     {
                         continue; // не резолвится — про это скажет компилятор
@@ -116,7 +123,7 @@ public sealed class CSharpUnusedUsingsTool : AgentTool
                     if (!isUsed)
                     {
                         var lineNum = usingDirective.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-                        results.Add($"{path}:{lineNum}: using {usingDirective.Name.ToFullString()};");
+                        results.Add($"{path}:{lineNum}: using {usingName.ToFullString()};");
                     }
                 }
             }

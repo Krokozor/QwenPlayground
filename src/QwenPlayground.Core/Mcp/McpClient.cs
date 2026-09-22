@@ -554,8 +554,16 @@ public sealed class McpClient : IAsyncDisposable
         var body = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
+            // Числовой код, а не только имя enum: «InternalServerError» в тексте ошибки
+            // требует знания таблицы статусов, «500» читается сразу.
             throw new McpException((int)response.StatusCode,
-                $"HTTP {response.StatusCode}: {body[..Math.Min(body.Length, 200)]}");
+                $"HTTP {(int)response.StatusCode} ({response.StatusCode}): {body[..Math.Min(body.Length, 200)]}");
+
+        // 202 с пустым телом — нормальный ответ на уведомление по спеке Streamable HTTP
+        // (сервер подтверждает приём, результата нет). Без этой проверки JsonNode.Parse("")
+        // падала бы на каждом notifications/* запросе.
+        if (string.IsNullOrWhiteSpace(body))
+            return null;
 
         // Response might be JSON or SSE
         var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
