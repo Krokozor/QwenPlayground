@@ -174,10 +174,10 @@ public sealed class ChatSessions
 
     /// <summary>Сохранить контент текущей сессии (заголовок main проставляется здесь).</summary>
     public void SaveCurrent(IReadOnlyList<ChatMessage> messages, int nextMessageId, string purpose = "chat",
-        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null)
+        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null, int? slotId = null)
     {
         var title = CurrentId == MainAgent.SessionId ? MainTitle : null;
-        _store.Save(CurrentId, messages, title, nextMessageId, purpose, samplerKey, promptKey, stateBlockKey);
+        _store.Save(CurrentId, messages, title, nextMessageId, purpose, samplerKey, promptKey, stateBlockKey, slotId);
     }
 
     /// <summary>
@@ -185,8 +185,8 @@ public sealed class ChatSessions
     /// Заголовок не проставляется (у закреплённых сессий нет main-заголовка).
     /// </summary>
     public void Save(string id, IReadOnlyList<ChatMessage> messages, int nextMessageId, string purpose = "subagent",
-        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null) =>
-        _store.Save(id, messages, null, nextMessageId, purpose, samplerKey, promptKey, stateBlockKey);
+        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null, int? slotId = null) =>
+        _store.Save(id, messages, null, nextMessageId, purpose, samplerKey, promptKey, stateBlockKey, slotId);
 
     /// <summary>Перестроить список из хранилища; main присутствует всегда, даже если ещё не сохранялся.</summary>
     public void RefreshList()

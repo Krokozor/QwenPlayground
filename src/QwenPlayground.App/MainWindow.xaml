@@ -24,12 +24,6 @@
             <wv2:WebView2 x:Name="AgentBrowser" />
         </Grid>
 
-        <!-- Окна чата (стадия C): каждое окно — своя сессия и свой рантайм. -->
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,4,6,0">
-            <Button Content="＋ Окно чата" Command="{Binding OpenChatWindowCommand}" Padding="10,2"
-                    ToolTip="Открыть новое окно чата: своя сессия, свой рантайм, общие сервисы" />
-        </StackPanel>
-
         <!-- Диспетчер ходов: фоновые работы с личностью (реестр) вместо одной статусной строки -->
         <Expander DockPanel.Dock="Bottom" Header="{Binding TurnsPanel.Summary}" Margin="4,0,4,4"
                   Foreground="{StaticResource DimBrush}">

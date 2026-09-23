@@ -57,6 +57,13 @@
                 <!-- Настройка чата: назначение кусков профиля (семплер / промпт / state-блок) -->
                 <Button Content="&#9881;" Command="{Binding OpenChatTuningCommand}" Padding="8,0" Margin="0,0,12,0"
                         ToolTip="Настройка чата: семплер, промпт, state-блок (профили из config/chat-profiles.json). Для main-сессии не действует." />
+                <!-- Слот llama.cpp сессии: KV-кеш живёт в слоте сессии → переключение между
+                     сессиями (каждая на своём слоте) не вытесняет чужие кэши. «—» = LRU сервера. -->
+                <TextBlock Text="Слот:" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <ComboBox Width="104" Margin="0,0,12,0"
+                          ItemsSource="{Binding SessionList.SlotOptions}"
+                          SelectedItem="{Binding SessionList.SelectedSlot}"
+                          ToolTip="Слот llama.cpp для ходов этой сессии. Дефолты схемы: 0 — main, 1 — субагент, 2 — побочные окна, 3 — сервис. «—» — сервер выбирает сам (LRU)." />
             </StackPanel>
             <!-- Полки (группы инструментов): тот же механизм, что и у тулов агента
                  activate/deactivate_shelf. Отметка — немедленная активация, снятие — staged

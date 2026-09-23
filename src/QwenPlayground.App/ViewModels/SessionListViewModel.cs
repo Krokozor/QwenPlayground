@@ -22,8 +22,31 @@ public sealed partial class SessionListViewModel : ObservableObject {
 
     public ObservableCollection<SessionInfo> Sessions { get; } = new();
 
+    /// <summary>Опция слота в селекторе: Value — id слота (null = LRU сервера), Display — подпись.</summary>
+    public sealed record SlotOption(int? Value, string Display)
+    {
+        public override string ToString() => Display;
+    }
+
+    /// <summary>
+    /// Слоты llama.cpp (сервер запущен с 4 слотами): 0 — main, 1 — субагенты,
+    /// 2 — побочные окна, 3 — сервисные вызовы (дефолты схемы; пользователю доступны
+    /// все — назначение дефолтов, а не запрет).
+    /// </summary>
+    public IReadOnlyList<SlotOption> SlotOptions { get; } = new[]
+    {
+        new SlotOption(null, "— (LRU)"),
+        new SlotOption(0, "0 (main)"),
+        new SlotOption(1, "1 (субагент)"),
+        new SlotOption(2, "2"),
+        new SlotOption(3, "3"),
+    };
+
     [ObservableProperty]
     private SessionInfo? _selectedSession;
+
+    [ObservableProperty]
+    private SlotOption _selectedSlot = new(null, "— (LRU)");
 
     /// <summary>
     /// Кнопка «×» (удаление сессии) видна только для не-main сессий: main удалить нельзя,
@@ -50,6 +73,15 @@ public sealed partial class SessionListViewModel : ObservableObject {
         if (_sessions.Load(value.Id))
             _status(string.Empty);
         // Реакции вида (список/превью/полки) — в OnSessionChanged (событие контроллера).
+    }
+
+    /// <summary>
+    /// Выбор слота в UI: применяем к текущей сессии (SetCurrentSlot сохраняет сразу).
+    /// Программные обновления (Refresh после смены сессии) не пишут — значение уже совпадает.
+    /// </summary>
+    partial void OnSelectedSlotChanged(SlotOption value) {
+        if (value.Value != _sessions.CurrentSlotId)
+            _sessions.SetCurrentSlot(value.Value);
     }
 
     [RelayCommand]
@@ -107,6 +139,9 @@ public sealed partial class SessionListViewModel : ObservableObject {
             Sessions.Add(info);
         }
         SelectedSession = Sessions.FirstOrDefault(s => s.Id == _sessions.CurrentId);
+        // Селектор слота следует за текущей сессией (совпадение по Value — без записи).
+        SelectedSlot = SlotOptions.FirstOrDefault(o => o.Value == _sessions.CurrentSlotId)
+                       ?? SlotOptions[0];
         OnPropertyChanged(nameof(IsMainSession));
     }
 

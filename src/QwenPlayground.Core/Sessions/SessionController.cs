@@ -1,6 +1,7 @@
 using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Crash;
+using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.MetaInfo;
 
@@ -30,6 +31,10 @@ public sealed class SessionController
     private string? _promptKey;
     private string? _stateBlockKey;
 
+    // Слот llama.cpp текущей сессии (идёт в ход её /completion как id_slot).
+    // null — сервер выбирает (LRU). main по умолчанию на SlotAllocation.Main (легаси).
+    private int? _slotId;
+
     public SessionController(ChatLog log, DraftKeeper draft, MemorySurfacer surfacer, string? sessionsRoot = null)
     {
         _log = log;
@@ -53,6 +58,19 @@ public sealed class SessionController
     public string? PromptKey => _promptKey;
     public string? StateBlockKey => _stateBlockKey;
 
+    /// <summary>Слот llama.cpp текущей сессии (null — LRU сервера).</summary>
+    public int? CurrentSlotId => _slotId;
+
+    /// <summary>
+    /// Назначить слот текущей сессии (выбор в UI) + сохранить сразу — редкое событие,
+    /// выбор не должен теряться при закрытии. Ходы сессии пойдут в этот слот (id_slot).
+    /// </summary>
+    public void SetCurrentSlot(int? slotId)
+    {
+        _slotId = slotId;
+        SaveCurrent();
+    }
+
     /// <summary>Список сессий для UI (перестраивается RefreshList).</summary>
     public IReadOnlyList<SessionInfo> List => _sessions.List;
 
@@ -73,11 +91,13 @@ public sealed class SessionController
             StartupTrace.Log($"EnsureMain: loaded {data.Messages.Count} messages ({sw.ElapsedMilliseconds}ms)");
             _log.ReplaceAll(StripBakedSystem(data.Messages));
             _log.SetNextMessageId(data.NextMessageId);
+            _slotId = data.SlotId ?? SlotAllocation.Main; // main по умолчанию на слоте 0 (легаси)
         }
         else
         {
             StartupTrace.Log($"EnsureMain: created empty ({sw.ElapsedMilliseconds}ms)");
             _log.Clear();
+            _slotId = SlotAllocation.Main;
         }
         SaveCurrent();
         StartupTrace.Log($"EnsureMain: saved ({sw.ElapsedMilliseconds}ms total)");
@@ -106,6 +126,8 @@ public sealed class SessionController
         _samplerKey = data.SamplerKey;
         _promptKey = data.PromptKey;
         _stateBlockKey = data.StateBlockKey;
+        // Слот сессии: из файла; у main без поля — дефолт 0 (легаси), у остальных — LRU.
+        _slotId = data.SlotId ?? (id == MainAgent.SessionId ? SlotAllocation.Main : null);
         // Смена сессии: surfaced-пул памяти и мусорка анонсов — транзитное состояние
         // прошлой сессии, не тащим его в новую (иначе чужие заметки просочатся в state-блок).
         _surfacer.Clear();
@@ -123,6 +145,7 @@ public sealed class SessionController
         _samplerKey = null;
         _promptKey = null;
         _stateBlockKey = null;
+        _slotId = null; // новая сессия — LRU, слот выбирает пользователь при желании
         SessionChanged?.Invoke();
     }
 
@@ -140,6 +163,7 @@ public sealed class SessionController
             _samplerKey = null;
             _promptKey = null;
             _stateBlockKey = null;
+            _slotId = null;
         }
         SessionChanged?.Invoke();
         return deletedCurrent;
@@ -162,12 +186,12 @@ public sealed class SessionController
         }
     }
 
-    /// <summary>Персистентность текущей истории + ключей профилей.</summary>
+    /// <summary>Персистентность текущей истории + ключей профилей + слота.</summary>
     public void SaveCurrent()
     {
         _log.AssignPendingIds();
         _sessions.SaveCurrent(_log, _log.NextMessageId,
-            samplerKey: _samplerKey, promptKey: _promptKey, stateBlockKey: _stateBlockKey);
+            samplerKey: _samplerKey, promptKey: _promptKey, stateBlockKey: _stateBlockKey, slotId: _slotId);
     }
 
     /// <summary>Назначить куски профиля текущей сессии (шестерёнка в UI) + сохранить сразу.</summary>

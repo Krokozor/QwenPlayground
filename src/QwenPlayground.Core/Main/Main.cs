@@ -125,7 +125,10 @@ public sealed class Main
         // Сессии: после драфта (WireRuntimeCore создаёт Draft последним — Load пользуется драфтом).
         Sessions = new SessionController(rt.Log, rt.Draft, rt.MemorySurfacer);
         // Ход: после сессий (пользуется их ключами/каталогом) и maintenance (бюджет-гард).
-        // Слот main'а закреплён (SlotAllocation.Main): KV-якорь субагентов адресует его.
+        // Слот — свойство ТЕКУЩЕЙ сессии (SessionData.SlotId, выбор в UI): каждая сессия
+        // на своём слоте → переключение без вытеснения чужих KV-кэшей. main по умолчанию
+        // на SlotAllocation.Main (легаси); KV-якорь субагентов адресует слот вызывающего
+        // (ToolContext.SlotId) — динамически, как есть.
         WireTurns(rt, hooks, new TurnSessionView(
             () => Sessions.CurrentId,
             () => Sessions.DirectoryFor(Sessions.CurrentId),
@@ -133,7 +136,7 @@ public sealed class Main
             () => Sessions.PromptKey,
             () => Sessions.StateBlockKey,
             Sessions.SaveCurrent,
-            () => SlotAllocation.Main));
+            () => Sessions.CurrentSlotId));
         // ── Main-специфичное ─────────────────────────────────────────────────────────
         // Heartbeat: опрос wake/ и расписания. Период опроса фиксированный (20 с),
         // частота реальных пробуждений — HeartbeatIntervalMinutes; сигналы не ждут расписания.

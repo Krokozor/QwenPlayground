@@ -53,18 +53,9 @@ public partial class ChatWindow : Window {
     public ChatViewModel Chat => _chat;
 
     /// <summary>
-    /// Создать окно: новая закреплённая сессия + рантайм + VM. Хуки ссылаются на chat
-    /// лениво (рантайм собирается до VM, хуки срабатывают только после конструирования).
-    /// Heartbeat-хуки — no-op: субагент не будит main-агента.
-    /// </summary>
-    public static ChatWindow Create(Main main, Action shutdownApp) {
-        return CreateCore(main, shutdownApp, slotId: SlotAllocation.SideWindow,
-            promptKey: null, title: "Чат — своё окно");
-    }
-
-    /// <summary>
     /// Окно субагента (spawn_subagent): профиль «subagent» (своя идентичность/контракт/
     /// DeniedTools), слот SlotAllocation.Subagent. Заголовок — из названия задачи.
+    /// (Ручные «окна чата» убраны: слот — свойство сессии, выбирается в селекторе.)
     /// </summary>
     public static ChatWindow CreateSubagent(Main main, Action shutdownApp, string? title) {
         return CreateCore(main, shutdownApp, slotId: SlotAllocation.Subagent,

@@ -45,6 +45,14 @@ public sealed class SessionData
     public string? StateBlockKey { get; set; }
 
     /// <summary>
+    /// Слот llama.cpp для ходов этой сессии: KV-кеш сессии живёт в её слоте, поэтому
+    /// переключение между сессиями (каждая на своём слоте) не вытесняет чужие кэши.
+    /// null — сервер выбирает сам (LRU). У сессий субагентов слот (1) фиксируется на
+    /// уровне окна, в файл не пишется.
+    /// </summary>
+    public int? SlotId { get; set; }
+
+    /// <summary>
     /// Следующий свободный ID сообщения (монотонный счётчик сессии). Только растёт —
     /// при откате/компакции не уменьшается, чтобы ID не переиспользовались (иначе
     /// dangling-референс мог тихо указывать на другое сообщение). Старые сессии без
@@ -132,7 +140,7 @@ public sealed class SessionStore
     }
 
     public void Save(string id, IReadOnlyList<ChatMessage> messages, string? title = null, int nextMessageId = 0, string purpose = "chat",
-        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null)
+        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null, int? slotId = null)
     {
         var finalTitle = title;
         if (finalTitle is null)
@@ -154,7 +162,8 @@ public sealed class SessionStore
             Purpose = purpose,
             SamplerKey = samplerKey,
             PromptKey = promptKey,
-            StateBlockKey = stateBlockKey
+            StateBlockKey = stateBlockKey,
+            SlotId = slotId
         };
         Directory.CreateDirectory(SessionFolder(id));
         AtomicFile.WriteAllText(ChatFilePath(id), Serialize(data));

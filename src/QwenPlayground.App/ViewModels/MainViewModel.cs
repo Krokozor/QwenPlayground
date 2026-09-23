@@ -522,18 +522,6 @@ public partial class MainViewModel : ObservableObject, IChatHost {
     /// </summary>
     private int EffectiveContextSize => Math.Min(S.ContextSize, _main.ServerProps.NContext ?? S.ContextSize);
 
-    // ── Окна чата (мультиоконный квест, стадия C) ────────────────────────────────────
-
-    /// <summary>
-    /// Новое окно чата: закреплённая сессия (CreateDetached), свой рантайм (CreatePinnedRuntime),
-    /// свой ChatViewModel (Pinned). Общие сервисы — из Main.
-    /// </summary>
-    [RelayCommand]
-    private void OpenChatWindow() {
-        var window = Views.ChatWindow.Create(_main, () => System.Windows.Application.Current?.Shutdown());
-        window.Show();
-    }
-
     // ── Субагенты (spawn_subagent) ───────────────────────────────────────────────────
 
     /// <summary>
