@@ -41,6 +41,10 @@ public sealed class RebuildSelfTool : AgentTool
         var pushInfo = MaybePush();
 
         SelfBuildService.RequestRestart(result.Id);
+        // Приложение само выходит (App-хук): если продолжить ход, UI-поток останется занят —
+        // graceful-kill watchdog'а не дождётся закрытия, и новый процесс запустится рядом со
+        // старым (два процесса, общие сессии — инцидент 2026-09-23).
+        QwenPlayground.Core.Main.Main.Instance?.RestartRequested?.Invoke();
         // Ворнинги (если были) — в конце отчёта: не блокируют, но должны быть видны.
         var warningsInfo = result.Warnings is null ? string.Empty : $"\n{result.Warnings}";
         return $"Build {result.Id} succeeded. The application will now restart into the new version.\n" +

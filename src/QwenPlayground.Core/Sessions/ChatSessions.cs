@@ -44,8 +44,9 @@ public sealed class ChatSessions
 
     /// <summary>
     /// Возвращает данные main-сессии. null — main пуст: начинаем с чистого разговора.
+    /// LoadHealed: счётчик id из сайдкара (а не только поле/файл) — как у Load.
     /// </summary>
-    public SessionData? EnsureMain() => _store.Load(MainAgent.SessionId);
+    public SessionData? EnsureMain() => LoadHealed(MainAgent.SessionId);
 
     /// <summary>Загрузить сессию по id и сделать текущей. null — такой сессии нет.</summary>
     public SessionData? Load(string id)

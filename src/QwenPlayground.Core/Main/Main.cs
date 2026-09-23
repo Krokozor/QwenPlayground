@@ -70,6 +70,13 @@ public sealed class Main
     /// <summary>Оркестратор спавна субагентов: KV-якорь main'а + исполнитель (регистрация в UI, App).</summary>
     public SubagentSpawner Subagents { get; }
 
+    /// <summary>
+    /// Хук «запрошен перезапуск» (rebuild_self): App регистрирует выход приложения.
+    /// Без него ход продолжает работать после RequestRestart — UI-поток занят, graceful-kill
+    /// watchdog'а виснет, и живут ДВА процесса (инцидент 2026-09-23).
+    /// </summary>
+    public Action? RestartRequested;
+
     // ── Рантайм main-агента (пер-разговорные сервисы; форварды для совместимости) ──
     public ChatRuntime Runtime { get; }
     public ChatLog Log => Runtime.Log;

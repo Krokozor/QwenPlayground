@@ -108,6 +108,13 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         {
             return;
         }
+        // Окно закрыто, пока субагент РАБОТАЕТ: не плодим второй рантайм на той же сессии
+        // (reopening = новый рантайм, а живой ход привязан к старому — два хода, один слот 1).
+        // Ход завершится, сохранится в сессию, кнопка станет кликабельной (тултип «завершён»).
+        if (_subagentWindow is null && state.IsRunning)
+        {
+            return;
+        }
         // Окно закрыто → _subagentWindow уже null (Closed-хук в TrackSubagentWindow).
         if (_subagentWindow is { } window)
         {
@@ -167,6 +174,22 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         // Единая точка «открыть окно субагента» для всех кнопок (тулбар, пузырь tool call):
         // окно живо → Show+Activate, закрыто → reopening на той же сессии.
         Views.SubagentWindowRegistry.SetOpener(OpenSubagentWindowCore);
+        // Запрошен перезапуск (rebuild_self) — выходим сами, не дожидаясь watchdog'а:
+        // continuation хода держал бы UI-поток занятым, graceful-kill виснет, и рядом со
+        // старым процессом запускается новый (два процесса — инцидент 2026-09-23).
+        _main.RestartRequested = () =>
+        {
+            try
+            {
+                Chat.SaveCurrent();
+            }
+            catch
+            {
+                // Сохранение best-effort: выход важнее (watchdog подхватит новую версию).
+            }
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
+                () => System.Windows.Application.Current?.Shutdown());
+        };
 
         // Интерактив инструментов (подтверждение shell) — pull-модель: оконные
         // провайдеры живут в ChatInteraction (App), Core не знает про окна и FSM.
@@ -351,6 +374,32 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         AnnounceRestarts();
         // Гвард по FSM, а не по IsGenerating: при Compacting/Awaiting* второй ход
         // бросил бы InvalidOperationException внутри Transition.
+
+        // Ход прерван ПОСЕРЕДИНЕ tool-цепочки (rebuild/крах убил процесс): последний
+        // Assistant имеет N tool-вызовов, но результатов меньше N. Синтезируем error-
+        // результаты для осиротевших вызовов — иначе цепочка зависает навсегда (гвард
+        // ниже видит только last == Tool), а модель не узнает, что вызовы не выполнены.
+        if (!_main.ChatState.IsBusy)
+        {
+            for (var i = _main.Log.Count - 1; i >= 0; i--)
+            {
+                if (_main.Log[i].Role != ChatRole.Tool)
+                {
+                    if (_main.Log[i] is { Role: ChatRole.Assistant, ToolCalls: { Count: > 0 } calls })
+                    {
+                        var haveResults = _main.Log.Count - 1 - i;
+                        for (var c = haveResults; c < calls.Count; c++)
+                        {
+                            _main.Log.Add(ChatMessage.Tool(
+                                $"[инструмент {calls[c].Name} не завершён: приложение перезапускалось]"));
+                        }
+                        Chat.RebuildMessageViews();
+                        Chat.SaveCurrent();
+                    }
+                    break; // важна только последняя не-Tool-сообщение
+                }
+            }
+        }
 
         if (!_main.ChatState.IsBusy && _main.Log.Count > 0 && _main.Log[^1].Role == ChatRole.Tool) {
             StartupTrace.Log("ResumePendingChain: starting tool-chain continuation");

@@ -120,6 +120,18 @@ public sealed class SubagentSpawner
             };
         }
 
+        // Один субагент на всё приложение (синхронная модель, слот 1 единственный):
+        // без гварда побочное окно могло бы спавнить второго, пока первый работает —
+        // два хода на одном слоте.
+        if (Current is { } existing)
+        {
+            return new SubagentOutcome {
+                Report = $"Ошибка: субагент уже существует ({(existing.IsRunning ? "работает" : "завершён")}: {existing.Title}). " +
+                         "Дождитесь его завершения или закройте его окно; повторный спавн не поддерживается.",
+                KvNote = null
+            };
+        }
+
         var caller = callerSlot ?? SlotAllocation.Main;
         var settings = AppSettings.Get();
         var anchor = AnchorPath(_mainSessionId());
