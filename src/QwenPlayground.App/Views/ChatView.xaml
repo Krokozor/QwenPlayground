@@ -6,6 +6,9 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <views:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
+        <views:SubagentStatusTextConverter x:Key="SubagentStatusText" />
+        <views:HalfHeightConverter x:Key="HalfHeight" />
+        <views:EmbeddedInputVisibilityConverter x:Key="EmbeddedInputVis" />
     <ItemsPanelTemplate x:Key="AttachPanel">
             <WrapPanel />
         </ItemsPanelTemplate>
@@ -40,8 +43,10 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- LastChildFill=False: иначе последний элемент растягивается на весь остаток ширины. -->
-        <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="False">
+        <!-- LastChildFill=False: иначе последний элемент растягивается на весь остаток ширины.
+             Встроенный режим (чат субагента в пузыре): тулбар не нужен — скрыт. -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="False"
+                   Visibility="{Binding Embedded, RelativeSource={RelativeSource Self}, Converter={StaticResource InverseBoolToVis}}">
             <!-- Селектор сессий + настройка чата: только в главном окне (ShowSessionPicker).
                  Закреплённое окно (субагент, Pinned) за своей сессией — переключать нечем. -->
             <StackPanel Orientation="Horizontal"
@@ -189,11 +194,43 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
-                                <!-- Кнопка в пузыре spawn_subagent: открыть окно субагента, пока оно живо. -->
-                                <Button Content="открыть окно субагента" Padding="8,1" Margin="0,4,0,0" FontSize="11"
-                                        HorizontalAlignment="Left"
-                                        Visibility="{Binding HasSpawnSubagentCall, Converter={StaticResource BoolToVis}}"
-                                        Command="{Binding DataContext.Chat.MessageCommands.OpenSubagentWindowCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                <!-- Встроенный чат субагента (spawn_subagent): хедер (статус + шеврон +
+                                     «⤢» popout) + сворачиваемый ChatView (Embedded: без тулбара).
+                                     Чат живёт в пузыре (SubagentChat — VM из SubagentChatRegistry);
+                                     окно — опциональный popout на той же VM. -->
+                                <Border Margin="0,6,0,0" BorderBrush="#3a5a7a" BorderThickness="1" CornerRadius="4"
+                                        Background="#101318"
+                                        Visibility="{Binding HasEmbeddedSubagent, Converter={StaticResource BoolToVis}}">
+                                    <DockPanel>
+                                        <Border DockPanel.Dock="Top" Background="#151a22" Padding="6,3">
+                                            <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Button Grid.Column="0" Content="{Binding SubagentChevron}" Padding="2,0" FontSize="11"
+                                                    Command="{Binding ToggleSubagentExpandedCommand}"
+                                                    ToolTip="Показать/скрыть чат субагента" />
+                                            <TextBlock Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="11"
+                                                       Foreground="#8899bb"
+                                                       Text="{Binding SubagentChat.IsGenerating, Converter={StaticResource SubagentStatusText}}" />
+                                            <Button Grid.Column="2" Content="&#9998;" Padding="6,0" FontSize="11" Margin="8,0,0,0"
+                                                    Command="{Binding ToggleSubagentInputCommand}"
+                                                    ToolTip="Показать/скрыть ввод субагента (ткнуть, если он в лупе)" />
+                                            <Button Grid.Column="3" Content="&#10530;" Padding="6,0" FontSize="11" Margin="8,0,0,0"
+                                                    ToolTip="Вырвать чат субагента в отдельное окно"
+                                                    Command="{Binding DataContext.Chat.MessageCommands.OpenSubagentWindowCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                            </Grid>
+                                        </Border>
+                                        <!-- Свёрнутость — от MessageViewModel (корневой Border блока,
+                                             DataContext=message), НЕ от SubagentChat (DataContext самого ChatView). -->
+                                        <views:ChatView DataContext="{Binding SubagentChat}" Embedded="True"
+                                                        MaxHeight="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource HalfHeight}}"
+                                                        Visibility="{Binding DataContext.IsSubagentExpanded, RelativeSource={RelativeSource AncestorType=Border}, Converter={StaticResource BoolToVis}}" />
+                                    </DockPanel>
+                                </Border>
                                 <TextBox Text="{Binding Content, Mode=OneWay}" IsReadOnly="True" IsReadOnlyCaretVisible="False"
                                          BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
                                          Margin="0,4,0,0" Foreground="White" FontSize="13"
@@ -272,7 +309,8 @@
                       ItemsPanel="{StaticResource AttachPanel}" ItemTemplate="{StaticResource AttachChip}"
                       Margin="0,4,0,0" />
 
-        <!-- Поле ввода: только текст. Кнопки вложений переехали в нижний тулбар рядом с «усилие» (2026-09-02). -->
+        <!-- Поле ввода: только текст. Кнопки вложений переехали в нижний тулбар рядом с «усилие» (2026-09-02).
+             Встроенный режим (чат субагента): скрыто по дефолту, «✎» в хедере раскрывает (ткань). -->
         <TextBox Grid.Row="4" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
                  AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                  MinHeight="48" MaxHeight="160" VerticalContentAlignment="Top" Padding="6"
@@ -281,12 +319,26 @@
             <TextBox.InputBindings>
                 <KeyBinding Key="Enter" Command="{Binding SendCommand}" />
             </TextBox.InputBindings>
+            <TextBox.Visibility>
+                <MultiBinding Converter="{StaticResource EmbeddedInputVis}">
+                    <Binding Path="Embedded" RelativeSource="{RelativeSource AncestorType=UserControl}" />
+                    <Binding Path="DataContext.ShowSubagentInput" RelativeSource="{RelativeSource AncestorType=Border}" />
+                </MultiBinding>
+            </TextBox.Visibility>
         </TextBox>
 
         <!-- Нижний тулбар: усилие + вложения слева, действия справа. Режимы и «Самоподдув» убраны (2026-08-22):
              всегда агент, nag без tool-вызовов отключён. -->
         <Grid Grid.Row="5" Margin="0,6,0,0">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+            <Grid.Visibility>
+                <MultiBinding Converter="{StaticResource EmbeddedInputVis}">
+                    <Binding Path="Embedded" RelativeSource="{RelativeSource AncestorType=UserControl}" />
+                    <Binding Path="DataContext.ShowSubagentInput" RelativeSource="{RelativeSource AncestorType=Border}" />
+                </MultiBinding>
+            </Grid.Visibility>
+            <!-- Встроенный режим: усилие/вложения не нужны (остаются только действия). -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
+                        Visibility="{Binding Embedded, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource InverseBoolToVis}}">
                 <ComboBox SelectedIndex="{Binding ReasoningEffortIndex}" Width="160">
                     <ComboBoxItem Content="усилие: xhigh (думать много)" />
                     <ComboBoxItem Content="усилие: medium (в меру)" />

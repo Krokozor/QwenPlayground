@@ -192,10 +192,51 @@ public partial class MessageViewModel : ObservableObject
     public bool HasTokenInfo => TokenInfo.Length > 0;
 
     /// <summary>
-    /// Вызов spawn_subagent в этом сообщении: кнопка «открыть окно субагента» в пузыре
-    /// (пока окно живо — команда работает, после закрытия — no-op).
+    /// Вызов spawn_subagent в этом сообщении: встроенный чат субагента в пузыре
+    /// (SubagentChat — VM разговора субагента, ставит MainViewModel при создании
+    /// субагента) + кнопка «⤢» (popout в отдельное окно на той же VM).
     /// </summary>
     public bool HasSpawnSubagentCall { get; private set; }
+
+    /// <summary>
+    /// Чат субагента (VM), встроенный в пузырь: null — не spawn-вызов или субагент ещё
+    /// не создан. Один инстанс на всех: пузырь и popout-окно рендерят один разговор.
+    /// </summary>
+    [ObservableProperty]
+    private ChatViewModel? _subagentChat;
+
+    /// <summary>
+    /// Встроенный чат развёрнут. Авто: true на спавне (видна живая работа), false на
+    /// завершении (показываем отчёт); вручную — шеврон в хедере пузыря.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isSubagentExpanded;
+
+    /// <summary>Встроенный блок субагента виден (у spawn-вызова есть чат).</summary>
+    public bool HasEmbeddedSubagent => SubagentChat is not null;
+
+    partial void OnSubagentChatChanged(ChatViewModel? value) =>
+        OnPropertyChanged(nameof(HasEmbeddedSubagent));
+
+    /// <summary>Шеврон в хедере пузыря: ▸ свёрнут / ▾ развёрнут.</summary>
+    public string SubagentChevron => IsSubagentExpanded ? "▾" : "▸";
+
+    partial void OnIsSubagentExpandedChanged(bool value) =>
+        OnPropertyChanged(nameof(SubagentChevron));
+
+    /// <summary>Шеврон в хедере пузыря: показать/скрыть чат субагента.</summary>
+    [CommunityToolkit.Mvvm.Input.RelayCommand]
+    private void ToggleSubagentExpanded() => IsSubagentExpanded = !IsSubagentExpanded;
+
+    /// <summary>
+    /// Ввод субагента (встроенный режим) раскрыт: по дефолту скрыт (компактность),
+    /// «✎» в хедере раскрывает — чтобы ткнуть субагента, ушедшего в луп.
+    /// </summary>
+    [ObservableProperty]
+    private bool _showSubagentInput;
+
+    [CommunityToolkit.Mvvm.Input.RelayCommand]
+    private void ToggleSubagentInput() => ShowSubagentInput = !ShowSubagentInput;
 
     /// <summary>assistant — единственная роль, для которой осмысленны реролл/продолжить.</summary>
     public bool IsAssistant => Role == "assistant";

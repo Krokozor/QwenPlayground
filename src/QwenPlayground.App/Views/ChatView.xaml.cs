@@ -16,6 +16,12 @@ public partial class ChatView : UserControl
     private ChatViewModel? _chat;
     private bool _stickToBottom = true;
 
+    /// <summary>
+    /// Встроенный режим (чат субагента в пузыре tool call): без тулбара сессий и без
+    /// усилие/вложений — сообщения + ввод + стоп. Ставится в XAML (Embedded="True").
+    /// </summary>
+    public bool Embedded { get; set; }
+
     public ChatView()
     {
         InitializeComponent();
@@ -44,7 +50,9 @@ public partial class ChatView : UserControl
             _chat.Messages.CollectionChanged -= OnMessagesChanged;
             _chat.Compaction.PropertyChanged -= OnCompactionPropertyChanged;
         }
-        _chat = (e.NewValue as IChatHost)?.Chat;
+        // Встроенный режим: DataContext — сам ChatViewModel (пузырь tool call),
+        // в окнах — хост (IChatHost) с свойством Chat.
+        _chat = (e.NewValue as IChatHost)?.Chat ?? e.NewValue as ChatViewModel;
         if (_chat is not null)
         {
             _chat.Messages.CollectionChanged += OnMessagesChanged;

@@ -81,7 +81,12 @@ public partial class MainViewModel : ObservableObject, IChatHost {
     [ObservableProperty]
     private string _subagentTooltip = string.Empty;
 
-    /// <summary>Состояние субагента (SubagentSpawner.Current) → флаги кнопки тулбара.</summary>
+    /// <summary>
+    /// Состояние субагента (SubagentSpawner.Current) → флаги кнопки тулбара + встроенный
+    /// чат в пузыре tool call: на спавне — VM в spawn-сообщение и раскрытие (видна живая
+    /// работа), на завершении — сворачивание (отчёт ниже). Ручной шеврон не сбрасывается:
+    /// после завершения CurrentChanged больше не приходит.
+    /// </summary>
     private void OnSubagentChanged() {
         var state = _main.Subagents.Current;
         SubagentVisible = state is not null;
@@ -90,6 +95,14 @@ public partial class MainViewModel : ObservableObject, IChatHost {
             : state.IsRunning
                 ? $"Субагент работает: {state.Title}"
                 : $"Субагент завершён: {state.Title} (окно открыто)";
+        if (state is not null) {
+            var view = Chat.Messages.LastOrDefault(m => m.HasSpawnSubagentCall);
+            if (view is not null) {
+                if (Views.SubagentChatRegistry.Current is { } current && current.SessionId == state.SessionId)
+                    view.SubagentChat = current.Chat;
+                view.IsSubagentExpanded = state.IsRunning;
+            }
+        }
     }
 
     /// <summary>Открыть окно субагента. No-op, если субагента нет.</summary>
@@ -99,8 +112,9 @@ public partial class MainViewModel : ObservableObject, IChatHost {
     private bool CanOpenSubagentWindow() => Views.SubagentWindowRegistry.HasOpener;
 
     /// <summary>
-    /// Окно живо → Show + Activate; закрыто крестиком → reopening на той же сессии
-    /// (история с диска). Субагент живёт в процессе до рестарта приложения.
+    /// Окно-POPOUT чата субагента (чат живёт в пузыре tool call, окно — второй вид той
+    /// же VM): окно живо → Show + Activate; закрыто → новое окно на существующей VM.
+    /// Субагент живёт в процессе до рестарта приложения.
     /// </summary>
     private void OpenSubagentWindowCore() {
         var state = _main.Subagents.Current;
@@ -108,14 +122,7 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         {
             return;
         }
-        // Окно закрыто, пока субагент РАБОТАЕТ: не плодим второй рантайм на той же сессии
-        // (reopening = новый рантайм, а живой ход привязан к старому — два хода, один слот 1).
-        // Ход завершится, сохранится в сессию, кнопка станет кликабельной (тултип «завершён»).
-        if (_subagentWindow is null && state.IsRunning)
-        {
-            return;
-        }
-        // Окно закрыто → _subagentWindow уже null (Closed-хук в TrackSubagentWindow).
+        // Окно живо → показать.
         if (_subagentWindow is { } window)
         {
             if (!window.IsVisible)
@@ -123,15 +130,30 @@ public partial class MainViewModel : ObservableObject, IChatHost {
                 window.Show();
             }
             window.Activate();
-            return;
         }
-        _subagentWindow = Views.ChatWindow.CreateSubagentReopen(
-            _main, () => System.Windows.Application.Current?.Shutdown(), state.SessionId, state.Title);
-        TrackSubagentWindow(_subagentWindow);
-        _subagentWindow.Show();
+        else
+        {
+            // Окно закрыто → popout на СУЩЕСТВУЮЩЕЙ VM (чат в пузыре не трогаем; второй
+            // рантайм на сессии не плодим — VM одна).
+            if (Views.SubagentChatRegistry.Current is not { } current || current.SessionId != state.SessionId)
+            {
+                return;
+            }
+            var title = string.IsNullOrWhiteSpace(state.Title) ? "Субагент" : $"Субагент — {state.Title}";
+            _subagentWindow = Views.ChatWindow.CreateWindowFor(
+                current.Chat, _main, QwenPlayground.Core.Inference.SlotAllocation.Subagent, state.SessionId, title);
+            TrackSubagentWindow(_subagentWindow);
+            _subagentWindow.Show();
+        }
+        // Окно открыто → сворачиваем встроенный чат в пузыре (разговор не дублируется).
+        var view = Chat.Messages.LastOrDefault(m => m.HasSpawnSubagentCall && m.SubagentChat is not null);
+        if (view is not null)
+        {
+            view.IsSubagentExpanded = false;
+        }
     }
 
-    /// <summary>Окно субагента живо (для reopening-логики); null — закрыто/ещё не было.</summary>
+    /// <summary>Окно-попоут субагента живо; null — закрыто/ещё не было.</summary>
     private Views.ChatWindow? _subagentWindow;
 
     private void TrackSubagentWindow(Views.ChatWindow window) {
@@ -525,20 +547,35 @@ public partial class MainViewModel : ObservableObject, IChatHost {
     // ── Субагенты (spawn_subagent) ───────────────────────────────────────────────────
 
     /// <summary>
-    /// Исполнитель спавна (регистрация в SubagentSpawner): окно с pinned-рантаймом
-    /// (профиль «subagent», слот SlotAllocation.Subagent), задача — первое сообщение,
-    /// синхронный ход (окно видно: пользователь наблюдает за работой субагента),
-    /// отчёт — последнее assistant-сообщение. Ошибки хода видны в окне субагента;
-    /// наружу — текст отчёта или пометка «без финального сообщения».
+    /// Исполнитель спавна (регистрация в SubagentSpawner): встроенный чат с pinned-
+    /// рантаймом (профиль «subagent», слот SlotAllocation.Subagent) БЕЗ окна — чат
+    /// рендерится в пузыре tool call (MessageViewModel.SubagentChat), окно — опциональный
+    /// popout. Задача — первое сообщение, синхронный ход, отчёт — последнее assistant-
+    /// сообщение. Слот субагента чистится в конце хода (как раньше — при закрытии окна).
     /// </summary>
     private async Task<string> RunSubagentAsync(QwenPlayground.Core.Subagents.SubagentSpec spec, CancellationToken cancellationToken) {
-        var window = Views.ChatWindow.CreateSubagent(_main, () => System.Windows.Application.Current?.Shutdown(), spec.Title);
-        _subagentWindow = window;
-        TrackSubagentWindow(window);
-        window.Show();
-        var chat = window.Chat;
+        var (chat, sessionId) = Views.ChatWindow.CreatePinnedChat(
+            _main, () => System.Windows.Application.Current?.Shutdown(),
+            slotId: QwenPlayground.Core.Inference.SlotAllocation.Subagent,
+            promptKey: QwenPlayground.Core.Runtime.ChatProfileSet.SubagentPromptKey);
+        Views.SubagentChatRegistry.SetCurrent(sessionId, chat);
+        // Состояние для кнопки в тулбаре: RAW-название (без префикса «Субагент — ») —
+        // тултип «Субагент работает: {title}», заголовок popout-окна собирается сам.
+        const string prefix = "Субагент — ";
+        var rawTitle = string.IsNullOrEmpty(spec.Title)
+            ? string.Empty
+            : spec.Title.StartsWith(prefix, StringComparison.Ordinal) ? spec.Title[prefix.Length..] : spec.Title;
+        _main.Subagents.SetCurrent(sessionId, rawTitle, isRunning: true);
         chat.InputText = spec.Task;
-        await chat.SendCommand.ExecuteAsync(null);
+        try {
+            await chat.SendCommand.ExecuteAsync(null);
+        }
+        finally {
+            chat.SaveCurrent();
+            // Слот субагента (1): KV вычищаем в конце хода (раньше — при закрытии окна).
+            // Fire-and-forget: ошибки не критичны (слот с медиа, сервер без флага).
+            _ = _main.KvCache.EraseSlotAsync(QwenPlayground.Core.Inference.SlotAllocation.Subagent).ContinueWith(_ => { });
+        }
         var last = chat.Log.LastOrDefault(m => m.Role == ChatRole.Assistant);
         return last?.Content ?? "(субагент завершился без финального сообщения)";
     }
