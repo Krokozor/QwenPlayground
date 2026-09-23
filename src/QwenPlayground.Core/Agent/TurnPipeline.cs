@@ -149,7 +149,7 @@ public sealed class TurnPipeline
                 OnFactSaved = item => _memorySurfacer.SurfaceOwnWrite(item.Id, item.Content),
                 ContinueLastAssistant = continued is not null,
                 AllowToolExecution = toolsAllowed,
-                ToolDefinitions = toolsAllowed ? _promptAssembler.ToolsFor(prompt.AllowedTools) : Array.Empty<ToolDefinition>(),
+                ToolDefinitions = toolsAllowed ? _promptAssembler.ToolsFor(prompt.AllowedTools, prompt.DeniedTools) : Array.Empty<ToolDefinition>(),
                 Generation = settings.ToGenerationOptions(sampler),
                 MaxIterations = settings.ResolveMaxIterations(sampler),
                 // Nag самопроверки живёт ВНУТРИ state-блока — без блока nag'ать некуда.
@@ -176,6 +176,7 @@ public sealed class TurnPipeline
                 ContextBudgetGuard = ct => _maintenance.EnsureBudgetAsync(ct),
                 Multimodal = multimodal,
                 SessionDir = sessionDir,
+                SlotId = _session.SlotId(),
                 CancellationToken = _cancellation.Token
             }))
             {
@@ -249,7 +250,9 @@ public sealed record TurnSessionView(
     Func<string?> SamplerKey,
     Func<string?> PromptKey,
     Func<string?> StateBlockKey,
-    Action SaveCurrent);
+    Action SaveCurrent,
+    /// <summary>Пиннинг слота llama.cpp для сессии (SlotAllocation): main → 0, субагент → 1, окно → 2.</summary>
+    Func<int?> SlotId);
 
 /// <summary>Итог хода: вид решает, куда показать ошибку (пузырь ответа или статус-строка).</summary>
 public sealed class TurnOutcome

@@ -67,7 +67,17 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
         RemoveAttachmentCommand.NotifyCanExecuteChanged();
         PasteImageCommand.NotifyCanExecuteChanged();
         OpenAttachmentCommand.NotifyCanExecuteChanged();
+        OpenSubagentWindowCommand.NotifyCanExecuteChanged();
     }
+
+    /// <summary>
+    /// Открыть окно субагента (кнопка в пузыре с вызовом spawn_subagent): окно живо —
+    /// Show+Activate, закрыто — reopening на той же сессии (единая точка — реестр).
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanOpenSubagentWindow))]
+    private void OpenSubagentWindow() => Views.SubagentWindowRegistry.OpenCurrent();
+
+    private static bool CanOpenSubagentWindow() => Views.SubagentWindowRegistry.HasOpener;
 
     [RelayCommand(CanExecute = nameof(CanInteract))]
     private void Rollback(MessageViewModel? message) {

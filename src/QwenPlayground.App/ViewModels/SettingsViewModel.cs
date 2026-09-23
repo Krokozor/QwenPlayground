@@ -171,6 +171,12 @@ public sealed class SettingsViewModel : ObservableObject {
         set => Set(S.SaveGenerationPrompts, value, (s, v) => s.SaveGenerationPrompts = v);
     }
 
+    /// <summary>KV-якорь субагентов: save/restore KV-кеша вызывающего вокруг хода субагента. По умолчанию вкл.</summary>
+    public bool KvCacheEnabled {
+        get => S.KvCacheEnabled;
+        set => Set(S.KvCacheEnabled, value, (s, v) => s.KvCacheEnabled = v);
+    }
+
     // ── Heartbeat / сервисы ─────────────────────────────────────────────────────────
 
     public bool HeartbeatEnabled {

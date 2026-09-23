@@ -98,6 +98,10 @@
                                        Foreground="{StaticResource DimBrush}" Margin="0,0,0,3" />
                             <TextBox Text="{Binding AllowedToolsText}" AcceptsReturn="True" MinHeight="34" MaxHeight="90"
                                      FontFamily="Consolas" FontSize="11" VerticalScrollBarVisibility="Auto" Margin="0,0,0,6" />
+                            <TextBlock Text="Чёрный список (исключаются из полного набора; имя на строку или через запятую):" FontSize="11"
+                                       Foreground="{StaticResource DimBrush}" Margin="0,0,0,3" />
+                            <TextBox Text="{Binding DeniedToolsText}" AcceptsReturn="True" MinHeight="28" MaxHeight="60"
+                                     FontFamily="Consolas" FontSize="11" VerticalScrollBarVisibility="Auto" Margin="0,0,0,6" />
                             <TextBlock Text="Системный промпт:" FontSize="11" Foreground="{StaticResource DimBrush}" Margin="0,0,0,3" />
                             <TextBox Text="{Binding SystemPrompt}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" MaxHeight="180"
                                      FontFamily="Consolas" FontSize="11" VerticalScrollBarVisibility="Auto" Margin="0,0,0,6" />

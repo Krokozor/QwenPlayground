@@ -267,6 +267,12 @@ public sealed class LlmCompletionClient : ICompletionSource
         {
             body["seed"] = seed;
         }
+        // Пиннинг слота (см. SlotAllocation): main → 0, субагент → 1, окно → 2, сервис → 3.
+        // null — сервер выбирает сам (LRU); тогда RAM prompt cache работает по умолчанию.
+        if (options.IdSlot is { } idSlot)
+        {
+            body["id_slot"] = idSlot;
+        }
 
         return JsonContent(body);
     }

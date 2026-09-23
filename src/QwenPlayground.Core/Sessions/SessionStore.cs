@@ -174,15 +174,42 @@ public sealed class SessionStore
     public SessionData? Load(string id)
     {
         var file = ChatFilePath(id);
+        SessionData? data = null;
         if (File.Exists(file))
         {
-            return JsonSerializer.Deserialize<SessionData>(File.ReadAllText(file), Options);
+            data = JsonSerializer.Deserialize<SessionData>(File.ReadAllText(file), Options);
         }
-        // Legacy: плоский файл sessions/<id>.json из старой структуры.
-        var legacy = LegacyFilePath(id);
-        return File.Exists(legacy)
-            ? JsonSerializer.Deserialize<SessionData>(File.ReadAllText(legacy), Options)
-            : null;
+        else
+        {
+            // Legacy: плоский файл sessions/<id>.json из старой структуры.
+            var legacy = LegacyFilePath(id);
+            if (File.Exists(legacy))
+            {
+                data = JsonSerializer.Deserialize<SessionData>(File.ReadAllText(legacy), Options);
+            }
+        }
+        return data is null ? null : HealNextMessageId(data);
+    }
+
+    /// <summary>
+    /// Самовосстановление счётчика id сообщений: NextMessageId — max(поле, max(Id в файле) + 1).
+    /// Поле могло устареть: сессия не сохранялась после последних сообщений (rebuild убил
+    /// процесс до сохранения) → новая загрузка давала счётчик НАЗАД → новые сообщения
+    /// переиспользовали старые id → старые артефакты (скриншоты) тех id рендерились в
+    /// новых сообщениях (инцидент 2026-09-23: чужие desktop-скриншоты в tool-ответах).
+    /// </summary>
+    private static SessionData HealNextMessageId(SessionData data)
+    {
+        var maxId = 0;
+        foreach (var message in data.Messages)
+        {
+            if (message.Id > maxId)
+            {
+                maxId = message.Id;
+            }
+        }
+        data.NextMessageId = Math.Max(data.NextMessageId, maxId + 1);
+        return data;
     }
 
     public void Delete(string id)

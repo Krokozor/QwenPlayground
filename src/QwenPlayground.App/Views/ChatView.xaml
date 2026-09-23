@@ -92,6 +92,17 @@
             <Button Content="Сжатие" Command="{Binding ShowCompactionPanelCommand}" Padding="12,2" Margin="0,0,4,0"
                     IsEnabled="{Binding Compaction.HasContent}"
                     ToolTip="Открыть панель сжатия контекста (неактивна, пока в ней нет содержимого)" />
+            <!-- «Субагент» — открыть окно субагента (видна, пока окно живо; только главное окно).
+                 DataContext тулбара — ChatViewModel (MainWindow: ChatView DataContext={Binding Chat}),
+                 а состояние на MainViewModel → биндим через окно. FallbackValue=Collapsed:
+                 в pinned-окнах (субагент/побочные) window.DataContext = ChatWindowViewModel —
+                 SubagentVisible там нет, и без фолбэка упавшее биндингом Visibility осталось бы
+                 по умолчанию Visible. -->
+            <Button Content="Субагент"
+                    Command="{Binding DataContext.OpenSubagentWindowCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                    Padding="12,2" Margin="0,0,4,0"
+                    Visibility="{Binding DataContext.SubagentVisible, RelativeSource={RelativeSource AncestorType=Window}, FallbackValue=Collapsed, Converter={StaticResource BoolToVis}}"
+                    ToolTip="{Binding DataContext.SubagentTooltip, RelativeSource={RelativeSource AncestorType=Window}}" />
             <!-- DockPanel.Dock: без него последний элемент растягивается на весь остаток ширины. -->
             <Button Content="Скопировать чат" Command="{Binding MessageCommands.CopyChatCommand}" Padding="12,2" DockPanel.Dock="Left" />
             <!-- Desktop cursor position: visible when desktop shelf is active -->
@@ -171,6 +182,11 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+                                <!-- Кнопка в пузыре spawn_subagent: открыть окно субагента, пока оно живо. -->
+                                <Button Content="открыть окно субагента" Padding="8,1" Margin="0,4,0,0" FontSize="11"
+                                        HorizontalAlignment="Left"
+                                        Visibility="{Binding HasSpawnSubagentCall, Converter={StaticResource BoolToVis}}"
+                                        Command="{Binding DataContext.Chat.MessageCommands.OpenSubagentWindowCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                                 <TextBox Text="{Binding Content, Mode=OneWay}" IsReadOnly="True" IsReadOnlyCaretVisible="False"
                                          BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
                                          Margin="0,4,0,0" Foreground="White" FontSize="13"

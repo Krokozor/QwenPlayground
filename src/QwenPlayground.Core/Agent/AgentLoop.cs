@@ -45,6 +45,12 @@ public sealed class AgentLoop
         var runtime = request.Runtime ?? Runtime.AgentRuntime.Main;
         var settings = runtime.SettingsProvider();
         var generation = request.Generation ?? settings.ToGenerationOptions();
+        // Пиннинг слота (SlotAllocation): проставляется в options — клиент кладёт id_slot
+        // в тело /completion. Инстанс generation на ход свежий (см. GenerationOptions.IdSlot).
+        if (request.SlotId is { } slotId)
+        {
+            generation.IdSlot = slotId;
+        }
         var maxIterations = request.MaxIterations ?? settings.MaxIterations;
         var sanityCheckInterval = request.SanityCheckInterval ?? settings.SanityCheckInterval;
         var reasoningEffort = request.ReasoningEffort ?? settings.ReasoningEffort;
@@ -243,7 +249,8 @@ public sealed class AgentLoop
                 conversation,
                 request.OnFactSaved,
                 runtime,
-                QwenPlayground.Core.Settings.AppSettings.Get().AdditionalWorkspaces);
+                QwenPlayground.Core.Settings.AppSettings.Get().AdditionalWorkspaces,
+                request.SlotId);
             foreach (var call in toolCalls)
             {
                 var arguments = call.Arguments as JsonObject ?? new JsonObject();

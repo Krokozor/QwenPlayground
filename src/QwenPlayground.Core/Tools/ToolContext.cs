@@ -55,6 +55,13 @@ public sealed class ToolContext
     /// <summary>Скоуп исполнения: переданный Runtime или main-агент по умолчанию.</summary>
     public AgentRuntime Scope => Runtime ?? AgentRuntime.Main;
 
+    /// <summary>
+    /// Слот llama.cpp, в котором идёт текущий ход (SlotAllocation): main → 0, субагент → 1,
+    /// окно → 2. null — ход без пиннинга (серверный LRU). Нужен spawn_subagent: KV-якорь
+    /// сохраняет слот ВЫЗЫВАЮЩЕГО, а не всегда main'а (побочное окно тоже может спавнить).
+    /// </summary>
+    public int? SlotId { get; }
+
     public ToolContext(
         string projectRoot,
         Func<int, ChatMessage?>? getMessageById = null,
@@ -63,7 +70,8 @@ public sealed class ToolContext
         IReadOnlyList<ChatMessage>? conversation = null,
         Action<MemoryItem>? onFactSaved = null,
         AgentRuntime? runtime = null,
-        IReadOnlyList<string>? additionalWorkspaces = null)
+        IReadOnlyList<string>? additionalWorkspaces = null,
+        int? slotId = null)
     {
         ProjectRoot = Path.GetFullPath(projectRoot);
         SessionDir = sessionDir;
@@ -72,6 +80,7 @@ public sealed class ToolContext
         Conversation = conversation;
         OnFactSaved = onFactSaved;
         Runtime = runtime;
+        SlotId = slotId;
         AdditionalWorkspaces = (additionalWorkspaces ?? Array.Empty<string>())
             .Select(p => Path.GetFullPath(p))
             .ToList();

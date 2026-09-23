@@ -69,6 +69,13 @@ public sealed record AgentLoopRequest
     /// <summary>Каталог сессии (sessions/&lt;id&gt;): артефакты сообщений пишутся в папку реальной сессии.</summary>
     public string? SessionDir { get; init; }
 
+    /// <summary>
+    /// Пиннинг слота llama.cpp для всех запросов хода (см. <c>SlotAllocation</c>):
+    /// main → 0, субагент → 1, побочное окно → 2. null — сервер выбирает сам (LRU).
+    /// Проставляется из <c>TurnSessionView.SlotId</c> (пinned-рантаймы несут свой слот).
+    /// </summary>
+    public int? SlotId { get; init; }
+
     public CancellationToken CancellationToken { get; init; }
 
     /// <summary>

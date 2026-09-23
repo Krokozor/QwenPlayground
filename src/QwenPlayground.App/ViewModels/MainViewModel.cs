@@ -73,6 +73,64 @@ public partial class MainViewModel : ObservableObject, IChatHost {
     [ObservableProperty]
     private int _selectedTabIndex;
 
+    // ── Субагент: кнопка в тулбаре (видна, пока окно субагента живо) ────────────────
+
+    [ObservableProperty]
+    private bool _subagentVisible;
+
+    [ObservableProperty]
+    private string _subagentTooltip = string.Empty;
+
+    /// <summary>Состояние субагента (SubagentSpawner.Current) → флаги кнопки тулбара.</summary>
+    private void OnSubagentChanged() {
+        var state = _main.Subagents.Current;
+        SubagentVisible = state is not null;
+        SubagentTooltip = state is null
+            ? string.Empty
+            : state.IsRunning
+                ? $"Субагент работает: {state.Title}"
+                : $"Субагент завершён: {state.Title} (окно открыто)";
+    }
+
+    /// <summary>Открыть окно субагента. No-op, если субагента нет.</summary>
+    [RelayCommand(CanExecute = nameof(CanOpenSubagentWindow))]
+    private void OpenSubagentWindow() => Views.SubagentWindowRegistry.OpenCurrent();
+
+    private bool CanOpenSubagentWindow() => Views.SubagentWindowRegistry.HasOpener;
+
+    /// <summary>
+    /// Окно живо → Show + Activate; закрыто крестиком → reopening на той же сессии
+    /// (история с диска). Субагент живёт в процессе до рестарта приложения.
+    /// </summary>
+    private void OpenSubagentWindowCore() {
+        var state = _main.Subagents.Current;
+        if (state is null)
+        {
+            return;
+        }
+        // Окно закрыто → _subagentWindow уже null (Closed-хук в TrackSubagentWindow).
+        if (_subagentWindow is { } window)
+        {
+            if (!window.IsVisible)
+            {
+                window.Show();
+            }
+            window.Activate();
+            return;
+        }
+        _subagentWindow = Views.ChatWindow.CreateSubagentReopen(
+            _main, () => System.Windows.Application.Current?.Shutdown(), state.SessionId, state.Title);
+        TrackSubagentWindow(_subagentWindow);
+        _subagentWindow.Show();
+    }
+
+    /// <summary>Окно субагента живо (для reopening-логики); null — закрыто/ещё не было.</summary>
+    private Views.ChatWindow? _subagentWindow;
+
+    private void TrackSubagentWindow(Views.ChatWindow window) {
+        window.Closed += (_, _) => _subagentWindow = null;
+    }
+
     public MainViewModel() {
         StartupTrace.Log("MainViewModel ctor: begin");
         // Композиционный корень (Core/Main): граф сервисов собирается там (единственное
@@ -98,6 +156,17 @@ public partial class MainViewModel : ObservableObject, IChatHost {
             Settings.ScheduleSave, () => SelectedTabIndex = SettingsTabIndex);
         Chat.Initialize();
         TurnsPanel = new TurnPanel(_main.Background.Turns);
+
+        // Субагенты (spawn_subagent): исполнитель спавна живёт в UI (окно + ход),
+        // KV-якорь вокруг хода — в Core (SubagentSpawner). Вызовы — на UI-потоке
+        // (инвариант: агентный код исполняется на потоке UI).
+        _main.Subagents.Runner = RunSubagentAsync;
+        // Кнопка «Субагент» в тулбаре: видимость/тултип из состояния спавнера.
+        _main.Subagents.CurrentChanged += OnSubagentChanged;
+        OnSubagentChanged();
+        // Единая точка «открыть окно субагента» для всех кнопок (тулбар, пузырь tool call):
+        // окно живо → Show+Activate, закрыто → reopening на той же сессии.
+        Views.SubagentWindowRegistry.SetOpener(OpenSubagentWindowCore);
 
         // Интерактив инструментов (подтверждение shell) — pull-модель: оконные
         // провайдеры живут в ChatInteraction (App), Core не знает про окна и FSM.
@@ -414,5 +483,26 @@ public partial class MainViewModel : ObservableObject, IChatHost {
     private void OpenChatWindow() {
         var window = Views.ChatWindow.Create(_main, () => System.Windows.Application.Current?.Shutdown());
         window.Show();
+    }
+
+    // ── Субагенты (spawn_subagent) ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Исполнитель спавна (регистрация в SubagentSpawner): окно с pinned-рантаймом
+    /// (профиль «subagent», слот SlotAllocation.Subagent), задача — первое сообщение,
+    /// синхронный ход (окно видно: пользователь наблюдает за работой субагента),
+    /// отчёт — последнее assistant-сообщение. Ошибки хода видны в окне субагента;
+    /// наружу — текст отчёта или пометка «без финального сообщения».
+    /// </summary>
+    private async Task<string> RunSubagentAsync(QwenPlayground.Core.Subagents.SubagentSpec spec, CancellationToken cancellationToken) {
+        var window = Views.ChatWindow.CreateSubagent(_main, () => System.Windows.Application.Current?.Shutdown(), spec.Title);
+        _subagentWindow = window;
+        TrackSubagentWindow(window);
+        window.Show();
+        var chat = window.Chat;
+        chat.InputText = spec.Task;
+        await chat.SendCommand.ExecuteAsync(null);
+        var last = chat.Log.LastOrDefault(m => m.Role == ChatRole.Assistant);
+        return last?.Content ?? "(субагент завершился без финального сообщения)";
     }
 }

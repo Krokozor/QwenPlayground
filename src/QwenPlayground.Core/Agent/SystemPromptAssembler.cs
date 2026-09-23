@@ -108,10 +108,10 @@ public sealed class SystemPromptAssembler
     }
 
     /// <summary>
-    /// Тулзы для запроса: базовый набор (Core + активные полки) ∩ whitelist профиля (если задан).
-    /// То же множество даёт превью (PromptPipeline.AdvertisedTools) — превью и запрос совпадают.
+    /// Тулзы для запроса: базовый набор (Core + активные полки) − denied профиля
+    /// ∩ whitelist профиля (если задан). То же множество даёт превью — превью и запрос совпадают.
     /// </summary>
-    public IReadOnlyList<ToolDefinition> ToolsFor(IReadOnlyList<string> allowed)
+    public IReadOnlyList<ToolDefinition> ToolsFor(IReadOnlyList<string> allowed, IReadOnlyList<string>? denied = null)
     {
         var tools = new List<ToolDefinition>(_toolRegistry.DefinitionsByGroup(ToolGroup.Core));
         foreach (var group in EffectiveShelves())
@@ -120,6 +120,12 @@ public sealed class SystemPromptAssembler
         }
         // Память выключена — memory_*-тулы не рекламируем (модель не может их вызвать).
         tools = tools.Where(d => MemoryToolGate.ShouldAdvertise(d.Name)).ToList();
+        // Чёрный список профиля (субагент: без spawn_subagent/rebuild_self) — до whitelist.
+        if (denied is { Count: > 0 })
+        {
+            var deny = denied.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            tools = tools.Where(d => !deny.Contains(d.Name)).ToList();
+        }
         if (allowed.Count == 0)
         {
             return tools;

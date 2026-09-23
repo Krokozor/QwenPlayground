@@ -104,7 +104,8 @@ public sealed class TurnPipelineTests : IDisposable
                 () => _sessions.SamplerKey,
                 () => _sessions.PromptKey,
                 () => _sessions.StateBlockKey,
-                _sessions.SaveCurrent),
+                _sessions.SaveCurrent,
+                () => null), // тесты без пиннинга слотов
             _assembler,
             _surfacer,
             status => _statuses.Add(status),

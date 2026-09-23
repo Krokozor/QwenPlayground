@@ -10,6 +10,7 @@ using QwenPlayground.Core.MetaInfo;
 using QwenPlayground.Core.Runtime;
 using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Settings;
+using QwenPlayground.Core.Subagents;
 using QwenPlayground.Core.Templates;
 using QwenPlayground.Core.Tools;
 
@@ -42,6 +43,13 @@ public sealed record UiHooks(
 /// </summary>
 public sealed class Main
 {
+    /// <summary>
+    /// Единственный экземпляр на процесс (ставится в конструкторе). Точка доступа для
+    /// инструментов, у которых в руках только ToolContext (spawn_subagent): композиционный
+    /// корень один, скоупы агентов через него.
+    /// </summary>
+    public static Main? Instance { get; private set; }
+
     private readonly InjectedIdentity _identity = new();
     private readonly ExternalToolsNote _externalTools = new();
     private readonly MemoryLayerStore _layerStore = new();
@@ -55,6 +63,12 @@ public sealed class Main
     public AppLifecycle Lifecycle { get; }
     public SessionController Sessions { get; }
     public HeartbeatController Heartbeat { get; }
+
+    // ── Субагенты (KV-якорь + оркестрация спавна) ────────────────────────────────────
+    /// <summary>Ручное управление KV-кешем сервера: /slots, save/restore/erase (см. KvCacheController).</summary>
+    public KvCacheController KvCache { get; } = new();
+    /// <summary>Оркестратор спавна субагентов: KV-якорь main'а + исполнитель (регистрация в UI, App).</summary>
+    public SubagentSpawner Subagents { get; }
 
     // ── Рантайм main-агента (пер-разговорные сервисы; форварды для совместимости) ──
     public ChatRuntime Runtime { get; }
@@ -72,8 +86,12 @@ public sealed class Main
 
     public Main(UiHooks hooks, params Assembly[] toolAssemblies)
     {
+        Instance = this;
         // ── Общие сервисы (на всё приложение) ────────────────────────────────────────
         Tools = new ToolRegistry(toolAssemblies);
+        // Субагенты: KV-якорь вокруг синхронного хода (якорь — слот main, файл — в sessions/).
+        // Runner (окно + ход) регистрирует UI (App) после старта.
+        Subagents = new SubagentSpawner(KvCache, () => Sessions!.CurrentId);
         PairsStore = new PairsStore(new MemoryStore().Root);
         Background = new BackgroundWork(hooks.Status);
         // Сервисные LLM-вызовы (суммаризация/компакция/конвейер/память): эндпоинт и
@@ -100,13 +118,15 @@ public sealed class Main
         // Сессии: после драфта (WireRuntimeCore создаёт Draft последним — Load пользуется драфтом).
         Sessions = new SessionController(rt.Log, rt.Draft, rt.MemorySurfacer);
         // Ход: после сессий (пользуется их ключами/каталогом) и maintenance (бюджет-гард).
+        // Слот main'а закреплён (SlotAllocation.Main): KV-якорь субагентов адресует его.
         WireTurns(rt, hooks, new TurnSessionView(
             () => Sessions.CurrentId,
             () => Sessions.DirectoryFor(Sessions.CurrentId),
             () => Sessions.SamplerKey,
             () => Sessions.PromptKey,
             () => Sessions.StateBlockKey,
-            Sessions.SaveCurrent));
+            Sessions.SaveCurrent,
+            () => SlotAllocation.Main));
         // ── Main-специфичное ─────────────────────────────────────────────────────────
         // Heartbeat: опрос wake/ и расписания. Период опроса фиксированный (20 с),
         // частота реальных пробуждений — HeartbeatIntervalMinutes; сигналы не ждут расписания.
@@ -128,15 +148,20 @@ public sealed class Main
     /// хуки — UI окна. Идентичность main-агента не участвует (не-main сессия — профиль-промпт).
     /// </summary>
     public ChatRuntime CreatePinnedRuntime(string sessionId, UiHooks hooks,
-        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null)
+        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null,
+        int slotId = SlotAllocation.SideWindow)
     {
         var rt = new ChatRuntime(() => sessionId, ServerProps) {
             SamplerKey = samplerKey,
             PromptKey = promptKey,
             StateBlockKey = stateBlockKey
         };
+        // Счётчик id — на каждое сообщение в сайдкар (как у main-логa): pinned-сессия
+        // (субагент) тоже может не дожить до SavePinned (hard-kill при rebuild).
+        rt.Log.Added += _ => Sessions.TouchCounter(sessionId, rt.Log.NextMessageId);
         // Пinned-рантайм: свои identity/layer-store (изоляция от main-агента),
-        // каталог и ключи — фиксированные (сессию не переключают).
+        // каталог и ключи — фиксированные (сессию не переключают). Слот — закреплён
+        // (SlotAllocation): субагент → 1, ручное окно → 2.
         WireRuntimeCore(rt, new RuntimeWiring(
             hooks,
             SessionDirectory: () => Sessions.DirectoryFor(sessionId),
@@ -150,7 +175,8 @@ public sealed class Main
             () => samplerKey,
             () => promptKey,
             () => stateBlockKey,
-            () => Sessions.SavePinned(sessionId, rt.Log, samplerKey, promptKey, stateBlockKey)));
+            () => Sessions.SavePinned(sessionId, rt.Log, samplerKey, promptKey, stateBlockKey),
+            () => slotId));
         return rt;
     }
 

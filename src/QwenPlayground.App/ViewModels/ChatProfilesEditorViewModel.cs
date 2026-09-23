@@ -231,6 +231,7 @@ public sealed class PromptItem
         ResultContract = profile.ResultContract;
         ToolsEnabled = profile.Tools;
         AllowedToolsText = string.Join(Environment.NewLine, profile.AllowedTools);
+        DeniedToolsText = string.Join(Environment.NewLine, profile.DeniedTools);
         ReasoningEffort = profile.ReasoningEffort;
     }
 
@@ -239,6 +240,8 @@ public sealed class PromptItem
     public bool ToolsEnabled { get; set; } = true;
     /// <summary>Имена по одной на строку или через запятую.</summary>
     public string AllowedToolsText { get; set; } = string.Empty;
+    /// <summary>Чёрный список (исключаются из полного набора), по одному на строку или через запятую.</summary>
+    public string DeniedToolsText { get; set; } = string.Empty;
     public string ReasoningEffort { get; set; } = string.Empty;
 
     public PromptProfile ToProfile() => new()
@@ -248,6 +251,9 @@ public sealed class PromptItem
         Tools = ToolsEnabled,
         ReasoningEffort = ReasoningEffort.Trim(),
         AllowedTools = AllowedToolsText
+            .Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList(),
+        DeniedTools = DeniedToolsText
             .Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList()
     };

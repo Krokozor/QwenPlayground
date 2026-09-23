@@ -50,6 +50,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="endpoint"
                                ToolTip="Адрес основного LLM-эндпоинта (OpenAI-совместимый). Сюда идут запросы чата и агентного цикла." />
@@ -79,6 +80,11 @@
                     <CheckBox Grid.Row="5" Grid.Column="1" IsChecked="{Binding SaveGenerationPrompts}" Margin="0,3"
                               VerticalAlignment="Center"
                               ToolTip="Сохранять полный рендеренный промпт каждого хода в истории (chat.json). По умолчанию выкл — промпт раздувает файл (копия чата на каждое сообщение). Вкл — кнопка «промпт» покажет точный срез для диагностики." />
+                    <TextBlock Grid.Row="6" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="KV-якорь субагентов"
+                               ToolTip="При спавне субагента сохранять KV-кеш вызывающего в файл (sessions/&lt;id&gt;-kv.bin) и восстанавливать после. Без якоря возврат может стоить пере-евалюации контекста. Выключить при нехватке места на диске (снапшот ~320 КБ/токен)." />
+                    <CheckBox Grid.Row="6" Grid.Column="1" IsChecked="{Binding KvCacheEnabled}" Margin="0,3"
+                              VerticalAlignment="Center"
+                              ToolTip="KV-якорь субагентов: save/restore KV-кеша вызывающего вокруг хода субагента. Выкл — субагент работает без якоря (возврат может стоить пере-евалюации контекста)." />
                 </Grid>
             </Expander>
 

@@ -3,6 +3,7 @@ using System.IO;
 using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.SelfBuild;
+using QwenPlayground.Core.Serialization;
 using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Settings;
 
@@ -49,13 +50,83 @@ public sealed class ChatSessions
     /// <summary>Загрузить сессию по id и сделать текущей. null — такой сессии нет.</summary>
     public SessionData? Load(string id)
     {
-        var data = _store.Load(id);
+        var data = LoadHealed(id);
         if (data is null)
         {
             return null;
         }
         CurrentId = id;
         PersistCurrentId();
+        return data;
+    }
+
+    /// <summary>
+    /// ЧИТАЮЩАЯ загрузка сессии БЕЗ побочных эффектов (не трогает CurrentId/LastSessionId):
+    /// для reopening закреплённых окон (субагент). ВАЖНО: не путать с Load — тот
+    /// переключает текущую сессию главного окна (баг 2026-09-23: reopening субагента
+    /// молча переключал main-окно на сессию субагента).
+    /// </summary>
+    public SessionData? TryLoadData(string id) => LoadHealed(id);
+
+    /// <summary>
+    /// Сайдкар-счётчик стабильных id сообщений: sessions/&lt;id&gt;/counter (обычный int).
+    /// Обновляется на КАЖДОЕ добавление сообщения (полный chat.json сохраняется реже —
+    /// rebuild может убить процесс между сохранением и последними сообщениями). При
+    /// загрузке NextMessageId = max(поле, счётчик, max ID + 1) — id никогда не
+    /// переиспользуются (инцидент 2026-09-23: старые артефакты переиспользованных id
+    /// рендерились в новых сообщениях — чужие скриншоты в tool-ответах).
+    /// </summary>
+    public void TouchCounter(string id, int nextMessageId)
+    {
+        try
+        {
+            var path = CounterPath(id);
+            var current = 0;
+            if (File.Exists(path) && int.TryParse(File.ReadAllText(path), out var parsed))
+            {
+                current = parsed;
+            }
+            if (nextMessageId > current)
+            {
+                AtomicFile.WriteAllText(path, nextMessageId.ToString());
+            }
+        }
+        catch
+        {
+            // Счётчик best-effort: без него остаётся самовосстановление из max ID в chat.json.
+        }
+    }
+
+    private string CounterPath(string id) => Path.Combine(_root, id, "counter");
+
+    private int ReadCounter(string id)
+    {
+        try
+        {
+            var path = CounterPath(id);
+            if (File.Exists(path) && int.TryParse(File.ReadAllText(path), out var value))
+            {
+                return value;
+            }
+        }
+        catch
+        {
+        }
+        return 0;
+    }
+
+    /// <summary>Load + подлечивание счётчика из сайдкар-файла (поле могло устареть).</summary>
+    private SessionData? LoadHealed(string id)
+    {
+        var data = _store.Load(id);
+        if (data is not null)
+        {
+            var counter = ReadCounter(id);
+            if (counter > data.NextMessageId)
+            {
+                data.NextMessageId = counter;
+            }
+        }
         return data;
     }
 
@@ -73,12 +144,31 @@ public sealed class ChatSessions
     public bool Delete(string id)
     {
         _store.Delete(id);
+        // KV-якорь субагентов лежит РЯДОМ с папкой сессии (плоское имя: сервер не
+        // принимает разделители в filename) — удаляем вместе с сессией.
+        TryDeleteKvAnchor(id);
         if (id != CurrentId)
         {
             return false;
         }
         StartNew();
         return true;
+    }
+
+    private void TryDeleteKvAnchor(string id)
+    {
+        try
+        {
+            var anchor = Path.Combine(_root, $"{id}-kv.bin");
+            if (File.Exists(anchor))
+            {
+                File.Delete(anchor);
+            }
+        }
+        catch
+        {
+            // Якорь не критичен — не роняем удаление сессии из-за файловой ошибки.
+        }
     }
 
     /// <summary>Сохранить контент текущей сессии (заголовок main проставляется здесь).</summary>

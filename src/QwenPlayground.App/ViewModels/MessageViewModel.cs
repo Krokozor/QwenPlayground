@@ -191,6 +191,12 @@ public partial class MessageViewModel : ObservableObject
     public bool HasToolCalls => ToolCallCount > 0;
     public bool HasTokenInfo => TokenInfo.Length > 0;
 
+    /// <summary>
+    /// Вызов spawn_subagent в этом сообщении: кнопка «открыть окно субагента» в пузыре
+    /// (пока окно живо — команда работает, после закрытия — no-op).
+    /// </summary>
+    public bool HasSpawnSubagentCall { get; private set; }
+
     /// <summary>assistant — единственная роль, для которой осмысленны реролл/продолжить.</summary>
     public bool IsAssistant => Role == "assistant";
     /// <summary>system — служебная роль: рендерится в чате, но без кнопок действий.</summary>
@@ -319,6 +325,8 @@ public partial class MessageViewModel : ObservableObject
             }
         }
         ToolCallCount = ToolCalls.Count;
+        HasSpawnSubagentCall = message.ToolCalls is { Count: > 0 } toolCalls2 &&
+            toolCalls2.Any(call => call.Name == "spawn_subagent");
 
         if (message.Generation is { } generation)
         {

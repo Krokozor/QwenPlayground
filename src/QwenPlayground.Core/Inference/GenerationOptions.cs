@@ -12,4 +12,13 @@ public sealed class GenerationOptions
     public double RepeatPenalty { get; init; } = 1.05;
     public int? Seed { get; init; }
     public IReadOnlyList<string> Stop { get; init; } = [QwenSpecialTokens.ImEnd, QwenSpecialTokens.EndOfText];
+
+    /// <summary>
+    /// Пиннинг слота llama.cpp (id_slot в /completion): main → 0, субагент → 1,
+    /// побочное окно → 2, сервисные вызовы → 3 (см. <see cref="SlotAllocation"/>).
+    /// null — сервер выбирает сам (LRU). Мутабельный сознательно: это маршрутный
+    /// метаданные, проставляемые точкой запуска хода (AgentLoop), а не параметр
+    /// генерации; инстанс GenerationOptions на ход создаётся свежий и не шарится.
+    /// </summary>
+    public int? IdSlot { get; set; }
 }

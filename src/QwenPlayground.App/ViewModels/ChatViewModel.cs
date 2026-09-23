@@ -50,6 +50,9 @@ public partial class ChatViewModel : ObservableObject {
     /// <summary>Закреплённое окно (субагент): своя сессия, селектор сессий скрыт.</summary>
     public bool Pinned { get; init; }
 
+    /// <summary>Разговор (read-доступ для программных потребителей: отчёт субагента в spawn-флоу).</summary>
+    public ChatLog Log => _runtime.Log;
+
     /// <summary>Селектор сессий + wake + настройка чата: только в главном окне.</summary>
     public bool ShowSessionPicker => !Pinned;
 

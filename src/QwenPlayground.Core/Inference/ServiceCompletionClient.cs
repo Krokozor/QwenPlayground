@@ -40,7 +40,11 @@ public sealed class ServiceCompletionClient
         var raw = new StringBuilder();
         using (var client = _createSource(_endpoint()))
         {
-            await foreach (var chunk in client.StreamAsync(prompt, _optionsFactory(), cancellationToken: cancellationToken))
+            // Сервисные вызовы — в своём слоте (SlotAllocation.Service): LRU-выбор не должен
+            // топить KV main'а/субагента (у пиннутых слотов нет восстановления из RAM-кеша).
+            var options = _optionsFactory();
+            options.IdSlot = SlotAllocation.Service;
+            await foreach (var chunk in client.StreamAsync(prompt, options, cancellationToken: cancellationToken))
             {
                 raw.Append(chunk);
                 onChunk?.Invoke(chunk);

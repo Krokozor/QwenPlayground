@@ -23,6 +23,13 @@ public sealed class PromptProfile
     /// </summary>
     public List<string> AllowedTools { get; set; } = new();
 
+    /// <summary>
+    /// Чёрный список имён инструментов (исключаются из полного набора) — для «всё,
+    /// кроме X» (профиль субагента: без spawn_subagent/rebuild_self). Применяется
+    /// ПЕРЕД AllowedTools; пусто = ничего не исключать.
+    /// </summary>
+    public List<string> DeniedTools { get; set; } = new();
+
     /// <summary>Усилие размышления («XHigh»/«Medium»/«Low»); пусто — из общих настроек.</summary>
     public string ReasoningEffort { get; set; } = string.Empty;
 

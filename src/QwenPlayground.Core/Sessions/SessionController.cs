@@ -37,10 +37,18 @@ public sealed class SessionController
         _surfacer = surfacer;
         // Шов для тестов: изолированный каталог (как у ChatSessions).
         _sessions = new ChatSessions(sessionsRoot);
+        // Счётчик id — на каждое сообщение в сайдкар (sessions/<id>/counter): полный
+        // chat.json сохраняется реже, rebuild может убить процесс между сохранением и
+        // последними сообщениями → без сайдкара новая загрузка возвращала счётчик назад
+        // (id переиспользовались, старые артефакты рендерились в новых сообщениях).
+        _log.Added += _ => _sessions.TouchCounter(_sessions.CurrentId, _log.NextMessageId);
     }
 
     public string CurrentId => _sessions.CurrentId;
     public string DirectoryFor(string id) => _sessions.DirectoryFor(id);
+
+    /// <summary>Счётчик стабильных id сообщений (сайдкар sessions/&lt;id&gt;/counter) — на каждое добавление.</summary>
+    public void TouchCounter(string id, int nextMessageId) => _sessions.TouchCounter(id, nextMessageId);
     public string? SamplerKey => _samplerKey;
     public string? PromptKey => _promptKey;
     public string? StateBlockKey => _stateBlockKey;
@@ -177,6 +185,13 @@ public sealed class SessionController
     /// Файл создаётся при первом сохранении.
     /// </summary>
     public string CreateDetached() => Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// Загрузить данные сессии БЕЗ побочных эффектов (не трогает текущую: CurrentId,
+    /// драфт, ключи, surfaced-память): для reopening закреплённого окна (субагент) на
+    /// той же сессии. Чистое чтение через TryLoadData (Load переключил бы main-окно!).
+    /// </summary>
+    public SessionData? LoadData(string id) => _sessions.TryLoadData(id);
 
     /// <summary>
     /// Сохранить историю закреплённой сессии (рантайм субагента), не трогая текущую:
