@@ -380,6 +380,32 @@ ShelfTools→событие + ARCHITECTURE.md.
   MainViewModel: 1943 → 1469 строк; все сервисы — в Core-модулях с ограниченными
   поверхнями; обратных утечек App→Core нет.
 
+### 2026-09-25 — Фантом refactoring.md в heartbeat: ссылки на md, которых нет на чужом клоне
+Баг (сообщил Lunn): heartbeat-промпт ссылался на `refactoring.md`, которого нет в git
+(.gitignore-подобной ситуации: файл был только локально) — в блоке сжатия и в thinking
+каждый cron-пинг тратил ход на «разгадывание фантома» («наличие/путь в проекте не
+подтверждены», «same generic instruction»). Аудит всех ссылок на md в `src/`:
+- **Существующие паттерны авто-создания**: `main-agent.md` (MainAgent.LoadIdentity —
+  заглушка при отсутствии), `trajectory.md` (TrajectoryStore.Load), `diary.md` (DiaryStore
+  создаёт при первом дописывании), `memories/` + `index.md` (MemoryStore ctor),
+  `logs/sanity.md` (SanityCheckTool создаёт при записи), `external/README.md` (в git).
+- **Фантом**: `refactoring.md` — ссылки в HeartbeatController.DefaultPrompt,
+  MainAgent.DefaultIdentity (2 места), комментариях (BPETokenizer.cs, LlmCompletionClient.cs),
+  README.md, ARCHITECTURE.md — НО никакого кода, создающего файл.
+- **Исправление**: новый `Core/Memory/ProjectNotebookStore` (паттерн TrajectoryStore):
+  нейтральный шаблон (Принципы/Backlog/Changelog), `Load()` создаёт файл при отсутствии,
+  пустой файл не затирает (чужой артефакт). `InjectedIdentity` добавляет файл в
+  FileDependentCache-зависимости и инжектит ХВОСТ записной книжки (от последнего
+  «## Backlog», кап 2000 символов) в системный промпт main — heartbeat видит незакрытые
+  пункты прямо в промпте, а не только по ссылке.
+- **Промпты**: HeartbeatController.DefaultPrompt теперь «Check trajectory.md (current goal)
+  and refactoring.md (backlog)»; MainAgent.DefaultIdentity — heartbeat-обязанность №1
+  проверяет оба файла.
+- **.gitignore**: `/refactoring.md` (файл принадлежит юзеру, приложение создаёт шаблон —
+  как main-agent.md/trajectory.md/diary.md).
+- Тесты: ProjectNotebookStoreTests (3), HeartbeatControllerTests +1 (регрессия: промпт
+  ссылается на оба существующих файла).
+
 ### 2026-09-17 (53) — Расширение полки c#: reference_report, rename, move_type (T1–T4)
 Запрос владельца: «у меня ощущение что у тебя недостаток простых инструментов» — исследование
 внутренних связей кода (счётчики ссылок, как VS CodeLens: «половина класса — публичные

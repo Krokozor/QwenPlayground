@@ -12,10 +12,11 @@ namespace QwenPlayground.Core.Heartbeat;
 public sealed class HeartbeatController
 {
     public const string DefaultPrompt =
-        "[heartbeat] Periodic autonomous wake-up. Check refactoring.md for pending work and decide if anything " +
-        "small and safe is worth doing now. If you find something concrete (bug, unfinished item, cleanup), do it " +
-        "with your tools and keep the change focused; if you modified application code, finish with rebuild_self. " +
-        "If nothing needs attention, reply with a one-line status and stop. Do not start large refactors or risky changes unprompted.";
+        "[heartbeat] Periodic autonomous wake-up. Check trajectory.md (current goal) and refactoring.md (backlog) " +
+        "for pending work and decide if anything small and safe is worth doing now. If you find something concrete " +
+        "(bug, unfinished item, cleanup), do it with your tools and keep the change focused; if you modified " +
+        "application code, finish with rebuild_self. If nothing needs attention, reply with a one-line status and " +
+        "stop. Do not start large refactors or risky changes unprompted.";
 
     private readonly WakeSignalStore _wakeSignals;
     private readonly Func<bool> _isBusy;

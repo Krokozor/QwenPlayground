@@ -26,7 +26,8 @@ public sealed class InjectedIdentity
             new[]
             {
                 Path.Combine(SelfBuildPaths.WorkspaceRoot, MainAgent.IdentityFileName),
-                new TrajectoryStore().FilePath
+                new TrajectoryStore().FilePath,
+                new ProjectNotebookStore().FilePath
             },
             Compose,
             initial: null);
@@ -43,6 +44,52 @@ public sealed class InjectedIdentity
         {
             parts.Add("# Trajectory (current direction)\n\n" + trajectory);
         }
+        // Записная книжка (refactoring.md) — источник «незакрытых пунктов» для heartbeat'а:
+        // инжектим её хвост (backlog + свежий changelog), а не весь файл (сотни строк истории).
+        // Load() при отсутствии файла создаёт его из нейтрального шаблона — ссылки в промптах
+        // (identity/heartbeat) всегда ведут на существующий файл, а не на фантома.
+        var notebook = new ProjectNotebookStore().Load();
+        if (notebook.Length > 0)
+        {
+            parts.Add("# Project notebook (backlog tail)\n\n" + NotebookTail(notebook));
+        }
         return string.Join("\n\n", parts);
     }
+
+    /// <summary>
+    /// Хвост записной книжки: от ПОСЛЕДНЕГО «## »-заголовка, содержащего «backlog»
+    /// (регистронезависимо — в шаблоне «## Backlog», в записной книжке владельца, например,
+    /// «## Идеи развития (backlog)»), до конца файла: незакрытые пункты — то, что heartbeat
+    /// ищет. Без такого заголовка (файл с другой структурой) — последние ~2000 символов:
+    /// свежий changelog ближе к концу, чем принципы в шапке.
+    /// </summary>
+    private static string NotebookTail(string notebook)
+    {
+        var start = -1;
+        var searchFrom = 0;
+        while (true)
+        {
+            var heading = notebook.IndexOf("\n## ", searchFrom, StringComparison.Ordinal);
+            if (heading < 0)
+            {
+                break;
+            }
+            var lineEnd = notebook.IndexOf('\n', heading + 1);
+            if (lineEnd < 0)
+            {
+                lineEnd = notebook.Length;
+            }
+            if (notebook.AsSpan(heading, lineEnd - heading)
+                    .Contains("backlog", StringComparison.OrdinalIgnoreCase))
+            {
+                start = heading + 1;
+            }
+            searchFrom = lineEnd + 1;
+        }
+        var tail = start >= 0 ? notebook[start..] : notebook;
+        return tail.Length > MaxTailChars ? tail[^MaxTailChars..] : tail;
+    }
+
+    /// <summary>Потолок инжекта хвоста записной книжки в системный промпт.</summary>
+    private const int MaxTailChars = 2000;
 }

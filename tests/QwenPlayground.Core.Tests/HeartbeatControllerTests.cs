@@ -109,6 +109,17 @@ public sealed class HeartbeatControllerTests : IDisposable
     }
 
     [Fact]
+    public void DefaultPrompt_ReferencesExistingProjectFiles()
+    {
+        // Регрессия (Lunn, 2026-09-25): промпт ссылался на refactoring.md, которого на чужом
+        // клоне нет — каждый cron-пинг тратил ход на «разгадывание фантома». Оба файла теперь
+        // гарантированно существуют: trajectory.md (TrajectoryStore) и refactoring.md
+        // (ProjectNotebookStore) создаются из нейтральных шаблонов при отсутствии.
+        Assert.Contains("trajectory.md", HeartbeatController.DefaultPrompt);
+        Assert.Contains("refactoring.md", HeartbeatController.DefaultPrompt);
+    }
+
+    [Fact]
     public void Disabled_NoScheduledTurn_AndSignalsStayQueued()
     {
         var hb = Create();

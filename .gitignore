@@ -36,6 +36,11 @@ ffmpeg/
 # Дневник main-агента: персональные рабочие эпизоды (DiaryStore дописывает при
 # компакции). Файл создаётся сам при первом дописывании.
 /diary.md
+
+# Записная книжка проекта (проблемы, changelog, backlog): принадлежит юзеру,
+# приложение создаёт нейтральный шаблон (ProjectNotebookStore.DefaultContent)
+# при первой сборке промпта, если файла нет.
+/refactoring.md
 /memories/
 /memory_research/
 /backups/
