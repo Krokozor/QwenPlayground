@@ -40,6 +40,13 @@ public static class ToolGroupIndex
             "(e.g. blender_execute_code). See the 'MCP Servers' table for connected servers. " +
             "Management tools: mcp_status (diagnostics), mcp_reload (reconnect). " +
             "Activate when you need to interact with an external application or service via MCP.",
+
+        [ToolGroup.Intuition] =
+            "Your own intuition as a tool: logprob probes of your own model (no full generation, ~1-2s, " +
+            "service slot — does not touch your chat KV). intuition_choice — multiple-choice question over " +
+            "options (chosen letter(s) + confidence); intuition_rating — ordinal 0-9 rating of a statement " +
+            "(digit + distribution + entropy); intuition_vibe — emoji vibe distribution of a text. Activate " +
+            "when you want a fast gut check / second sample among alternatives without spending a full turn.",
     };
 
     /// <summary>

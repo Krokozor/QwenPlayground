@@ -50,5 +50,16 @@
                 </StackPanel>
             </MenuItem.Header>
         </MenuItem>
+        <MenuItem IsCheckable="True" IsChecked="{Binding IntuitionShelf.IsOn, Mode=OneWay}"
+                  Command="{Binding ToggleShelfCommand}" CommandParameter="Intuition"
+                  ToolTip="{Binding IntuitionShelf.Description}">
+            <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Intuition" />
+                    <TextBlock Text="{Binding IntuitionShelf.StatusText}" Margin="8,0,0,0" FontSize="11"
+                               Foreground="{Binding IntuitionShelf.StatusBrush}" />
+                </StackPanel>
+            </MenuItem.Header>
+        </MenuItem>
     </StackPanel>
 </UserControl>

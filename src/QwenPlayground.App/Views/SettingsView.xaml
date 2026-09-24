@@ -208,6 +208,29 @@
                 </Grid>
             </Expander>
 
+            <!-- ── Интуиция ───────────────────────────────────────────────────────── -->
+            <Expander Header="Интуиция (пробы собственной модели)" IsExpanded="True" Margin="0,0,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="формат вывода"
+                               ToolTip="Как тулы intuition_choice/rating/vibe оформляют распределения. compact — всё в одну строку (минимум токенов); переносы — каждый пункт с новой строки; переносы+бары — плюс индикатор размера (10 ячеек)." />
+                    <ComboBox Grid.Row="0" Grid.Column="1" Width="320" HorizontalAlignment="Left" Margin="0,3"
+                              VerticalAlignment="Center"
+                              SelectedValuePath="Tag"
+                              SelectedValue="{Binding IntuitionFormat, UpdateSourceTrigger=PropertyChanged}">
+                        <ComboBoxItem Tag="compact" Content="compact (минимум токенов)" />
+                        <ComboBoxItem Tag="lines" Content="переносы текста" />
+                        <ComboBoxItem Tag="lines+bars" Content="переносы текста + бары размера" />
+                    </ComboBox>
+                </Grid>
+            </Expander>
+
             <!-- ── Диагностика и устойчивость ──────────────────────────────────── -->
             <Expander Header="Диагностика и устойчивость" IsExpanded="True" Margin="0,4,0,0">
                 <Grid Style="{StaticResource FieldGrid}">

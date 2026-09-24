@@ -168,4 +168,85 @@ public sealed class LlmProbeClientTests
         Assert.Throws<InvalidDataException>(() =>
             LlmProbeClient.ParseNativeProbePositions("""{"completion_probabilities":[]}"""));
     }
+
+    // ── Сборщик payload'а нативного /completion (id_slot, stop) ──────────────
+
+    [Fact]
+    public void BuildNativePayload_ContainsIdSlot_WhenSet()
+    {
+        var payload = LlmProbeClient.BuildNativePayload("prompt", 16, 52, idSlot: 3);
+
+        Assert.Contains("\"id_slot\":3", payload.ToJsonString());
+    }
+
+    [Fact]
+    public void BuildNativePayload_OmitsIdSlot_WhenNull()
+    {
+        var payload = LlmProbeClient.BuildNativePayload("prompt", 16, 52);
+
+        Assert.DoesNotContain("id_slot", payload.ToJsonString());
+    }
+
+    [Fact]
+    public void BuildNativePayload_ContainsStop_WhenProvided()
+    {
+        var payload = LlmProbeClient.BuildNativePayload("prompt", 16, 52, stop: new[] { "A", "B" });
+        var json = payload.ToJsonString();
+
+        Assert.Contains("\"stop\"", json);
+        Assert.Contains("\"A\"", json);
+        Assert.Contains("\"B\"", json);
+    }
+
+    [Fact]
+    public void BuildNativePayload_FixedSamplingParams()
+    {
+        var payload = LlmProbeClient.BuildNativePayload("p", 16, 52);
+
+        Assert.Equal(0, payload["temperature"]!.GetValue<int>());
+        Assert.Equal(1, payload["top_k"]!.GetValue<int>());
+        Assert.Equal(52, payload["n_probs"]!.GetValue<int>());
+        Assert.Equal(16, payload["n_predict"]!.GetValue<int>());
+    }
+
+    // ── Circuit-breaker (per-endpoint, подменяемые часы) ─────────────────────
+
+    [Fact]
+    public void Breaker_OpenAfterFailure_ClosesAfterCooldown()
+    {
+        var now = DateTime.UtcNow;
+        var breaker = new ProbeBreaker(cooldownSeconds: 60, utcNow: () => now);
+        Assert.False(breaker.IsOpen(out _));
+
+        breaker.RecordFailure();
+        Assert.True(breaker.IsOpen(out var retry));
+        Assert.InRange(retry, 1, 60);
+
+        now = now.AddSeconds(61);
+        Assert.False(breaker.IsOpen(out _));
+    }
+
+    [Fact]
+    public void Breaker_Success_ResetsFailures()
+    {
+        var now = DateTime.UtcNow;
+        var breaker = new ProbeBreaker(60, () => now);
+        breaker.RecordFailure();
+        breaker.RecordSuccess();
+
+        Assert.False(breaker.IsOpen(out _));
+        Assert.Equal("доступен", breaker.Status());
+    }
+
+    [Fact]
+    public void Breaker_Status_ShowsRetryWhileOpen()
+    {
+        var now = DateTime.UtcNow;
+        var breaker = new ProbeBreaker(60, () => now);
+        breaker.RecordFailure();
+
+        var status = breaker.Status();
+        Assert.Contains("недоступен", status);
+        Assert.Contains("повтор через", status);
+    }
 }

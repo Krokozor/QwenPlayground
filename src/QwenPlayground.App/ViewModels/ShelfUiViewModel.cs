@@ -24,12 +24,14 @@ public sealed partial class ShelfUiViewModel : ObservableObject {
         new(ToolGroup.CSharp, "Анализ кода Roslyn: символы, ссылки, диагностика, outline, class map"),
         new(ToolGroup.Desktop, "Рабочий стол: мышь, клавиатура, скриншоты, окна"),
         new(ToolGroup.Mcp, "Инструменты управления MCP (mcp_status, mcp_reload) и тулы подключённых MCP-серверов"),
+        new(ToolGroup.Intuition, "Интуиция: логит-пробы собственной модели (choice/rating/vibe) — быстрый gut check без полного хода"),
     };
 
     public ShelfUiState BrowserShelf => _shelfUi[0];
     public ShelfUiState CSharpShelf => _shelfUi[1];
     public ShelfUiState DesktopShelf => _shelfUi[2];
     public ShelfUiState McpShelf => _shelfUi[3];
+    public ShelfUiState IntuitionShelf => _shelfUi[4];
 
     private int _shelfCount;
     /// <summary>Сколько полок реально в промпте (on + pending) — счётчик на кнопке «🗄 N».</summary>

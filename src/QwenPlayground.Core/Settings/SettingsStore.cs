@@ -83,6 +83,20 @@ public sealed class AppSettings
     /// <summary>Шагов без самопроверки до nag'а sanity_check. 0 = отключено.</summary>
     public int SanityCheckInterval { get; set; } = 20;
     /// <summary>
+    /// Формат вывода тулов «интуиции» (intuition_choice/rating/vibe):
+    /// "compact" — всё в одну строку (минимум токенов);
+    /// "lines" — каждый пункт распределения с новой строки (читабельно);
+    /// "lines+bars" — то же + визуальный индикатор размера (10 ячеек: ======----).
+    /// Дефолт "lines": переносы почти бесплатны по токенам, а читают и агент, и владелец.
+    /// </summary>
+    public string IntuitionFormat { get; set; } = "lines";
+    /// <summary>
+    /// Тестовая настройка (НЕ показывается в UI): debug-дамп пробы «интуиции»
+    /// (все позиции, codepoint'ы, окна с реконструкцией) в конце ответа тула.
+    /// Переключается инструментом set_setting (IntuitionDebugDump=true/false).
+    /// </summary>
+    public bool IntuitionDebugDump { get; set; } = false;
+    /// <summary>
     /// Пуш на GitHub при самосборке (rebuild_self): git push уже закоммиченных коммитов после
     /// успешного билда. По умолчанию ВЫКЛ — коммиты и пуши делает владелец/агент явно.
     /// </summary>

@@ -114,6 +114,12 @@ public sealed class SettingsViewModel : ObservableObject {
         set => Set(S.SanityCheckInterval, value, (s, v) => s.SanityCheckInterval = v);
     }
 
+    /// <summary>Формат вывода тулов «интуиции»: compact / lines / lines+bars.</summary>
+    public string IntuitionFormat {
+        get => S.IntuitionFormat;
+        set => Set(S.IntuitionFormat, value, (s, v) => s.IntuitionFormat = v);
+    }
+
     /// <summary>Пуш на GitHub при самосборке (rebuild_self). По умолчанию выкл.</summary>
     public bool PushOnRebuild {
         get => S.PushOnRebuild;

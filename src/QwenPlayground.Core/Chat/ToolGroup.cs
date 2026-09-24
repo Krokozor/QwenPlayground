@@ -32,5 +32,8 @@ public enum ToolGroup
     Desktop = 3,
 
     /// <summary>MCP: подключение к сторонним инструментам (Blender, Unity, и т.д.).</summary>
-    Mcp = 4
+    Mcp = 4,
+
+    /// <summary>Интуиция: логит-пробы собственной модели (choice/rating/vibe) — «спросить себя».</summary>
+    Intuition = 5
 }
