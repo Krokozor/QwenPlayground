@@ -9,14 +9,16 @@ using QwenPlayground.Core.Tools;
 namespace QwenPlayground.Core.Roslyn;
 
 [Tool("csharp_class_map",
-    "Show the blueprint of a C# type by name: where it is declared and all its members with line numbers. " +
-    "Use to get a map of a class without reading the whole file (query by name, no need to know the file path).", ToolGroup.CSharp)]
+    "Show the blueprint of a C# type by name: where it is declared and all its members with line " +
+    "ranges (':12' or ':12-45' for a multi-line member) and the first line of the comment above " +
+    "each. Use to get a map of a class without reading the whole file (query by name, no need to " +
+    "know the file path).", ToolGroup.CSharp)]
 public sealed class CSharpClassMapTool : AgentTool
 {
     private static readonly RoslynService Service = RoslynService.Shared;
 
     private const int MaxMatches = 3;
-    private const int MaxOutputLength = 8000;
+    private const int MaxOutputLength = 16000;
 
     [ToolParameter("Type name, e.g. QwenChatTemplate", Required = true)]
     public string Name { get; set; } = string.Empty;
@@ -25,6 +27,7 @@ public sealed class CSharpClassMapTool : AgentTool
     {
         var solution = await Service.GetSolutionAsync(cancellationToken);
         var builder = new StringBuilder();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         var found = 0;
 
         foreach (var project in solution.Projects)
@@ -44,6 +47,12 @@ public sealed class CSharpClassMapTool : AgentTool
                 var span = location.GetLineSpan();
                 var document = RoslynService.FindDocument(solution, span.Path ?? string.Empty);
                 if (document is null)
+                {
+                    continue;
+                }
+                // Один тип находится столько раз, сколько проектов ссылается на его
+                // проект: без дедупа по файлу «чертёж» печатался трижды подряд.
+                if (!seen.Add(span.Path ?? string.Empty))
                 {
                     continue;
                 }
@@ -81,7 +90,7 @@ public sealed class CSharpClassMapTool : AgentTool
         if (builder.Length > MaxOutputLength)
         {
             builder.Length = MaxOutputLength;
-            builder.Append("\n... (truncated)");
+            builder.Append("\n... (truncated — read the file with read_file offset/limit for the rest)");
         }
         return builder.ToString();
     }

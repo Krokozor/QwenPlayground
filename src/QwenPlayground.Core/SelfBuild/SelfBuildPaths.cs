@@ -13,6 +13,14 @@ public static class SelfBuildPaths
     /// <summary>Имя каталога внешних инструментов (ffmpeg и т.п.), управляемых лаунчером.</summary>
     public const string ExternalDirName = "external";
 
+    /// <summary>
+    /// Имя файла-документации внешнего инструмента. Лежит в каталоге самого инструмента
+    /// (external/&lt;инструмент&gt;/README.md) и целиком уходит в системный промпт агента:
+    /// каталог есть → документация попадает в промпт, каталога нет → секции нет.
+    /// Общая константа для лаунчера (пишет/удаляет при установке) и Core (читает в промпт).
+    /// </summary>
+    public const string ExternalDocsFileName = "README.md";
+
     private static readonly string? _workspaceRootOverride;
 
     static SelfBuildPaths()

@@ -129,10 +129,10 @@ public sealed class ProbeBreaker
 ///
 /// СВОЯ МОДЕЛЬ (SelfProbePositionsAsync): компаньон недоступен (переезд) → те же пробы
 /// (классификация/реколл/rerank/дедуп) гоняются на модели, которая обслуживает чат, но:
-///  · пиннинг в сервисный слот (SlotAllocation.Service) — проба не вытесняет KV чата
+///  · пиннинг в слот пробы (SlotAllocation.Probe) — проба не вытесняет KV чата
 ///    (пиннутый слот не ходит в RAM prompt cache, проба пере-евалюит свой короткий промпт);
 ///  · только в свободное время (heartbeat/пост-ходовой) — не параллельно, но лучше, чем ничего.
-/// Перед собственной пробой сервисный слот erase'ится (best-effort): пиннутый слот от erase
+/// Перед собственной пробой слот пробы erase'ится (best-effort): пиннутый слот от erase
 /// ничего не теряет, а это защищает от вырожденного случая одинакового промпта — иначе
 /// /completion «продолжил бы» со старого контекста со хвостом прошлого ответа.
 ///
@@ -344,10 +344,10 @@ public static class LlmProbeClient
     }
 
     /// <summary>
-    /// Проба на СОБСТВЕННОЙ модели (AppSettings.Endpoint), закреплённой за сервисным слотом.
+    /// Проба на СОБСТВЕННОЙ модели (AppSettings.Endpoint), закреплённой за слотом пробы (SlotAllocation.Probe).
     /// «Режим классификатора» на безрыбье компаньона: те же логит-пробы, но на модели чата —
     /// не параллельно с ним, а в свободное время (heartbeat/пост-ходовой), и без вытеснения
-    /// KV чата (пиннинг в SlotAllocation.Service). nProbs/nPredict ≤ 0 — дефолты из настроек.
+    /// KV чата (пиннинг в слот пробы SlotAllocation.Probe). nProbs/nPredict ≤ 0 — дефолты из настроек.
     /// </summary>
     public static async Task<IReadOnlyList<ProbeResult>> SelfProbePositionsAsync(
         string prompt, int nProbs = 0, int nPredict = 0,
@@ -367,14 +367,60 @@ public static class LlmProbeClient
         {
             nPredict = settings.MemoryClassifyNPredict;
         }
-        await EraseSlotBestEffortAsync(settings.Endpoint, SlotAllocation.Service, cancellationToken);
-        return await NativeProbeCoreAsync(settings.Endpoint, prompt, nProbs, nPredict, stop, SlotAllocation.Service, cancellationToken);
+        // Сервер без слота пробы: б10353 ТИХО перемапит невалидный id_slot на слот 0 —
+        // проба «съела» бы KV main-чата. Отказываем явно (при сетевом сбое — оптимистично:
+        // реальная проба упадёт и откроет circuit-breaker как раньше).
+        if (!await SlotExistsAsync(settings.Endpoint, SlotAllocation.Probe, cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "У сервера нет слота пробы (4) — перезапустите llama.cpp с --slots 5. Само-проба невозможна.");
+        }
+        await EraseSlotBestEffortAsync(settings.Endpoint, SlotAllocation.Probe, cancellationToken);
+        return await NativeProbeCoreAsync(settings.Endpoint, prompt, nProbs, nPredict, stop, SlotAllocation.Probe, cancellationToken);
+    }
+
+    /// <summary>
+    /// Есть ли слот на сервере (GET /slots). true при сетевом сбое (оптимизм: пусть реальная
+    /// проба упадёт и зафиксирует недоступность в circuit-breaker); false — только когда ответ
+    /// пришёл, а слота в нём нет.
+    /// </summary>
+    private static async Task<bool> SlotExistsAsync(string endpoint, int slotId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await SharedHttp.GetAsync($"{endpoint.TrimEnd('/')}/slots", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return true;
+            }
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            foreach (var element in document.RootElement.EnumerateArray())
+            {
+                if (element.TryGetProperty("id", out var id) && id.GetInt32() == slotId)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     private static async Task<IReadOnlyList<ProbeResult>> NativeProbeCoreAsync(
         string endpoint, string prompt, int nProbs, int nPredict,
         string[]? stop, int? idSlot, CancellationToken cancellationToken)
     {
+        if (idSlot is { } slot)
+        {
+            SlotUsageTracker.Record(slot);
+        }
         var payload = BuildNativePayload(prompt, nPredict, nProbs, stop, idSlot);
         var response = await PostWithBreakerAsync(
             endpoint.TrimEnd('/') + "/completion", endpoint,

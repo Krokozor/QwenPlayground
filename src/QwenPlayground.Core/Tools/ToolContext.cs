@@ -56,9 +56,9 @@ public sealed class ToolContext
     public AgentRuntime Scope => Runtime ?? AgentRuntime.Main;
 
     /// <summary>
-    /// Слот llama.cpp, в котором идёт текущий ход (SlotAllocation): main → 0, субагент → 1,
-    /// окно → 2. null — ход без пиннинга (серверный LRU). Нужен spawn_subagent: KV-якорь
-    /// сохраняет слот ВЫЗЫВАЮЩЕГО, а не всегда main'а (побочное окно тоже может спавнить).
+    /// Слот llama.cpp, в котором идёт текущий ход (SlotAllocation): main → 0, окна → 1/2,
+    /// субагент → 3. null — ход без пиннинга (серверный LRU). Нужен spawn_subagent:
+    /// KV-якорь сохраняет слот ВЫЗЫВАЮЩЕГО, а не всегда main'а (побочное окно тоже может спавнить).
     /// </summary>
     public int? SlotId { get; }
 

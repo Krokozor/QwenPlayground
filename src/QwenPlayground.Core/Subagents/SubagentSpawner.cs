@@ -120,7 +120,7 @@ public sealed class SubagentSpawner
             };
         }
 
-        // Один субагент на всё приложение (синхронная модель, слот 1 единственный):
+        // Один субагент на всё приложение (синхронная модель, слот 3 единственный):
         // без гварда побочное окно могло бы спавнить второго, пока первый работает —
         // два хода на одном слоте.
         if (Current is { } existing)
@@ -128,6 +128,18 @@ public sealed class SubagentSpawner
             return new SubagentOutcome {
                 Report = $"Ошибка: субагент уже существует ({(existing.IsRunning ? "работает" : "завершён")}: {existing.Title}). " +
                          "Дождитесь его завершения или закройте его окно; повторный спавн не поддерживается.",
+                KvNote = null
+            };
+        }
+
+        // Сервер без слота субагента: б10353 ТИХО перемапит невалидный id_slot на слот 0 —
+        // субагент молча «съел» бы KV чата вызывающего. Отказываем явно (проверено живой пробой).
+        var serverSlots = await _kv.GetSlotsAsync(cancellationToken);
+        if (serverSlots.All(s => s.Id != SlotAllocation.Subagent))
+        {
+            return new SubagentOutcome {
+                Report = "Ошибка: у сервера нет слота субагента (3). Перезапустите llama.cpp с --slots 5 " +
+                         "(схема: 0 main, 1-2 окна, 3 субагент, 4 пробы); до того спавн невозможен.",
                 KvNote = null
             };
         }

@@ -49,8 +49,8 @@ public sealed class MessageMetaStore
     {
         var dir = ArtifactsDir(msgId);
         Directory.CreateDirectory(dir);
-        var dest = Path.Combine(dir, Path.GetFileName(sourcePath));
-        File.Copy(sourcePath, dest, overwrite: true);
+        var dest = FreePath(dir, Path.GetFileName(sourcePath));
+        File.Copy(sourcePath, dest, overwrite: false);
         return dest;
     }
 
@@ -64,9 +64,35 @@ public sealed class MessageMetaStore
     {
         var dir = Path.Combine(ArtifactsDir(msgId), "attachments");
         Directory.CreateDirectory(dir);
-        var dest = Path.Combine(dir, Path.GetFileName(sourcePath));
-        File.Copy(sourcePath, dest, overwrite: true);
+        var dest = FreePath(dir, Path.GetFileName(sourcePath));
+        File.Copy(sourcePath, dest, overwrite: false);
         return dest;
+    }
+
+    /// <summary>
+    /// Свободное имя в папке: при одинаковых базовых именах (два скриншота shot.png, или
+    /// shot.png + одноимённый документ) второе копирование не перетирало первое, а
+    /// добавляло суффикс. Раньше был overwrite: true — два вложения молча схлопывались в
+    /// одно: чипов в UI два, картинок у модели одна.
+    /// </summary>
+    private static string FreePath(string dir, string fileName)
+    {
+        var candidate = Path.Combine(dir, fileName);
+        if (!File.Exists(candidate))
+        {
+            return candidate;
+        }
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        for (var i = 2; i < 1000; i++)
+        {
+            var numbered = Path.Combine(dir, $"{stem} ({i}){extension}");
+            if (!File.Exists(numbered))
+            {
+                return numbered;
+            }
+        }
+        return Path.Combine(dir, $"{stem}-{Guid.NewGuid():N}{extension}");
     }
 
     /// <summary>

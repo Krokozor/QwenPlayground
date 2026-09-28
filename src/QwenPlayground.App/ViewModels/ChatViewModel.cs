@@ -153,6 +153,13 @@ public partial class ChatViewModel : ObservableObject {
     /// </summary>
     public ShelfUiViewModel Shelves { get; }
 
+    /// <summary>
+    /// Панель TODO в тулбаре чата (кнопка «TODO» + сворачиваемая панель): ручной просмотр/
+    /// правка TODO-списка текущей сессии (sessions/&lt;id&gt;/TODO.json — тот же файл, что и у
+    /// тулов TODO_add/TODO_manage; правки идут с источником «user»).
+    /// </summary>
+    public TodoViewModel Todo { get; }
+
     public ChatViewModel(
         ChatRuntime runtime,
         SessionController sessions,
@@ -168,6 +175,7 @@ public partial class ChatViewModel : ObservableObject {
         _goToSettings = goToSettings;
 
         Shelves = new(() => SessionDir());
+        Todo = new(() => SessionDir());
         SessionList = new(_sessions, _runtime.Log, () => IsGenerating, status => StatusText = status);
         TurnView = new(_runtime, _background, Messages, SessionDir, status => StatusText = status);
         MessageCommands = new(Messages, PendingAttachments, _runtime.Log,
@@ -203,6 +211,11 @@ public partial class ChatViewModel : ObservableObject {
             RefreshPromptPreview();
             return;
         }
+        StartupTrace.Log("ChatViewModel Initialize: PruneEmptySessionFolders");
+        // Уборка наследия: каталоги сессий создавались и на чтении, поэтому удалённые и
+        // так и не сохранённые сессии оставляли после себя пустые sessions/<id>/.
+        // До любых реакций вида — иначе Refresh/Shelves успеют наплодить новых.
+        _sessions.PruneEmptyFolders();
         StartupTrace.Log("ChatViewModel Initialize: EnsureMain");
         SessionList.EnsureMain();
         StartupTrace.Log("ChatViewModel Initialize: RestoreLast");
@@ -389,6 +402,7 @@ public partial class ChatViewModel : ObservableObject {
         SessionList.Refresh();
         RefreshPromptPreview();
         Shelves.Refresh();
+        Todo.OnSessionChanged();
     }
 
     /// <summary>Внешнее уведомление биндинга ReasoningEffortIndex (настройки сменил тулом агент).</summary>

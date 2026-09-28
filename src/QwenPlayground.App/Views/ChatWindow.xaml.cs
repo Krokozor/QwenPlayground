@@ -22,9 +22,9 @@ public sealed class ChatWindowViewModel : IChatHost {
 /// свой рантайм (CreatePinnedRuntime — общие сервисы шарятся с приложением), свой
 /// ChatViewModel (Pinned). MainWindow — композиционный корень; окно самодостаточно.
 ///
-/// Слот закреплён (SlotAllocation): ручное окно → 2. При закрытии окно вычищает свой
-/// слот (KV больше не нужен — разговор сохранён в chat.json, продолжение начнётся
-/// с пере-евалюацией промпта).
+/// Слот закреплён (SlotAllocation): окно → 2 (дефолт; 1 — не-main сессии главного окна).
+/// При закрытии окно вычищает свой слот (KV больше не нужен — разговор сохранён в
+/// chat.json, продолжение начнётся с пере-евалюацией промпта).
 /// </summary>
 public partial class ChatWindow : Window {
     private readonly ChatViewModel _chat;

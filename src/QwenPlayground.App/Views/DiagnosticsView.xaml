@@ -5,6 +5,8 @@
     <UserControl.Resources>
         <views:StatusToBrushConverter x:Key="StatusToBrush" />
         <views:NullToVisibilityConverter x:Key="NullToVisibility" />
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <views:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
     </UserControl.Resources>
     <!-- Тёмная тема (2026-08-22): view был светлым на тёмном приложении — контраст страдал.
          Палитра совпадает с ChatView: карточки #16181d, вложенные #1f2733, текст #e0e0e0/#c0c0c0.
@@ -32,6 +34,98 @@
                     <ProgressBar Height="8" Margin="0,8,0,0" Maximum="100" Value="{Binding ContextUsagePercent}" />
                     <TextBlock Text="{Binding ContextUsagePercent, StringFormat='{}{0}% окна'}" Margin="0,4,0,0"
                                HorizontalAlignment="Right" Foreground="#c0c0c0" />
+                </StackPanel>
+            </Border>
+
+            <!-- KV-слоты llama.cpp: кто сколько удерживает в едином пуле и кнопки чистки.
+                 Застарелый KV в слотах замедляет промпт-обработку ВСЕХ слотов —
+                 чистка освобождает пул (следующие ходы пере-евалюируют промпты). -->
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="KV-слоты (llama.cpp)" FontWeight="Bold" FontSize="14" VerticalAlignment="Center" />
+                <Button Content="вычистить все" Command="{Binding EraseAllSlotsCommand}"
+                        HorizontalAlignment="Left" Margin="12,0,0,0" Padding="8,2" VerticalAlignment="Center"
+                        IsEnabled="{Binding SlotsBusy, Converter={StaticResource InverseBoolToVis}}"
+                        ToolTip="Вычистить KV всех слотов (с подтверждением): освобождает единый KV-пул" />
+            </StackPanel>
+            <Border Background="#16181d" BorderBrush="#444" BorderThickness="1" Padding="8" Margin="0,0,0,12">
+                <StackPanel>
+                    <ItemsControl ItemsSource="{Binding SlotRows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="6" Margin="0,2" Background="#1f2733">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="32" />
+                                            <ColumnDefinition Width="120" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="110" />
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="90" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Id}" FontWeight="Bold" Foreground="#7aa2f7" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Role}" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Tokens}" Margin="8,0,0,0" Foreground="#c0c0c0" />
+                                        <TextBlock Grid.Column="3" Text="{Binding Cache}" Margin="8,0,0,0" FontSize="11" Foreground="#888"
+                                                   ToolTip="Токены префикса, переиспользованные в последнем запросе (n_prompt_tokens_cache)." />
+                                        <TextBlock Grid.Column="4" Text="{Binding LastUse}" Margin="8,0,0,0" FontSize="11" Foreground="#888"
+                                                   ToolTip="Когда приложение последний раз использовало слот. «Застыл» — KV есть, а ходы не трогают больше часа: кандидат на чистку.">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="#888" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Stale}" Value="True">
+                                                            <Setter Property="Foreground" Value="#e0af68" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Grid.Column="5" Text="обработка…" Margin="8,0,0,0" Foreground="#e0af68"
+                                                   HorizontalAlignment="Right"
+                                                   Visibility="{Binding Processing, Converter={StaticResource BoolToVis}}" />
+                                        <StackPanel Grid.Column="6" Orientation="Horizontal">
+                                            <TextBlock Text="← текущая" Margin="0,0,8,0" Foreground="#9ece6a"
+                                                       Visibility="{Binding IsCurrentSession, Converter={StaticResource BoolToVis}}" />
+                                            <Button Content="вычистить" Command="{Binding DataContext.EraseSlotCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}" FontSize="10" Padding="6,1" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="{Binding SlotStatus}" Margin="2,6,2,0" FontSize="11" Foreground="#888" />
+                </StackPanel>
+            </Border>
+
+            <!-- Метрики сервера: /metrics (флаг llama.cpp "metrics"). Скорости — из дельт
+                 кумулятивных счётчиков за интервал поллинга (gauge сервера — среднее
+                 за всю жизнь, оно не покажет «вот сейчас упало»). -->
+            <TextBlock Text="Метрики сервера (/metrics)" FontWeight="Bold" FontSize="14" Margin="0,0,0,4" />
+            <Border Background="#16181d" BorderBrush="#444" BorderThickness="1" Padding="8" Margin="0,0,0,12">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Промпт-обработка" FontSize="11" Foreground="#888" />
+                            <TextBlock Text="{Binding PromptTps}" FontSize="16" FontFamily="Consolas" Foreground="#9ece6a" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="Генерация" FontSize="11" Foreground="#888" />
+                            <TextBlock Text="{Binding PredictedTps}" FontSize="16" FontFamily="Consolas" Foreground="#9ece6a" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Макс. промпт (за жизнь сервера)" FontSize="11" Foreground="#888" />
+                            <TextBlock Text="{Binding MaxPromptTokens}" FontSize="16" FontFamily="Consolas" Foreground="#7aa2f7" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="{Binding TpsWindow}" FontSize="11" Margin="0,6,0,0" Foreground="#888" />
+                    <TextBlock Text="{Binding MetricsStatus}" FontSize="11" Margin="0,2,0,0" Foreground="#888" />
                 </StackPanel>
             </Border>
 

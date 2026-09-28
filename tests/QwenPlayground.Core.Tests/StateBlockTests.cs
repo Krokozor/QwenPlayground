@@ -193,4 +193,55 @@ public sealed class StateBlockTests
     {
         Assert.Null(JsonSerializer.Deserialize<StateBlock>("null"));
     }
+
+    [Fact]
+    public void Todo_RendersRepeatingField_AfterNotes()
+    {
+        var state = new StateBlock
+        {
+            MsgId = 7,
+            TodoLines = { "1. [ ] fix the bug", "2. [x] add tests" },
+            TodoSource = "edited by user (not by the agent)"
+        };
+
+        var rendered = state.ToString();
+
+        Assert.Equal(
+            "<state>\n" +
+            "msg_id=7\n" +
+            "todo=1. [ ] fix the bug\n" +
+            "todo=2. [x] add tests\n" +
+            "todo_src=edited by user (not by the agent)\n" +
+            "</state>",
+            rendered);
+    }
+
+    [Fact]
+    public void Todo_ParsesBack_RoundTrip()
+    {
+        var state = new StateBlock
+        {
+            MsgId = 8,
+            Notes = { "some note" },
+            TodoLines = { "1. [ ] a", "2. [ ] b", "+3 more" },
+            TodoSource = "periodic reminder"
+        };
+
+        var parsed = StateBlock.Parse(state.ToString());
+
+        Assert.NotNull(parsed);
+        Assert.Equal(3, parsed!.TodoLines.Count);
+        Assert.Equal("1. [ ] a", parsed.TodoLines[0]);
+        Assert.Equal("+3 more", parsed.TodoLines[2]);
+        Assert.Equal("periodic reminder", parsed.TodoSource);
+        Assert.Single(parsed.Notes); // доска не затёрта
+    }
+
+    [Fact]
+    public void Todo_AbsentByDefault_NoFieldRendered()
+    {
+        var rendered = new StateBlock { MsgId = 1 }.ToString();
+
+        Assert.DoesNotContain("todo", rendered);
+    }
 }

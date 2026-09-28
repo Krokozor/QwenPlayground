@@ -79,6 +79,21 @@ public sealed class StateBlock
         }
     }
 
+    /// <summary>
+    /// Напоминание TODO-списка: строки пунктов («1. [ ] текст»), поле todo= повторяется.
+    /// Попадает в блок не на каждом шаге, а когда сработал напоминатель (изменение
+    /// агентом/владельцем или периодический интервал) — см. <see cref="TodoReminder"/>.
+    /// </summary>
+    public List<string> TodoLines { get; set; } = new();
+
+    /// <summary>
+    /// Источник изменения TODO (поле todo_src=): «edited by user (not by the agent)» —
+    /// владелец правил список вручную (агент не должен гадать, почему цели поменялись),
+    /// «periodic reminder» — периодическое напоминание без изменений. null — не рендерится
+    /// (изменил сам агент — он и так знает).
+    /// </summary>
+    public string? TodoSource { get; set; }
+
     public sealed record MemoryPair(string A, string B);
 
     public sealed class MemoryRef
@@ -145,6 +160,12 @@ public sealed class StateBlock
         {
             AppendField("note", note);
         }
+        // TODO-напоминание: строки списка (todo= повторяется) + источник изменения.
+        foreach (var line in TodoLines)
+        {
+            AppendField("todo", line);
+        }
+        AppendField("todo_src", TodoSource);
 
         if (!first)
         {
@@ -295,6 +316,14 @@ public sealed class StateBlock
                     break;
                 case "note":
                     state.Notes.Add(value);
+                    any = true;
+                    break;
+                case "todo":
+                    state.TodoLines.Add(value);
+                    any = true;
+                    break;
+                case "todo_src":
+                    state.TodoSource = value;
                     any = true;
                     break;
             }

@@ -45,6 +45,41 @@ public sealed class ShelfStateTests : IDisposable
     }
 
     [Fact]
+    public void ReadingState_DoesNotCreateSessionDirectory()
+    {
+        // Регресс: конструктор создавал каталог сессии, и чтение полок на каждой смене
+        // сессии плодило пустые sessions/<id>/ (для несохранённых и удалённых сессий).
+        var dir = Path.Combine(Path.GetTempPath(), "qwen_shelves_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var state = new ShelfState(dir);
+
+            Assert.Empty(state.Load());
+            Assert.Empty(state.LoadPending());
+
+            Assert.False(Directory.Exists(dir));
+
+            // Запись, наоборот, каталог создаёт сама (AtomicFile) — состояние не теряется.
+            state.Activate(ToolGroup.Browser);
+            Assert.True(Directory.Exists(dir));
+            Assert.Contains(ToolGroup.Browser, new ShelfState(dir).Load());
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(dir))
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    [Fact]
     public void Activate_AlreadyActive_IsNoOp()
     {
         _state.Activate(ToolGroup.Browser);

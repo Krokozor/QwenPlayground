@@ -170,4 +170,136 @@ public sealed class SessionStoreTests : IDisposable
 
         Assert.Empty(_store.List());
     }
+
+    [Fact]
+    public void Delete_RemovesSessionFolderFromDisk()
+    {
+        _store.Save("s1", new List<ChatMessage> { ChatMessage.User("вопрос") });
+        File.WriteAllText(Path.Combine(_directory, "s1", "draft.txt"), "черновик");
+        Directory.CreateDirectory(Path.Combine(_directory, "s1", "artifacts", "msg_1"));
+        var folder = Path.Combine(_directory, "s1");
+        Assert.True(Directory.Exists(folder));
+
+        _store.Delete("s1");
+
+        Assert.False(Directory.Exists(folder)); // ни файлов, ни папки — ничего не осталось
+    }
+
+    [Fact]
+    public void PruneEmptyFolders_RemovesEmpty_KeepsNonEmptyAndProtected()
+    {
+        // Непустая сессия (есть chat.json) — трогать нельзя.
+        _store.Save("full", new List<ChatMessage> { ChatMessage.User("x") });
+        // Каталог без chat.json, но с сайдкаром (счётчик) — данные сессии, не мусор.
+        Directory.CreateDirectory(Path.Combine(_directory, "counter-only"));
+        File.WriteAllText(Path.Combine(_directory, "counter-only", "counter"), "7");
+        // Пустой каталог — мусор (сессия удалена/не сохранялась).
+        Directory.CreateDirectory(Path.Combine(_directory, "orphan"));
+        // main пуст законно — он в keep.
+        Directory.CreateDirectory(Path.Combine(_directory, "main"));
+
+        var removed = _store.PruneEmptyFolders(["main"]);
+
+        Assert.Equal(["orphan"], removed);
+        Assert.False(Directory.Exists(Path.Combine(_directory, "orphan")));
+        Assert.True(Directory.Exists(Path.Combine(_directory, "main")));
+        Assert.True(Directory.Exists(Path.Combine(_directory, "full")));
+        Assert.True(Directory.Exists(Path.Combine(_directory, "counter-only")));
+        Assert.Single(_store.List()); // полная сессия по-прежнему в списке
+    }
+
+    [Fact]
+    public void PruneEmptyFolders_DropsIndexEntriesWithoutDataOnDisk()
+    {
+        _store.Save("alive", new List<ChatMessage> { ChatMessage.User("x") });
+        _store.Save("gone", new List<ChatMessage> { ChatMessage.User("y") });
+        Directory.Delete(Path.Combine(_directory, "gone"), recursive: true);
+
+        _store.PruneEmptyFolders();
+
+        // Мёртвая запись индекса вычищена, живая на месте.
+        Assert.DoesNotContain("\"gone\"", File.ReadAllText(Path.Combine(_directory, "index.json")));
+        Assert.Contains("\"alive\"", File.ReadAllText(Path.Combine(_directory, "index.json")));
+        Assert.Equal("alive", _store.List()[0].Id);
+    }
+}
+
+/// <summary>
+/// Копии вложений в artifacts/msg_&lt;id&gt;/. Регресс: одноимённые вложения раньше
+/// перетирали друг друга (overwrite: true) — в UI было два чипа, у модели одна картинка.
+/// </summary>
+public sealed class MessageMetaStoreTests : IDisposable
+{
+    private readonly string _directory =
+        Path.Combine(Path.GetTempPath(), "qwen_artifacts_" + Guid.NewGuid().ToString("N"));
+
+    public MessageMetaStoreTests() => Directory.CreateDirectory(_directory);
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(_directory, recursive: true);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // Ничего не создавали — удалять нечего.
+        }
+    }
+
+    private string Source(string name, string content)
+    {
+        var path = Path.Combine(_directory, "src", name);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, content);
+        return path;
+    }
+
+    [Fact]
+    public void AddArtifact_SameBasename_KeepsBothCopies()
+    {
+        var store = new MessageMetaStore(_directory);
+
+        var first = store.AddArtifact(1, Source("a/shot.png", "first"));
+        var second = store.AddArtifact(1, Source("b/shot.png", "second"));
+
+        Assert.NotEqual(first, second);
+        Assert.Equal(2, store.GetArtifacts(1).Count);
+        Assert.Equal("first", File.ReadAllText(first));
+        Assert.Equal("second", File.ReadAllText(second));
+    }
+
+    [Fact]
+    public void AddFileArtifact_SameBasename_KeepsBothCopies()
+    {
+        var store = new MessageMetaStore(_directory);
+
+        var first = store.AddFileArtifact(1, Source("a/doc.txt", "first"));
+        var second = store.AddFileArtifact(1, Source("b/doc.txt", "second"));
+
+        Assert.NotEqual(first, second);
+        Assert.Equal("first", File.ReadAllText(first));
+        Assert.Equal("second", File.ReadAllText(second));
+    }
+
+    [Fact]
+    public void AddArtifact_UniqueName_KeepsOriginalName()
+    {
+        var store = new MessageMetaStore(_directory);
+
+        var path = store.AddArtifact(1, Source("screenshot.png", "bytes"));
+
+        Assert.Equal("screenshot.png", Path.GetFileName(path));
+        Assert.Equal([path], store.GetArtifacts(1));
+    }
+
+    [Fact]
+    public void RemoveArtifacts_DropsFolder()
+    {
+        var store = new MessageMetaStore(_directory);
+        store.AddArtifact(1, Source("shot.png", "bytes"));
+
+        Assert.Equal(1, store.RemoveArtifacts(1));
+        Assert.Empty(store.GetArtifacts(1));
+    }
 }

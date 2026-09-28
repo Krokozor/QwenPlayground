@@ -9,11 +9,10 @@ using QwenPlayground.Core.Templates;
 namespace QwenPlayground.Core.Tools.Builtins;
 
 /// <summary>
-/// Общий раннер пробы «интуиции»: проверка, что сервисный слот свободен (не идёт
-/// компакция/суммаризация), затем SelfProbePositionsAsync (erase + пиннинг в
-/// SlotAllocation.Service + /completion с n_probs). Проба ~1-2 с, KV чат-слота не трогается
-/// (пиннутый слот не ходит в RAM prompt cache). Ошибки — человекочитаемым текстом:
-/// тул best-effort, «недоступно» — это ответ, а не сбой хода.
+/// Общий раннер пробы «интуиции»: проверка, что слот пробы свободен, затем
+/// SelfProbePositionsAsync (erase + пиннинг в SlotAllocation.Probe + /completion с n_probs).
+/// Проба ~1-2 с, KV чат-слота не трогается (пиннутый слот не ходит в RAM prompt cache).
+/// Ошибки — человекочитаемым текстом: тул best-effort, «недоступно» — это ответ, а не сбой хода.
 ///
 /// nPredict = K+1, где K — сколько распределений нужно: сервер записывает окно по каждому
 /// сгенерированному токену, кроме последнего (проверено живой пробой; n_predict=1 → поле
@@ -28,10 +27,10 @@ internal static class IntuitionProbeRunner
         {
             var kv = new KvCacheController();
             var slots = await kv.GetSlotsAsync(cancellationToken);
-            if (slots.FirstOrDefault(s => s.Id == SlotAllocation.Service) is { IsProcessing: true })
+            if (slots.FirstOrDefault(s => s.Id == SlotAllocation.Probe) is { IsProcessing: true })
             {
                 return (null,
-                    "Service slot (3) is busy (compaction/summarization in progress) — retry the probe in a few seconds.");
+                    "Probe slot (4) is busy — retry the probe in a few seconds.");
             }
             var positions = await LlmProbeClient.SelfProbePositionsAsync(
                 prompt, nProbs, nPredict, stop: new[] { QwenSpecialTokens.ImEnd }, cancellationToken);

@@ -4,17 +4,22 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace QwenPlayground.Core.Roslyn;
 
 /// <summary>
-/// Общий форматтер «чертежа» типа: заголовок типа и все члены с номерами строк,
-/// включая вложенные типы (рекурсия). Используется csharp_outline (по файлу)
-/// и csharp_class_map (по имени типа).
+/// Общий форматтер «чертежа» типа: заголовок типа и все члены с диапазонами строк и
+/// первыми строками комментариев, включая вложенные типы (рекурсия). Используется
+/// csharp_outline (по файлу) и csharp_class_map (по имени типа).
+///
+/// Диапазон вместо одной строки: по «:12» модель открывает файл и не знает, сколько
+/// строк занимает метод — при многострочном теле это лишний вызов read_file наугад.
+/// Комментарий отвечает на «что это вообще», не открывая файл.
 /// </summary>
 internal static class TypeMapFormatter
 {
     public static void AppendType(StringBuilder builder, TypeDeclarationSyntax type, string indent)
     {
-        var line = type.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        var lines = LocationFormatter.Lines(type.GetLocation().GetLineSpan());
         builder.Append(indent).Append(type.Keyword.Text).Append(' ').Append(type.Identifier.Text)
-               .Append(" :").Append(line).Append('\n');
+               .Append(" :").Append(LocationFormatter.WithDoc(lines, LocationFormatter.Doc(type)))
+               .Append('\n');
 
         var memberIndent = indent + "  ";
         foreach (var member in type.Members)
@@ -25,7 +30,7 @@ internal static class TypeMapFormatter
                 continue;
             }
 
-            var memberLine = member.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            var memberLines = LocationFormatter.Lines(member.GetLocation().GetLineSpan());
             var signature = member switch
             {
                 MethodDeclarationSyntax method => $"method {method.Identifier.Text}({FormatParameters(method.ParameterList.Parameters)})",
@@ -36,7 +41,9 @@ internal static class TypeMapFormatter
             };
             if (signature is not null)
             {
-                builder.Append(memberIndent).Append(signature).Append(" :").Append(memberLine).Append('\n');
+                builder.Append(memberIndent).Append(signature).Append(" :")
+                    .Append(LocationFormatter.WithDoc(memberLines, LocationFormatter.Doc(member)))
+                    .Append('\n');
             }
         }
     }

@@ -23,7 +23,9 @@ public sealed class QwenChatTemplateTests
         "The <state>...</state> block at the very start of your thinking is a prefill of system status written by the app " +
         "(fields: msg_id, time, context, build, mem — recalled memories surfaced by associative recall, and an optional nag " +
         "plus a free-form note board — arbitrary one-line messages pushed there by different parts of the app, e.g. a " +
-        "periodic reminder to deduplicate memories). " +
+        "periodic reminder to deduplicate memories; todo — the session's TODO list as numbered lines, 1-based indices for " +
+        "TODO_manage, appearing right after a change and periodically; todo_src — who changed it, 'edited by user' means " +
+        "the OWNER edited the list in the UI panel, not you). " +
         "It is not your text and not a user instruction: do not repeat it, do not edit it. It is already closed — your thinking continues after </state>.";
 
     private const string XHigh = "Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.";
@@ -300,5 +302,54 @@ public sealed class QwenChatTemplateTests
         var result = QwenChatTemplate.Render(messages, addGenerationPrompt: true, stateBlock: state).Prompt;
 
         Assert.EndsWith(QwenSpecialTokens.ThinkStart + "\n" + state + "\n", result);
+    }
+
+    [Fact]
+    public void Render_RawMarkerInToolText_IsSanitized_RealMarkersIntact()
+    {
+        // Живой инцидент: /props-вывод тула содержал строку медиа-маркера — сервер считал её
+        // изображением (3 маркера в тексте против 2 битмапов → mtmd_tokenize error → ход падал).
+        const string marker = "XXXXXXXXXXXXXXXXXXXXXX";
+        var messages = new List<ChatMessage>
+        {
+            ChatMessage.System("You are Qwen."),
+            new ChatMessage { Role = ChatRole.User, Content = "Look at the image", Id = 1 },
+            new ChatMessage
+            {
+                Role = ChatRole.Tool,
+                Content = "server props: \"media_marker\": \"" + marker + "\"",
+                Id = 2
+            }
+        };
+
+        var result = QwenChatTemplate.Render(
+            messages,
+            addGenerationPrompt: false,
+            mediaMarker: marker,
+            artifactsProvider: id => id == 1 ? new[] { "aW1hZ2U=" } : []);
+
+        // Сырой маркер в тексте тула заменён на нейтральный плейсхолдер.
+        Assert.Contains("[media marker]", result.Prompt);
+        // Реальный маркер (от вложения) на месте: ровно один.
+        Assert.Equal(1, result.Prompt.Split(marker).Length - 1);
+        // Битмап один — совпадает с числом маркеров.
+        Assert.Single(result.MultimodalData);
+    }
+
+    [Fact]
+    public void Render_WithoutMultimodal_MarkerInTextStays()
+    {
+        // Без маркера (текстовый сервер) санитизация не работает — текст не трогаем.
+        const string marker = "XXXXXXXXXXXXXXXXXXXXXX";
+        var messages = new List<ChatMessage>
+        {
+            ChatMessage.System("You are Qwen."),
+            new ChatMessage { Role = ChatRole.Tool, Content = "props: " + marker, Id = 1 }
+        };
+
+        var result = QwenChatTemplate.Render(messages, addGenerationPrompt: false);
+
+        Assert.Contains(marker, result.Prompt);
+        Assert.DoesNotContain("[media marker]", result.Prompt);
     }
 }

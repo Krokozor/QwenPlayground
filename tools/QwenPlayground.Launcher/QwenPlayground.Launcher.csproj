@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="QwenPlayground.Launcher.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\QwenPlayground.Core\QwenPlayground.Core.csproj" />
   </ItemGroup>
 

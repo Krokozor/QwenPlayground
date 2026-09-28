@@ -3,77 +3,12 @@ using System.IO;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Templates;
 
 namespace QwenPlayground.App.ViewModels;
-
-/// <summary>Вложение сообщения (артефакт из artifacts/msg_&lt;id&gt;/): имя + превью для картинок.</summary>
-public sealed record MessageAttachment(string Name, string FullPath)
-{
-    private ImageSource? _preview;
-
-    public bool IsImage => ChatPreview.IsImageFile(FullPath);
-    public bool IsNotImage => !IsImage;
-
-    /// <summary>Декодируется один раз: WPF-биндинг дёргает геттер на каждом layout-проходе (скролл виртуализированного списка).</summary>
-    public ImageSource? Preview => IsImage ? (_preview ??= ChatPreview.Load(FullPath)) : null;
-
-    /// <summary>
-    /// Ширина превью под фиксированную высоту 140: картинка растекается по собственному
-    /// соотношению сторон, пустых полей нет (в отличие от жёсткого MaxWidth+MaxHeight).
-    /// </summary>
-    public double PreviewWidth
-    {
-        get
-        {
-            if (Preview is System.Windows.Media.Imaging.BitmapSource bitmap && bitmap.PixelHeight > 0)
-            {
-                return Math.Round(MessageAttachmentPreviewHeight * bitmap.PixelWidth / (double)bitmap.PixelHeight);
-            }
-            return MessageAttachmentPreviewHeight;
-        }
-    }
-
-    public const double MessageAttachmentPreviewHeight = 140;
-}
-
-/// <summary>Облегчённый загрузчик превью: только растровые форматы, без блокировки файла (OnLoad + Freeze).</summary>
-internal static class ChatPreview
-{
-    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".ico"
-    };
-
-    public static bool IsImageFile(string path) => ImageExtensions.Contains(Path.GetExtension(path));
-
-    public static ImageSource? Load(string path)
-    {
-        if (!IsImageFile(path) || !File.Exists(path))
-        {
-            return null;
-        }
-        try
-        {
-            var bitmap = new BitmapImage();
-            bitmap.BeginInit();
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.UriSource = new Uri(path, UriKind.Absolute);
-            bitmap.EndInit();
-            bitmap.Freeze();
-            return bitmap;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-}
 
 public partial class MessageViewModel : ObservableObject
 {
@@ -282,7 +217,7 @@ public partial class MessageViewModel : ObservableObject
         // Мультимодальные вложения (прямо в msg_<id>/) — превью в UI.
         foreach (var path in store.GetArtifacts(Source.Id))
         {
-            Attachments.Add(new MessageAttachment(Path.GetFileName(path), path));
+            AddAttachment(path);
         }
         // Анонсируемые (не мультимодальные) вложения — в подпапке attachments/ (чип, не превью).
         var attachmentsDir = Path.Combine(store.ArtifactsDir(Source.Id), "attachments");
@@ -290,10 +225,23 @@ public partial class MessageViewModel : ObservableObject
         {
             foreach (var path in Directory.GetFiles(attachmentsDir))
             {
-                Attachments.Add(new MessageAttachment(Path.GetFileName(path), path));
+                AddAttachment(path);
             }
         }
         HasAttachments = Attachments.Count > 0;
+    }
+
+    /// <summary>
+    /// Добавить вложение и запустить загрузку превью в фоне. Раньше превью декодировалось
+    /// синхронно в геттере биндинга — то есть в том же проходе разметки, что и этот метод,
+    /// на UI-потоке и полноразмерно. Теперь декод асинхронный, а состояние честное:
+    /// не показалось — значит покажется заглушка, а не чёрный прямоугольник.
+    /// </summary>
+    private void AddAttachment(string path)
+    {
+        var attachment = new MessageAttachment(Path.GetFileName(path), path);
+        Attachments.Add(attachment);
+        attachment.BeginLoadPreview();
     }
 
     // ── Живой стрим ──────────────────────────────────────────────────────────────────

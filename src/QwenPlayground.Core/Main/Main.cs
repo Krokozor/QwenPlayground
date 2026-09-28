@@ -119,6 +119,7 @@ public sealed class Main
             hooks,
             SessionDirectory: () => Sessions!.DirectoryFor(Sessions.CurrentId),
             PromptKey: () => Sessions!.PromptKey,
+            SlotId: () => Sessions!.CurrentSlotId,
             _identity,
             _externalTools,
             _layerStore));
@@ -126,8 +127,8 @@ public sealed class Main
         Sessions = new SessionController(rt.Log, rt.Draft, rt.MemorySurfacer);
         // Ход: после сессий (пользуется их ключами/каталогом) и maintenance (бюджет-гард).
         // Слот — свойство ТЕКУЩЕЙ сессии (SessionData.SlotId, выбор в UI): каждая сессия
-        // на своём слоте → переключение без вытеснения чужих KV-кэшей. main по умолчанию
-        // на SlotAllocation.Main (легаси); KV-якорь субагентов адресует слот вызывающего
+        // на своём слоте → переключение без вытеснения чужих KV-кэшей. Дефолты схемы:
+        // main → 0, не-main → 1; KV-якорь субагентов адресует слот вызывающего
         // (ToolContext.SlotId) — динамически, как есть.
         WireTurns(rt, hooks, new TurnSessionView(
             () => Sessions.CurrentId,
@@ -171,11 +172,12 @@ public sealed class Main
         rt.Log.Added += _ => Sessions.TouchCounter(sessionId, rt.Log.NextMessageId);
         // Пinned-рантайм: свои identity/layer-store (изоляция от main-агента),
         // каталог и ключи — фиксированные (сессию не переключают). Слот — закреплён
-        // (SlotAllocation): субагент → 1, ручное окно → 2.
+        // (SlotAllocation): субагент → 3, ручное окно → 2 (дефолт; 1 — дефолт не-main).
         WireRuntimeCore(rt, new RuntimeWiring(
             hooks,
             SessionDirectory: () => Sessions.DirectoryFor(sessionId),
             PromptKey: () => promptKey,
+            SlotId: () => slotId,
             new InjectedIdentity(),
             new ExternalToolsNote(),
             new MemoryLayerStore()));
@@ -199,6 +201,8 @@ public sealed class Main
         UiHooks Hooks,
         Func<string> SessionDirectory,
         Func<string?> PromptKey,
+        /// <summary>Слот сессии (SlotAllocation): компакция/суммаризация идут на слоте самой сессии.</summary>
+        Func<int?> SlotId,
         InjectedIdentity Identity,
         ExternalToolsNote ExternalTools,
         MemoryLayerStore LayerStore);
@@ -217,6 +221,12 @@ public sealed class Main
             w.Identity,
             w.ExternalTools,
             Tools);
+        // TODO-напоминатель: Peek чистый (в StateBlocks, превью не двигает счётчик),
+        // OnRendered — в Turns после реального рендера. Каталог — текущей сессии
+        // (main — динамический, pinned — фиксированный); интервал — из живых настроек.
+        rt.Todo = new TodoReminder(
+            w.SessionDirectory,
+            () => AppSettings.Get().TodoReminderInterval);
         // Доска сообщений state-блока: pull-анонсеры (состояние на момент рендера) +
         // BoardAnnouncer — дрейн статичной мусорки (push из кода без интерфейса).
         rt.StateBlocks = new StateBlockBuilder(
@@ -227,7 +237,8 @@ public sealed class Main
             () => rt.Log,
             () => rt.MemorySurfacer.GetSurfacedForStateBlock(),
             [rt.MemorySurfacer, new BoardAnnouncer()],
-            () => PairsStore.Pending);
+            () => PairsStore.Pending,
+            () => rt.Todo.Peek());
         rt.Pipeline = new PromptPipeline(
             () => rt.Log,
             () => rt.PromptAssembler.ResolveSystemPrompt(),
@@ -240,7 +251,9 @@ public sealed class Main
             rt.Log,
             rt.ChatState,
             rt.Compaction,
-            (user, system, onChunk, ct) => ServiceLlm.CompleteStructuredAsync(user, system, onChunk, ct),
+            // Суммаризация — на слоте сессии, которую сжимаем: контекст сессии после сжатия
+            // меняется в любом случае, а отдельный сервисный слот раздувал бы KV-пул.
+            (user, system, onChunk, ct) => ServiceLlm.CompleteStructuredAsync(user, system, onChunk, ct, w.SlotId()),
             w.LayerStore,
             rt.MemorySurfacer,
             ct => rt.Pipeline.CountNextTokensAsync(ct),
@@ -285,6 +298,7 @@ public sealed class Main
             rt.MemorySurfacer,
             hooks.Status,
             hooks.Generating,
-            hooks.ShutdownApp);
+            hooks.ShutdownApp,
+            todo: rt.Todo);
     }
 }

@@ -10,6 +10,11 @@ namespace QwenPlayground.Core.Inference;
 /// и вычисляются на каждый вызов — настройки живые), трафик пишется в traffic-журнал
 /// (проверяемость постфактум), хук на чанк питает live-превью компакции.
 ///
+/// Слот: вызов идёт на слоте СУММАРИЗУЕМОЙ сессии (параметр slotId вызывающего): контекст
+/// сессии после сжатия меняется в любом случае, а отдельный сервисный слот раздувал бы
+/// занятость единого KV-пула и замедлял промпт-обработку. slotId = null — сервер выбирает
+/// сам (LRU): так ходит сессия, у которой слот не назначен (селектор «—»).
+///
 /// Результат структурных вызовов достаётся через submit_result: null означает «модель не
 /// вызвала инструмент» — вызывающий решает, бросать ли (компакция) или считать «данных нет»
 /// (извлечение памяти).
@@ -33,17 +38,19 @@ public sealed class ServiceCompletionClient
         _createSource = createSource ?? (endpoint => new LlmCompletionClient(endpoint));
     }
 
-    /// <summary>Стрим сырого вывода: буфер + хук на чанк + запись в traffic-журнал.</summary>
+    /// <summary>
+    /// Стрим сырого вывода: буфер + хук на чанк + запись в traffic-журнал.
+    /// slotId — слот llama.cpp (см. класс): вызов на слоте сессии, которую обслуживаем.
+    /// </summary>
     public async Task<string> StreamAsync(
-        string prompt, Action<string>? onChunk = null, CancellationToken cancellationToken = default)
+        string prompt, Action<string>? onChunk = null, CancellationToken cancellationToken = default,
+        int? slotId = null)
     {
         var raw = new StringBuilder();
         using (var client = _createSource(_endpoint()))
         {
-            // Сервисные вызовы — в своём слоте (SlotAllocation.Service): LRU-выбор не должен
-            // топить KV main'а/субагента (у пиннутых слотов нет восстановления из RAM-кеша).
             var options = _optionsFactory();
-            options.IdSlot = SlotAllocation.Service;
+            options.IdSlot = slotId;
             await foreach (var chunk in client.StreamAsync(prompt, options, cancellationToken: cancellationToken))
             {
                 raw.Append(chunk);
@@ -58,10 +65,11 @@ public sealed class ServiceCompletionClient
     /// <summary>Структурный вызов: промпт рендерится через submit_result-обёртку, результат извлекается структурно.</summary>
     public async Task<string?> CompleteStructuredAsync(
         string userContent, string? system = null,
-        Action<string>? onChunk = null, CancellationToken cancellationToken = default)
+        Action<string>? onChunk = null, CancellationToken cancellationToken = default,
+        int? slotId = null)
     {
         var prompt = StructuredCompletion.Render(userContent, system);
-        var output = await StreamAsync(prompt, onChunk, cancellationToken);
+        var output = await StreamAsync(prompt, onChunk, cancellationToken, slotId);
         return StructuredCompletion.ExtractResult(output);
     }
 }

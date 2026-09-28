@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Serialization;
 using QwenPlayground.Core.Sessions;
@@ -187,6 +188,24 @@ public sealed class ChatSessions
     public void Save(string id, IReadOnlyList<ChatMessage> messages, int nextMessageId, string purpose = "subagent",
         string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null, int? slotId = null) =>
         _store.Save(id, messages, null, nextMessageId, purpose, samplerKey, promptKey, stateBlockKey, slotId);
+
+    /// <summary>
+    /// Уборка на старте: снести ПУСТЫЕ каталоги сессий (нет ни chat.json, ни сайдкаров,
+    /// ни артефактов) — наследие старого поведения, когда каталог создавался на чтении
+    /// (ShelfState в конструкторе). Пустая папка не сессия: её нет в списке, удалить из
+    /// UI нельзя, но она копится десятками. main и текущую сессию не трогаем — у них
+    /// пустое состояние законно. Возвращает id удалённых каталогов.
+    /// </summary>
+    public IReadOnlyList<string> PruneEmptyFolders()
+    {
+        var keep = new List<string?> { MainAgent.SessionId, CurrentId, LastOpenedId };
+        var removed = _store.PruneEmptyFolders(keep.Where(id => id is not null).Select(id => id!));
+        if (removed.Count > 0)
+        {
+            DiagnosticsLog.Log($"sessions GC: удалено пустых каталогов {removed.Count}: {string.Join(", ", removed)}");
+        }
+        return removed;
+    }
 
     /// <summary>Перестроить список из хранилища; main присутствует всегда, даже если ещё не сохранялся.</summary>
     public void RefreshList()

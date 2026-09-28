@@ -12,14 +12,24 @@ namespace QwenPlayground.Core.Serialization;
 /// </summary>
 public sealed class FileDependentCache<T>
 {
-    private readonly string[] _paths;
+    private readonly Func<IEnumerable<string>> _paths;
     private readonly Func<T> _build;
     private (DateTime MtimeUtc, bool Exists)[]? _snapshot;
     private T _value;
 
     public FileDependentCache(IEnumerable<string> paths, Func<T> build, T initial)
+        : this(() => paths, build, initial)
     {
-        _paths = paths.ToArray();
+    }
+
+    /// <summary>
+    /// Зависимости вычисляются при каждом Get: их состав может меняться (например,
+    /// появился новый external/&lt;инструмент&gt;/README.md — список README растёт).
+    /// Рост/сжатие состава сам по себе считается изменением.
+    /// </summary>
+    public FileDependentCache(Func<IEnumerable<string>> paths, Func<T> build, T initial)
+    {
+        _paths = paths;
         _build = build;
         _value = initial;
     }
@@ -28,12 +38,13 @@ public sealed class FileDependentCache<T>
     {
         // Снапшот считается ВСЕГДА (иначе первая сборка записала бы пустой снапшот и кэш
         // перевычислялся бы на каждом вызове — тесты FileDependentCacheTests ловят именно это).
-        var snapshot = new (DateTime MtimeUtc, bool Exists)[_paths.Length];
-        var changed = _snapshot is null;
-        for (var i = 0; i < _paths.Length; i++)
+        var paths = _paths().ToArray();
+        var snapshot = new (DateTime MtimeUtc, bool Exists)[paths.Length];
+        var changed = _snapshot is null || _snapshot.Length != snapshot.Length;
+        for (var i = 0; i < paths.Length; i++)
         {
             // Существование проверяется отдельно: «файла не было → появился» тоже инвалидация.
-            var info = new FileInfo(_paths[i]);
+            var info = new FileInfo(paths[i]);
             snapshot[i] = info.Exists
                 ? (info.LastWriteTimeUtc, true)
                 : (DateTime.MinValue, false);

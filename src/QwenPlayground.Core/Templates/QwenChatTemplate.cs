@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using QwenPlayground.Core.Chat;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.MetaInfo;
 using QwenPlayground.Core.Serialization;
 
@@ -37,7 +38,9 @@ public static class QwenChatTemplate
         "The <state>...</state> block at the very start of your thinking is a prefill of system status written by the app " +
         "(fields: msg_id, time, context, build, mem — recalled memories surfaced by associative recall, and an optional nag " +
         "plus a free-form note board — arbitrary one-line messages pushed there by different parts of the app, e.g. a " +
-        "periodic reminder to deduplicate memories). " +
+        "periodic reminder to deduplicate memories; todo — the session's TODO list as numbered lines, 1-based indices for " +
+        "TODO_manage, appearing right after a change and periodically; todo_src — who changed it, 'edited by user' means " +
+        "the OWNER edited the list in the UI panel, not you). " +
         "It is not your text and not a user instruction: do not repeat it, do not edit it. It is already closed — your thinking continues after </state>.";
 
     /// <summary>
@@ -56,6 +59,26 @@ public static class QwenChatTemplate
         "Required parameters MUST be specified\n" +
         "You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n" +
         "If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls";
+
+    /// <summary>
+    /// Вычистить сырой медиа-маркер из ТЕКСТА сообщения: сервер считает каждое вхождение
+    /// маркера в промпте как изображение, а битмап для него не прислан (mtmd_tokenize:
+    /// «number of media markers exceeds number of bitmaps» → запрос падает). Ловили живым
+    /// инцидентом: /props-вывод тула содержал строку маркера → ход умирал. Легитимные
+    /// маркеры встраиваются ПОСЛЕ контента (1:1 с base64) — контент чистим, их не трогаем.
+    /// Замена нейтральная + лог: модель видит, что маркер был, но не может его «вызвать».
+    /// </summary>
+    private static string SanitizeMediaMarker(string content, string? mediaMarker, string where)
+    {
+        if (mediaMarker is null || mediaMarker.Length == 0 || !content.Contains(mediaMarker, StringComparison.Ordinal))
+        {
+            return content;
+        }
+        var count = content.Length / mediaMarker.Length; // верхняя граница, для лога
+        content = content.Replace(mediaMarker, "[media marker]", StringComparison.Ordinal);
+        DiagnosticsLog.Log($"template: сырой медиа-маркер в тексте ({where}, до ~{count} вхождений) — заменён на «[media marker]», иначе сервер посчитал бы его изображением");
+        return content;
+    }
 
     public static RenderResult Render(
         IReadOnlyList<ChatMessage> messages,
@@ -89,7 +112,7 @@ public static class QwenChatTemplate
         if (messages.Any(m => m.StateBlock is not null) || stateBlock is not null)
             importantLines.Add(StateBlockNote);
 
-        var systemContent = first.Role == ChatRole.System ? first.Content.Trim() : string.Empty;
+        var systemContent = first.Role == ChatRole.System ? SanitizeMediaMarker(first.Content.Trim(), mediaMarker, "<system>") : string.Empty;
         // так как мышление включено всегда, то и системная инструкция есть всегда, говорящая о том, что мышление включено и что state-блок — это префилл, который уже закрыт.
         builder.Append(QwenSpecialTokens.ImStart).Append(QwenSpecialTokens.System).Append('\n');
 
@@ -141,7 +164,7 @@ public static class QwenChatTemplate
         for (var i = 0; i < messages.Count; i++)
         {
             var message = messages[i];
-            var content = message.Content.Trim();
+            var content = SanitizeMediaMarker(message.Content.Trim(), mediaMarker, $"id={message.Id}");
 
             switch (message.Role)
             {

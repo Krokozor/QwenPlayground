@@ -101,6 +101,13 @@ public partial class MainWindow : Window
 
     // ===== Инструменты =====
 
+    /// <summary>
+    /// Корень, относительно которого живут инструменты. Из настроек (поле «Корень проекта»),
+    /// иначе autodetect по QwenPlayground.slnx — раньше поле было no-op: сохранялось, но
+    /// пути инструментов всегда считались от SelfBuildPaths.
+    /// </summary>
+    private string ToolRoot => _config.EffectiveWorkspaceRoot;
+
     private void BuildToolsPanel()
     {
         ToolsPanel.Children.Clear();
@@ -113,7 +120,7 @@ public partial class MainWindow : Window
             var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
 
             // Имя + статус
-            var installed = ToolManager.IsInstalled(tool);
+            var installed = ToolManager.IsInstalled(tool, ToolRoot);
             var nameBlock = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             nameBlock.Children.Add(new TextBlock
             {
@@ -140,12 +147,13 @@ public partial class MainWindow : Window
             };
             row.Children.Add(statusText);
 
-            // Динамическая кнопка
+            // Установленному инструменту место в строке отдаёт зонду версии: «Проверить
+            // обновления» — про сборку, а не про наличие. Не установленному — «Скачать».
             Button actionBtn;
             if (installed)
             {
                 actionBtn = new Button { Content = "Проверить обновления", Padding = new Thickness(10, 3, 10, 3), FontSize = 11 };
-                actionBtn.Click += async (_, _) => await CheckToolUpdateAsync(name, tool, actionBtn, statusText);
+                actionBtn.Click += async (_, _) => await CheckToolUpdateAsync(name, tool, actionBtn);
             }
             else
             {
@@ -156,27 +164,29 @@ public partial class MainWindow : Window
 
             ToolsPanel.Children.Add(row);
 
-            // Если установлен — показать версию
-            if (installed)
-            {
-                _ = ShowToolVersionAsync(name, tool, statusText);
-            }
+            // Версия показывается и показывается: зонд вызывается всегда, результат приходит
+            // в statusText (в т.ч. «ошибка»/«?»), чтобы пустая строка не выглядела как «установлен».
+            _ = ShowToolVersionAsync(name, tool, statusText);
         }
     }
 
     private async Task ShowToolVersionAsync(string name, ToolConfig tool, TextBlock statusText)
     {
-        var version = await ToolManager.GetInstalledVersionAsync(tool);
-        if (version is not null)
+        var version = await ToolManager.GetInstalledVersionAsync(tool, ToolRoot);
+        Dispatcher.Invoke(() =>
         {
-            Dispatcher.Invoke(() =>
+            if (version is null)
             {
-                // Обрезать длинную строку: "ffmpeg version N-126229-gf101fce22d-20260820 Copyright..." → "N-126229"
-                var shortVer = ShortenVersion(version);
-                statusText.Text = shortVer;
-                statusText.ToolTip = version;
-            });
-        }
+                // Раньше пустой вывод молча оставлял ячейку версии пустой — выглядело как
+                // «установлен, версия неизвестна». Теперь это явно сказано.
+                statusText.Text = "установлен (версия недоступна)";
+                statusText.ToolTip = $"{tool.BinPathFor(ToolRoot)} — не ответил на {tool.VersionArgs}";
+                return;
+            }
+            // Обрезать длинную строку: "ffmpeg version N-126229-gf101fce22d-20260820 Copyright..." → "N-126229"
+            statusText.Text = ShortenVersion(version);
+            statusText.ToolTip = version;
+        });
     }
 
     /// <summary>Обрезать версию до читаемого фрагмента (первое слово после "version" или первые 20 символов).</summary>
@@ -209,33 +219,57 @@ public partial class MainWindow : Window
             btn.Content = msg;
         });
 
-        var (success, message) = await ToolManager.InstallAsync(tool, progress);
-        StatusText.Text = success ? $"{name}: {message}" : $"{name}: ОШИБКА — {message}";
-        LogBox.AppendText($"\n[{DateTime.Now:HH:mm:ss}] {name}: {message}");
-        LogBox.ScrollToEnd();
-
-        SetBusy(false);
-        BuildToolsPanel();
-        RefreshStatus();
+        try
+        {
+            var (success, message) = await ToolManager.InstallAsync(tool, progress, ToolRoot);
+            StatusText.Text = success ? $"{name}: {message}" : $"{name}: ОШИБКА — {message}";
+            LogBox.AppendText($"\n[{DateTime.Now:HH:mm:ss}] {name}: {message}");
+            LogBox.ScrollToEnd();
+        }
+        catch (Exception ex)
+        {
+            // InstallAsync глотает исключения сам; сюда попасть не должен. Если попалёт —
+            // кнопка не должна остаться мёртвой «Скачивание…».
+            StatusText.Text = $"{name}: ОШИБКА — {ex.Message}";
+        }
+        finally
+        {
+            // Панель пересобирается с нуля: кнопка/статус из этой строки больше не нужны.
+            SetBusy(false);
+            BuildToolsPanel();
+            RefreshStatus();
+        }
     }
 
-    private async Task CheckToolUpdateAsync(string name, ToolConfig tool, Button btn, TextBlock statusText)
+    private async Task CheckToolUpdateAsync(string name, ToolConfig tool, Button btn)
     {
+        const string idle = "Проверить обновления";
         btn.IsEnabled = false;
         btn.Content = "Проверка…";
         SetBusy(true);
         StatusText.Text = $"Проверка обновлений {name}…";
 
-        // Настоящая проверка: digest локальной сборки (сайдкар .asset-info) против
-        // последнего релиза из GitHub API (ToolManager.CheckUpdateAsync).
-        var result = await ToolManager.CheckUpdateAsync(tool);
-        StatusText.Text = $"{name}: {result}";
-        LogBox.AppendText($"\n[{DateTime.Now:HH:mm:ss}] {name}: проверка обновлений — {result}");
-        LogBox.ScrollToEnd();
-
-        btn.IsEnabled = true;
-        btn.Content = "Проверить обновления";
-        SetBusy(false);
+        try
+        {
+            // Настоящая проверка: digest локальной сборки (сайдкар .asset-info) против
+            // последнего релиза из GitHub API (ToolManager.CheckUpdateAsync).
+            var result = await ToolManager.CheckUpdateAsync(tool, ToolRoot);
+            StatusText.Text = $"{name}: {result}";
+            LogBox.AppendText($"\n[{DateTime.Now:HH:mm:ss}] {name}: проверка обновлений — {result}");
+            LogBox.ScrollToEnd();
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"{name}: ОШИБКА — {ex.Message}";
+        }
+        finally
+        {
+            // Кнопку возвращаем в покой в finally: иначе исключение оставляет её
+            // навсегда серой с надписью «Проверка…».
+            btn.IsEnabled = true;
+            btn.Content = idle;
+            SetBusy(false);
+        }
     }
 
     // ===== Окружение =====

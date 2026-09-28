@@ -35,6 +35,8 @@ public sealed class TurnPipeline
     private readonly Action<string> _onStatus;
     private readonly Action<bool> _onGeneratingChanged;
     private readonly Action _shutdownApp;
+    // Напоминатель TODO: OnRendered — только после реального рендера (как MemorySurfacer).
+    private readonly TodoReminder? _todo;
     // Шов для тестов: по умолчанию — реальный цикл (AgentLoop строит LLM-клиент сам).
     private readonly Func<AgentLoopRequest, IAsyncEnumerable<AgentEvent>> _runLoop;
 
@@ -53,7 +55,8 @@ public sealed class TurnPipeline
         Action<string> onStatus,
         Action<bool> onGeneratingChanged,
         Action shutdownApp,
-        Func<AgentLoopRequest, IAsyncEnumerable<AgentEvent>>? runLoop = null)
+        Func<AgentLoopRequest, IAsyncEnumerable<AgentEvent>>? runLoop = null,
+        TodoReminder? todo = null)
     {
         _log = log;
         _chatState = chatState;
@@ -67,6 +70,7 @@ public sealed class TurnPipeline
         _onStatus = onStatus;
         _onGeneratingChanged = onGeneratingChanged;
         _shutdownApp = shutdownApp;
+        _todo = todo;
         _runLoop = runLoop ?? (request => new AgentLoop(_toolRegistry).RunAsync(request));
     }
 
@@ -155,11 +159,13 @@ public sealed class TurnPipeline
                 // Nag самопроверки живёт ВНУТРИ state-блока — без блока nag'ать некуда.
                 SanityCheckInterval = stateEnabled ? settings.ResolveSanityCheckInterval(sampler) : 0,
                 ReasoningEffort = ParseEffort(prompt.ReasoningEffort),
-                // После РЕАЛЬНОГО рендера в модель — сдвиг счётчика показов всплывших памятей
-                // (mem-nag). Превью/подсчёт токенов ходят через PromptPipeline без OnRendered.
+                // После РЕАЛЬНОГО рендера в модель — сдвиг счётчиков: показов всплывших
+                // памятей (mem-nag) и шагов TODO-напоминателя. Превью/подсчёт токенов
+                // ходят через PromptPipeline без OnRendered — счётчики не двигаются.
                 StateProvider = stateEnabled ? messages => {
                     var state = _stateBlocks.Build();
                     _memorySurfacer.OnRendered();
+                    _todo?.OnRendered();
                     return state;
                 } : null,
                 SystemPromptProvider = _ => _promptAssembler.ResolveSystemPrompt(),
@@ -251,7 +257,7 @@ public sealed record TurnSessionView(
     Func<string?> PromptKey,
     Func<string?> StateBlockKey,
     Action SaveCurrent,
-    /// <summary>Пиннинг слота llama.cpp для сессии (SlotAllocation): main → 0, субагент → 1, окно → 2.</summary>
+    /// <summary>Пиннинг слота llama.cpp для сессии (SlotAllocation): main → 0, окна → 1/2, субагент → 3.</summary>
     Func<int?> SlotId);
 
 /// <summary>Итог хода: вид решает, куда показать ошибку (пузырь ответа или статус-строка).</summary>

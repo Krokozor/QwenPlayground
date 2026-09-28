@@ -7,7 +7,9 @@ namespace QwenPlayground.Core.Roslyn;
 
 [Tool("csharp_definition",
     "Go to definition: given a file, a 1-based line number and the identifier name on that line, " +
-    "find where the symbol is declared (kind, signature and file:line).", ToolGroup.CSharp)]
+    "find where the symbol is declared (kind, signature and file:line — for a multi-line " +
+    "declaration the whole line range file:12-45 — plus the first line of the comment above it).",
+    ToolGroup.CSharp)]
 public sealed class CSharpDefinitionTool : AgentTool
 {
     private static readonly RoslynService Service = RoslynService.Shared;
@@ -58,10 +60,6 @@ public sealed class CSharpDefinitionTool : AgentTool
             return $"No symbol found for '{Name}' at {Path}:{Line}";
         }
 
-        var location = symbol.Locations.FirstOrDefault(l => l.IsInSource);
-        var declaration = location is null
-            ? "(no source location)"
-            : $"{System.IO.Path.GetRelativePath(SelfBuild.SelfBuildPaths.WorkspaceRoot, location.GetLineSpan().Path ?? "?")}:{location.GetLineSpan().StartLinePosition.Line + 1}";
-        return $"{symbol.Kind.ToString().ToLowerInvariant()} {symbol.ToDisplayString()} — {declaration}";
+        return await LocationFormatter.DeclarationAsync(symbol, cancellationToken);
     }
 }

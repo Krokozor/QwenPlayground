@@ -6,7 +6,9 @@ using CommunityToolkit.Mvvm.Input;
 using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
+using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
+using QwenPlayground.Core.Runtime;
 using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Templates;
 
@@ -25,7 +27,9 @@ public partial class SummarizationViewModel : ObservableObject
 {
     private static readonly string SessionsRoot = ChatSessions.Root; // единый корень с ChatSessions
 
-    private readonly Func<string, string?, Action<string>?, CancellationToken, Task<string>> _complete;
+    // Слот (5-й параметр) — слот СУММАРИЗУЕМОЙ сессии: прогон идёт на её слоте, чтобы не
+    // раздувать KV-пул отдельным сервисным слотом (контекст сессии после сжатия меняется всё равно).
+    private readonly Func<string, string?, Action<string>?, CancellationToken, int?, Task<string>> _complete;
     private readonly SessionStore _sessionStore = new(SessionsRoot);
 
     // ── Сессии ───────────────────────────────────────────────────────────────────────
@@ -88,7 +92,7 @@ public partial class SummarizationViewModel : ObservableObject
     private bool _hasLayerProposal;
 
     public SummarizationViewModel(
-        Func<string, string?, Action<string>?, CancellationToken, Task<string>> complete)
+        Func<string, string?, Action<string>?, CancellationToken, int?, Task<string>> complete)
     {
         _complete = complete;
         RefreshSessions();
@@ -140,9 +144,33 @@ public partial class SummarizationViewModel : ObservableObject
             SessionNote = "Выберите сессию.";
             return false;
         }
-        SessionNote = "Слои L1/L2/L3 выбранной сессии (sessions/<id>/layers.json).";
+        // Слот прогона виден сразу: ре-прогон идёт на слоте сессии (см. SelectedSlotId).
+        SessionNote = $"Слои L1/L2/L3 выбранной сессии (sessions/<id>/layers.json). Прогон на слоте {SlotDisplay(SelectedSlotId())}.";
         return true;
     }
+
+    /// <summary>
+    /// Слот суммаризуемой сессии: из chat.json (SessionData.SlotId); без поля — дефолт схемы
+    /// (main → 0, не-main → 1). Сессия субагента (PromptKey «subagent») — слот 3: он фиксируется
+    /// на уровне окна и в файл не пишется.
+    /// </summary>
+    private int? SelectedSlotId()
+    {
+        var id = SelectedSession?.Id ?? MainAgent.SessionId;
+        var data = _sessionStore.Load(id);
+        if (data?.SlotId is { } slotId)
+        {
+            return slotId;
+        }
+        if (data?.PromptKey == ChatProfileSet.SubagentPromptKey)
+        {
+            return SlotAllocation.Subagent;
+        }
+        return id == MainAgent.SessionId ? SlotAllocation.Main : SlotAllocation.NonMain;
+    }
+
+    /// <summary>Подпись слота для заметки: число или «LRU» (слот не назначен).</summary>
+    private static string SlotDisplay(int? slotId) => slotId is { } slot ? slot.ToString() : "LRU (сервер выбирает)";
 
     // ── Слои L1/L2/L3 ────────────────────────────────────────────────────────────────
 
@@ -322,7 +350,7 @@ public partial class SummarizationViewModel : ObservableObject
         {
             var result = await MemoryLayerPipeline.RunAsync(
                 layers, transcript,
-                complete: (userContent, ct) => _complete(userContent, null, AppendRunToken, ct),
+                complete: (userContent, ct) => _complete(userContent, null, AppendRunToken, ct, SelectedSlotId()),
                 onStage: stage => AppendRunToken("\n── " + stage + " ──\n"));
             AppendRunToken("\n──────\nфакты валидаций: " + (result.Facts.Count == 0 ? "не найдено" : string.Join(" | ", result.Facts)) + "\n");
 

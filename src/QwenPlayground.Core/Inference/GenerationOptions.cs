@@ -14,8 +14,8 @@ public sealed class GenerationOptions
     public IReadOnlyList<string> Stop { get; init; } = [QwenSpecialTokens.ImEnd, QwenSpecialTokens.EndOfText];
 
     /// <summary>
-    /// Пиннинг слота llama.cpp (id_slot в /completion): main → 0, субагент → 1,
-    /// побочное окно → 2, сервисные вызовы → 3 (см. <see cref="SlotAllocation"/>).
+    /// Пиннинг слота llama.cpp (id_slot в /completion): main → 0, окна → 1/2, субагент → 3,
+    /// пробы → 4 (см. <see cref="SlotAllocation"/>).
     /// null — сервер выбирает сам (LRU). Мутабельный сознательно: это маршрутный
     /// метаданные, проставляемые точкой запуска хода (AgentLoop), а не параметр
     /// генерации; инстанс GenerationOptions на ход создаётся свежий и не шарится.

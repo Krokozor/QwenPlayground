@@ -146,6 +146,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="лимит итераций"
                                ToolTip="Жёсткий потолок шагов агентного цикла (инструмент → повтор). 0 = без лимита (бесконечно)." />
@@ -157,6 +158,11 @@
                     <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
                              local:NumField.Min="0" local:NumField.IsInteger="True"
                              Text="{Binding SanityCheckInterval, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="TODO: шаг напоминания"
+                               ToolTip="Периодичность TODO-напоминания в state-блоке (шагов цикла). Список целей (TODO.json) показывается сразу после изменения (агентом или вручную из панели TODO) и периодически каждые N шагов. 0 = только при изменении." />
+                    <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                             local:NumField.Min="0" local:NumField.IsInteger="True"
+                             Text="{Binding TodoReminderInterval, UpdateSourceTrigger=PropertyChanged}" />
                 </Grid>
             </Expander>
 

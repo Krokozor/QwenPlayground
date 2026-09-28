@@ -103,19 +103,27 @@ public sealed class LauncherConfig
             Branch = "main",
             Tools = new Dictionary<string, ToolConfig>
             {
+                // ffmpeg: тег релиза — всегда «latest» (BtbN перезаписывает его на месте),
+                // имя ассета постоянное, поэтому шаблон не нужен. Верхний каталог архива
+                // (ffmpeg-master-latest-win64-gpl/) срезается → binPath без версии.
                 ["ffmpeg"] = new ToolConfig
                 {
-                    Version = "7.1",
                     DownloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
                     ExtractTo = SelfBuildPaths.ExternalDirName + "/ffmpeg",
-                    BinPath = SelfBuildPaths.ExternalDirName + "/ffmpeg/bin/ffmpeg.exe"
+                    BinPath = SelfBuildPaths.ExternalDirName + "/ffmpeg/bin/ffmpeg.exe",
+                    VersionArgs = "-version"
                 },
+                // poppler: имя ассета содержит версию (Release-26.09.0-0.zip), поэтому URL
+                // зашпинивать нельзя — иначе «Проверить обновления» навсегда увидит одну и ту же
+                // сборку. {tag}/{version} резолвятся в последний релиз на момент установки.
+                // Каталог poppler-26.09.0/ срезается → binPath без версии.
                 ["poppler"] = new ToolConfig
                 {
-                    Version = "26.09.0",
-                    DownloadUrl = "https://github.com/oschwartz10612/poppler-windows/releases/download/v26.09.0-0/Release-26.09.0-0.zip",
+                    DownloadUrl = "https://github.com/oschwartz10612/poppler-windows/releases/download/{tag}/Release-{version}.zip",
                     ExtractTo = SelfBuildPaths.ExternalDirName + "/poppler",
-                    BinPath = SelfBuildPaths.ExternalDirName + "/poppler/poppler-26.09.0/Library/bin/pdftotext.exe"
+                    BinPath = SelfBuildPaths.ExternalDirName + "/poppler/Library/bin/pdftotext.exe",
+                    // poppler-утилиты печатают версию по -v и в stderr, -version не понимают.
+                    VersionArgs = "-v"
                 }
             }
         };
@@ -125,26 +133,49 @@ public sealed class LauncherConfig
 }
 
 /// <summary>
-/// Конфигурация одного инструмента (ffmpeg, ffprobe и т.д.).
+/// Конфигурация одного инструмента (ffmpeg, poppler и т.д.).
+///
+/// Раскладка версионно-независимая: <see cref="StripTopLevelDir"/> срезает каталог
+/// верхнего уровня из архива, поэтому BinPath не содержит номера версии и переживает
+/// релиз новой сборки. README инструмента лежит рядом с бинарём и попадает в системный
+/// промпт агента (Core.Agent.ExternalToolsNote) — отсюда и имя файла в конфиге.
 /// </summary>
 public sealed class ToolConfig
 {
-    /// <summary>Текущая версия (для отображения и сравнения).</summary>
+    /// <summary>Текущая версия (для отображения; фактическая читается запуском бинаря).</summary>
     public string Version { get; set; } = "";
 
-    /// <summary>URL для скачивания (zip-архив).</summary>
+    /// <summary>
+    /// URL для скачивания (zip-архив). Допускает подстановки {tag} и {version} —
+    /// тег последнего релиза и он же без ведущей «v» ({tag}: v26.09.0-0,
+    /// {version}: 26.09.0-0). Нет подстановок — URL фиксирован.
+    /// </summary>
     public string DownloadUrl { get; set; } = "";
 
     /// <summary>Каталог для экстракции (относительно корня воркспейса).</summary>
     public string ExtractTo { get; set; } = "";
 
-    /// <summary>Путь к бинарнику (относительно корня воркспейса).</summary>
+    /// <summary>Путь к бинарнику (относительно корня воркспейса, без каталога сборки).</summary>
     public string BinPath { get; set; } = "";
 
+    /// <summary>
+    /// Срезать единственный каталог верхнего уровня из архива. Нужно обоим текущим
+    /// источникам: BtbN/FFmpeg-Builds (ffmpeg-master-latest-win64-gpl/) и
+    /// oschwartz10612/poppler-windows (poppler-26.09.0/) заворачивают всё в каталог сборки.
+    /// </summary>
+    public bool StripTopLevelDir { get; set; } = true;
+
+    /// <summary>Аргумент для запуска <c>bin --version</c>. ffmpeg понимает -version, poppler — -v.</summary>
+    public string VersionArgs { get; set; } = "-version";
+
+    /// <summary>Имя README инструмента: попадает в системный промпт агента.</summary>
+    public string DocsFileName { get; set; } = SelfBuildPaths.ExternalDocsFileName;
+
+    /// <summary>Абсолютный путь к бинарнику (workspaceRoot — корнем, иначе autodetect).</summary>
+    public string BinPathFor(string? workspaceRoot = null) =>
+        Path.Combine(workspaceRoot ?? SelfBuildPaths.WorkspaceRoot,
+            BinPath.Replace('/', Path.DirectorySeparatorChar));
+
     /// <summary>Проверить, установлен ли инструмент.</summary>
-    public bool IsInstalled()
-    {
-        var binPath = Path.Combine(SelfBuildPaths.WorkspaceRoot, BinPath.Replace('/', Path.DirectorySeparatorChar));
-        return File.Exists(binPath);
-    }
+    public bool IsInstalled(string? workspaceRoot = null) => File.Exists(BinPathFor(workspaceRoot));
 }

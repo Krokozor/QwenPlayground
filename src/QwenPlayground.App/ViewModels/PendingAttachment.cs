@@ -1,14 +1,16 @@
-using System.Windows.Media;
-
 namespace QwenPlayground.App.ViewModels;
 
-/// <summary>Прикреплённый к следующему сообщению файл (для мультимодальности).</summary>
-public sealed record PendingAttachment(string Name, string FullPath)
+/// <summary>
+/// Прикреплённый к следующему сообщению файл (для мультимодальности). До отправки
+/// это оригинал на диске — он может ещё писаться (снапшот-тул, adb pull, загрузка),
+/// поэтому превью грузится с ожиданием стабилизации файла, а состояние неудачи
+/// показывается честно (заглушка + «перезагрузить»), а не залипает и не рисует
+/// чёрный прямоугольник.
+/// </summary>
+public sealed class PendingAttachment : AttachmentPreview
 {
-    private ImageSource? _preview;
-
-    public bool IsImage => ChatPreview.IsImageFile(FullPath);
-
-    /// <summary>Декодируется один раз: WPF-биндинг дёргает геттер на каждом layout-проходе.</summary>
-    public ImageSource? Preview => IsImage ? (_preview ??= ChatPreview.Load(FullPath)) : null;
+    public PendingAttachment(string name, string fullPath)
+        : base(name, fullPath)
+    {
+    }
 }

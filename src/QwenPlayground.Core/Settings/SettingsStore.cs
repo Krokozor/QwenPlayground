@@ -208,6 +208,16 @@ public sealed class AppSettings
     /// </summary>
     public int DraftSaveIntervalSeconds { get; set; } = 15;
 
+    /// <summary>
+    /// Периодичность TODO-напоминания в state-блоке (шагов агентного цикла, т.е. итераций).
+    /// Список целей (sessions/&lt;id&gt;/TODO.json) показывается в &lt;state&gt; (a) сразу на шаге
+    /// после изменения — агентом (TODO_add/TODO_manage) или владельцем (панель TODO в UI;
+    /// источник подписывается «edited by user»); и (b) периодически каждые N шагов, даже без
+    /// изменений. 0 = периодическое напоминание выключено (только при изменении).
+    /// См. <see cref="QwenPlayground.Core.MetaInfo.TodoReminder"/>.
+    /// </summary>
+    public int TodoReminderInterval { get; set; } = 10;
+
     // ── MCP (Model Context Protocol) ────────────────────────────────────────────────
 
     /// <summary>

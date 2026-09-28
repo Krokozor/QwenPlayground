@@ -114,6 +114,11 @@ public sealed class SettingsViewModel : ObservableObject {
         set => Set(S.SanityCheckInterval, value, (s, v) => s.SanityCheckInterval = v);
     }
 
+    public int TodoReminderInterval {
+        get => S.TodoReminderInterval;
+        set => Set(S.TodoReminderInterval, value, (s, v) => s.TodoReminderInterval = v);
+    }
+
     /// <summary>Формат вывода тулов «интуиции»: compact / lines / lines+bars.</summary>
     public string IntuitionFormat {
         get => S.IntuitionFormat;

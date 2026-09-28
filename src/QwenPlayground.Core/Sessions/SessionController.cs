@@ -32,7 +32,7 @@ public sealed class SessionController
     private string? _stateBlockKey;
 
     // Слот llama.cpp текущей сессии (идёт в ход её /completion как id_slot).
-    // null — сервер выбирает (LRU). main по умолчанию на SlotAllocation.Main (легаси).
+    // null — сервер выбирает (LRU). Дефолты схемы: main → 0, не-main → 1 (SlotAllocation).
     private int? _slotId;
 
     public SessionController(ChatLog log, DraftKeeper draft, MemorySurfacer surfacer, string? sessionsRoot = null)
@@ -126,8 +126,8 @@ public sealed class SessionController
         _samplerKey = data.SamplerKey;
         _promptKey = data.PromptKey;
         _stateBlockKey = data.StateBlockKey;
-        // Слот сессии: из файла; у main без поля — дефолт 0 (легаси), у остальных — LRU.
-        _slotId = data.SlotId ?? (id == MainAgent.SessionId ? SlotAllocation.Main : null);
+        // Слот сессии: из файла; без поля — дефолт схемы (main → 0, не-main → 1).
+        _slotId = data.SlotId ?? (id == MainAgent.SessionId ? SlotAllocation.Main : SlotAllocation.NonMain);
         // Смена сессии: surfaced-пул памяти и мусорка анонсов — транзитное состояние
         // прошлой сессии, не тащим его в новую (иначе чужие заметки просочатся в state-блок).
         _surfacer.Clear();
@@ -145,7 +145,7 @@ public sealed class SessionController
         _samplerKey = null;
         _promptKey = null;
         _stateBlockKey = null;
-        _slotId = null; // новая сессия — LRU, слот выбирает пользователь при желании
+        _slotId = SlotAllocation.NonMain; // новая не-main сессия — дефолт схемы (1)
         SessionChanged?.Invoke();
     }
 
@@ -163,11 +163,17 @@ public sealed class SessionController
             _samplerKey = null;
             _promptKey = null;
             _stateBlockKey = null;
-            _slotId = null;
+            _slotId = SlotAllocation.NonMain; // свежая пустая сессия — не-main, дефолт схемы
         }
         SessionChanged?.Invoke();
         return deletedCurrent;
     }
+
+    /// <summary>
+    /// Уборка на старте: снести ПУСТЫЕ каталоги сессий (см. ChatSessions.PruneEmptyFolders).
+    /// main и текущая сессия не трогаются. Возвращает id удалённых каталогов.
+    /// </summary>
+    public IReadOnlyList<string> PruneEmptyFolders() => _sessions.PruneEmptyFolders();
 
     /// <summary>
     /// Восстановить последнюю открытую сессию (из settings.json). Если её нет, она равна

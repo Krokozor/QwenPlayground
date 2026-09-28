@@ -80,3 +80,47 @@ public sealed class InverseBoolToVisibilityConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }
+
+/// <summary>
+/// TODO-панель: выполненный пункт → приглушённый цвет, активный — обычный.
+/// </summary>
+public sealed class TodoDoneBrushConverter : IValueConverter
+{
+    private static readonly Brush DoneBrush = new SolidColorBrush(Color.FromRgb(0x77, 0x77, 0x77));
+    private static readonly Brush ActiveBrush = new SolidColorBrush(Color.FromRgb(0xe0, 0xe0, 0xe0));
+
+    static TodoDoneBrushConverter()
+    {
+        DoneBrush.Freeze();
+        ActiveBrush.Freeze();
+    }
+
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is true ? DoneBrush : ActiveBrush;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
+/// <summary>
+/// TODO-панель: выполненный пункт → перечёркнут (TextDecorations=Strikethrough),
+/// активный — без декора.
+/// </summary>
+public sealed class TodoDoneDecorationsConverter : IValueConverter
+{
+    private static readonly TextDecorationCollection Strikethrough = BuildStrikethrough();
+
+    private static TextDecorationCollection BuildStrikethrough()
+    {
+        var collection = new TextDecorationCollection();
+        collection.Add(new TextDecoration { Location = TextDecorationLocation.Strikethrough });
+        return collection;
+    }
+
+    // null (без декора) — легитимный результат конвертера (TextDecorations не ставится).
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is true ? Strikethrough : null!;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}

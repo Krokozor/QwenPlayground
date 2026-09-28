@@ -47,7 +47,7 @@ public sealed class SessionData
     /// <summary>
     /// Слот llama.cpp для ходов этой сессии: KV-кеш сессии живёт в её слоте, поэтому
     /// переключение между сессиями (каждая на своём слоте) не вытесняет чужие кэши.
-    /// null — сервер выбирает сам (LRU). У сессий субагентов слот (1) фиксируется на
+    /// null — сервер выбирает сам (LRU). У сессий субагентов слот (3) фиксируется на
     /// уровне окна, в файл не пишется.
     /// </summary>
     public int? SlotId { get; set; }
@@ -240,6 +240,60 @@ public sealed class SessionStore
         {
             PersistIndex();
         }
+    }
+
+    /// <summary>
+    /// Уборка ПУСТЫХ каталогов сессий (внутри нет ни файла, ни подпапки). Каталог сессии
+    /// исторически появлялся и на чтении, поэтому «новая, так и не сохранённая» сессия
+    /// (переключились прочь) или удалённая оставляли sessions/&lt;id&gt;/ навсегда: пустую,
+    /// вне списка сессий и без возможности удалить её из UI. Вызывается на старте —
+    /// ретроспективная уборка таких папок.
+    ///
+    /// Не трогает каталоги из keep (main и текущая сессия: пустое состояние законно) и
+    /// непустые. Удаление НЕ рекурсивное: если каталог успел наполниться (гонка с
+    /// сохранением), Directory.Delete бросит IOException — данные целы, папка доживёт
+    /// до следующего запуска. Заодно вычищаются записи индекса сессий, которых на диске
+    /// уже нет (индекс — кэш, он не должен копить мёртвые id). Возвращает id удалённых.
+    /// </summary>
+    public IReadOnlyList<string> PruneEmptyFolders(IEnumerable<string>? keep = null)
+    {
+        var protectedIds = new HashSet<string>(
+            keep?.Where(id => !string.IsNullOrEmpty(id)) ?? Enumerable.Empty<string>(),
+            StringComparer.OrdinalIgnoreCase);
+        var removed = new List<string>();
+        foreach (var dir in Directory.EnumerateDirectories(_directory))
+        {
+            var id = Path.GetFileName(dir);
+            if (protectedIds.Contains(id))
+            {
+                continue;
+            }
+            try
+            {
+                Directory.Delete(dir); // не рекурсивно — непустой каталог бросит, а не снесётся
+                removed.Add(id);
+            }
+            catch (IOException)
+            {
+                // непустая (успела наполниться) или занята файлом — до следующего раза
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // нет прав на каталог — уборка не должна мешать старту
+            }
+        }
+        var stale = _index.Keys
+            .Where(id => !Directory.Exists(SessionFolder(id)) && !File.Exists(LegacyFilePath(id)))
+            .ToList();
+        foreach (var id in stale)
+        {
+            _index.Remove(id);
+        }
+        if (removed.Count > 0 || stale.Count > 0)
+        {
+            PersistIndex();
+        }
+        return removed;
     }
 
     private void PersistIndex()

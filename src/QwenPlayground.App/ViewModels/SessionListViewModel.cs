@@ -29,17 +29,17 @@ public sealed partial class SessionListViewModel : ObservableObject {
     }
 
     /// <summary>
-    /// Слоты llama.cpp (сервер запущен с 4 слотами): 0 — main, 1 — субагенты,
-    /// 2 — побочные окна, 3 — сервисные вызовы (дефолты схемы; пользователю доступны
-    /// все — назначение дефолтов, а не запрет).
+    /// Слоты llama.cpp (сервер запущен с 5 слотами): 0 — main, 1-2 — окна (1 — дефолт не-main,
+    /// 2 — ручная разводка), 3 — субагент и 4 — пробы — зарезервированы (не для сессий).
+    /// Сессии доступны 0-2 + LRU: пинг сессии на зарезервированный слот коллидировал бы
+    /// с субагентом/пробами (один слот — один владелец KV).
     /// </summary>
     public IReadOnlyList<SlotOption> SlotOptions { get; } = new[]
     {
         new SlotOption(null, "— (LRU)"),
         new SlotOption(0, "0 (main)"),
-        new SlotOption(1, "1 (субагент)"),
-        new SlotOption(2, "2"),
-        new SlotOption(3, "3"),
+        new SlotOption(1, "1 (окно)"),
+        new SlotOption(2, "2 (окно)"),
     };
 
     [ObservableProperty]
@@ -81,7 +81,46 @@ public sealed partial class SessionListViewModel : ObservableObject {
     /// </summary>
     partial void OnSelectedSlotChanged(SlotOption value) {
         if (value.Value != _sessions.CurrentSlotId)
-            _sessions.SetCurrentSlot(value.Value);
+            _ = ApplySlotAsync(value);
+    }
+
+    /// <summary>
+    /// Применить выбранный слот с проверкой, что он ЕСТЬ на сервере: б10353 тихо перемапит
+    /// невалидный id_slot на слот 0 (проверено живой пробой) — без гварда сессия на «слоте 4»
+    /// молча ходила бы в чужой KV. Нет слота — откат выбора + статус.
+    /// </summary>
+    private async Task ApplySlotAsync(SlotOption value) {
+        if (value.Value is { } slotId) {
+            var kv = new QwenPlayground.Core.Inference.KvCacheController();
+            var slots = await kv.GetSlotsAsync();
+            if (slots.All(s => s.Id != slotId)) {
+                _status($"на сервере нет слота {slotId} (перезапустите llama.cpp с --slots {slotId + 1}+); выбор откатился");
+                SelectedSlot = SlotOptions.FirstOrDefault(o => o.Value == _sessions.CurrentSlotId)
+                               ?? SlotOptions[0];
+                return;
+            }
+        }
+        _sessions.SetCurrentSlot(value.Value);
+    }
+
+    /// <summary>
+    /// «✕» рядом с селектором: вычистить KV слота ТЕКУЩЕЙ сессии (следующий ход пере-евалюирует
+    /// промпт — осознанный сброс кэша, например после «чужого» замедления промпт-обработки).
+    /// Во время генерации не трогаем (ход уже привязан к слоту).
+    /// </summary>
+    [RelayCommand]
+    private async Task EraseCurrentSlotAsync() {
+        if (_isGenerating())
+            return;
+
+        if (_sessions.CurrentSlotId is not { } slotId) {
+            _status("слот не назначен (LRU) — чистить нечего");
+            return;
+        }
+
+        var kv = new QwenPlayground.Core.Inference.KvCacheController();
+        var ok = await kv.EraseSlotAsync(slotId);
+        _status(ok ? $"слот {slotId} вычищен" : $"не удалось вычистить слот {slotId} (сервер/флаг)");
     }
 
     [RelayCommand]

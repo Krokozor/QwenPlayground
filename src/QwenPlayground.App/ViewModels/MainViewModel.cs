@@ -230,12 +230,14 @@ public partial class MainViewModel : ObservableObject, IChatHost {
             start: () => _draftTimer.Start(),
             shutdown: () => { _draftTimer.Stop(); _main.Draft.Flush(); }));
 
-        // Вкладка «Диагностика»: стекло в состояние FSM, бюджет контекста, сборки, память.
+        // Вкладка «Диагностика»: стекло в состояние FSM, бюджет контекста, KV-слоты, сборки, память.
         Diagnostics = new DiagnosticsViewModel(
         _main.ChatState,
         () => _main.ServerProps.LastActualPromptTokens(_main.Log),
         () => EffectiveContextSize,
-        () => S.MaxTokens);
+        () => S.MaxTokens,
+        _main.KvCache,
+        () => _main.Sessions.CurrentSlotId);
 
         // Вкладка «Суммаризация»: ре-прогоны и редактирование резюме/слоёв/промптов.
         Summarization = new SummarizationViewModel(RunSummarizationCallAsync);
@@ -434,10 +436,11 @@ public partial class MainViewModel : ObservableObject, IChatHost {
     /// Один изолированный LLM-вызов для вкладки «Суммаризация»: промпт рендерится
     /// через submit_result, токены стримятся наружу (onToken), результат вытаскивается
     /// структурно. Те же эндпоинт и семплер, что в компакции; трафик — в TrafficLog.
+    /// Слот — слот суммаризуемой сессии (его передаёт вкладка): прогон на её KV.
     /// </summary>
     private async Task<string> RunSummarizationCallAsync(
-    string userContent, string? system, Action<string>? onToken, CancellationToken cancellationToken) {
-        var result = await _main.ServiceLlm.CompleteStructuredAsync(userContent, system, onToken, cancellationToken);
+    string userContent, string? system, Action<string>? onToken, CancellationToken cancellationToken, int? slotId) {
+        var result = await _main.ServiceLlm.CompleteStructuredAsync(userContent, system, onToken, cancellationToken, slotId);
         return result ?? string.Empty;
     }
 
@@ -572,7 +575,7 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         }
         finally {
             chat.SaveCurrent();
-            // Слот субагента (1): KV вычищаем в конце хода (раньше — при закрытии окна).
+            // Слот субагента (3): KV вычищаем в конце хода (раньше — при закрытии окна).
             // Fire-and-forget: ошибки не критичны (слот с медиа, сервер без флага).
             _ = _main.KvCache.EraseSlotAsync(QwenPlayground.Core.Inference.SlotAllocation.Subagent).ContinueWith(_ => { });
         }

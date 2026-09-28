@@ -96,11 +96,57 @@ public sealed class ToolOutputCapTests : IDisposable
         var lines = Enumerable.Range(1, 400).Select(_ => new string('a', 400)).ToArray();
         File.WriteAllLines(Path.Combine(_dir, "big.txt"), lines);
 
-        var result = await new ReadFileTool { Path = "big.txt" }.ExecuteAsync(Context(), CancellationToken.None);
+        var result = await new ReadFileTool { Path = "big.txt", Limit = 400 }.ExecuteAsync(Context(), CancellationToken.None);
 
         Assert.Contains("output cap reached", result);
         Assert.Contains("offset", result);
         Assert.True(result.Length < 32000 + 500, $"вывод не должен заметно превышать кап, длина={result.Length}");
+    }
+
+    [Fact]
+    public async Task ReadFile_SmallFileWithoutRange_ReadsWhole()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllLines(Path.Combine(_dir, "small.txt"), ["one", "two", "three"]);
+
+        var result = await new ReadFileTool { Path = "small.txt" }.ExecuteAsync(Context(), CancellationToken.None);
+
+        Assert.Contains("lines 1-3 of 3", result);
+        Assert.Contains("3: three", result);
+    }
+
+    [Fact]
+    public async Task ReadFile_WholeFileTooLarge_RefusesWithSizeAndAsksForRange()
+    {
+        // Файл крупнее 8 КБ без offset/limit НЕ читается и НЕ сохраняется в attachments:
+        // раньше автокаппинг уносил вывод в файл и возвращал превью в 2 КБ (см. AgentLoop).
+        Directory.CreateDirectory(_dir);
+        var lines = Enumerable.Range(1, 2000).Select(i => $"line {i} lorem ipsum dolor sit amet").ToArray();
+        File.WriteAllLines(Path.Combine(_dir, "wide.txt"), lines);
+
+        var result = await new ReadFileTool { Path = "wide.txt" }.ExecuteAsync(Context(), CancellationToken.None);
+
+        Assert.Contains("too large to read whole", result);
+        Assert.Contains("2000 lines", result);   // размер и число строк — чтобы выбрать диапазон
+        Assert.Contains("KB", result);
+        Assert.Contains("offset=1 limit=400", result);
+        Assert.Contains("Nothing was read and nothing was written", result);
+        Assert.DoesNotContain("line 1 lorem", result); // ни одной строки файла в ответе
+    }
+
+    [Fact]
+    public async Task ReadFile_WholeFileTooLarge_ExplicitRange_ReadsChunk()
+    {
+        Directory.CreateDirectory(_dir);
+        var lines = Enumerable.Range(1, 2000).Select(i => $"line {i} lorem ipsum dolor sit amet").ToArray();
+        File.WriteAllLines(Path.Combine(_dir, "wide.txt"), lines);
+
+        var result = await new ReadFileTool { Path = "wide.txt", Offset = 1000, Limit = 3 }
+            .ExecuteAsync(Context(), CancellationToken.None);
+
+        Assert.Contains("lines 1000-1002 of 2000", result);
+        Assert.Contains("1000: line 1000", result);
+        Assert.DoesNotContain("too large to read whole", result);
     }
 
     [Fact]

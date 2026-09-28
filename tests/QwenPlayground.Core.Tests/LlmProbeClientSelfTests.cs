@@ -7,13 +7,14 @@ using QwenPlayground.Core.Templates;
 namespace QwenPlayground.Core.Tests;
 
 /// <summary>
-/// Live-проверка само-пробы (собственная модель, сервисный слот). Гоняется ТОЛЬКО когда
-/// llama.cpp-сервер (AppSettings.Endpoint) доступен; без сервера тест прогоняется как skip
-/// (гейт остаётся зелёным). Проверяет полный C#-путь: erase сервисного слота →
-/// /completion с id_slot + n_probs → парсинг completion_probabilities → слот 0 не тронут.
-/// [Collection("LiveProbes")] — все live-пробы идут через ОДИН сервисный слот: xUnit по
+/// Live-проверка само-пробы (собственная модель, слот пробы SlotAllocation.Probe). Гоняется
+/// ТОЛЬКО когда llama.cpp-сервер (AppSettings.Endpoint) доступен И запущен с нужным числом
+/// слотов (≥ 5: --slots 5); иначе тест прогоняется как skip (гейт остаётся зелёным).
+/// Проверяет полный C#-путь: erase слота пробы → /completion с id_slot + n_probs →
+/// парсинг completion_probabilities → слот 0 не тронут.
+/// [Collection("LiveProbes")] — все live-пробы идут через ОДИН слот пробы: xUnit по
 /// умолчанию гоняет разные классы параллельно, и параллельные пробы гоняют erase/context
-/// слота 3 друг у друга (ответ одной пробы может прийти из контекста другой).
+/// слота друг у друга (ответ одной пробы может прийти из контекста другой).
 /// </summary>
 [Collection("LiveProbes")]
 public sealed class LlmProbeClientSelfTests
@@ -78,11 +79,15 @@ public sealed class LlmProbeClientSelfTests
     }
 
     [Fact]
-    public void SelfProbe_Live_ReturnsPositions_ServiceSlotOnly()
+    public void SelfProbe_Live_ReturnsPositions_ProbeSlotOnly()
     {
         if (!ServerReachable())
         {
             return; // сервера нет — skip, гейт остаётся зелёным
+        }
+        if (SlotTokens(QwenPlayground.Core.Inference.SlotAllocation.Probe) is null)
+        {
+            return; // сервер запущен без слота пробы (нужен --slots 5) — skip
         }
 
         var mainBefore = SlotTokens(0);
@@ -98,13 +103,13 @@ public sealed class LlmProbeClientSelfTests
         var first = positions[0].TopTokens.Select(t => t.Token.Trim()).ToList();
         Assert.Contains("B", first.Take(5));
 
-        // Проба закреплена за сервисным слотом: KV main-чата не тронут.
+        // Проба закреплена за слотом пробы: KV main-чата не тронут.
         var mainAfter = SlotTokens(0);
         if (mainBefore is { } before && mainAfter is { } after)
         {
             Assert.Equal(before, after);
         }
-        // Проба реально легла в сервисный слот.
-        Assert.True(SlotTokens(3) is > 0);
+        // Проба реально легла в слот пробы.
+        Assert.True(SlotTokens(QwenPlayground.Core.Inference.SlotAllocation.Probe) is > 0);
     }
 }

@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using QwenPlayground.App.Desktop;
 using QwenPlayground.App.ViewModels;
 using QwenPlayground.Core.Compaction;
@@ -14,7 +15,26 @@ public partial class ChatView : UserControl
     // Хост (MainViewModel — главное окно, ChatWindowViewModel — отдельное окно чата):
     // резолвим Chat через IChatHost, не привязываясь к конкретному DataContext.
     private ChatViewModel? _chat;
+
+    // ── «Залипание» к концу чата ────────────────────────────────────────────────────
+    // Логика: пользователь на самом конце → новые сообщения (и рост стрима) тянут его
+    // за собой; уехал читать историю → не трогаем.
+    //
+    // Флаг _stickToBottom обновляется ТОЛЬКО реальным скроллом пользователя (колесо,
+    // бар, клавиши). Программные ScrollToEnd помечаются заранее (_programmaticOffset —
+    // позиция, которую они дадут) и их ScrollChanged-события распознаются и пропускаются:
+    // иначе наш же скролл перезаписывал бы флаг «внизу=true» и тянул обратно.
+    //
+    // Старый код (флаг из ScrollChanged + отложенный Dispatcher.InvokeAsync) ломался
+    // гонкой: скролл, поставленный в очередь ДО того, как пользователь уехал вверх,
+    // выполнялся ПОСЛЕ (Normal-приоритет — раньше layout) и тянул его обратно в конец,
+    // а его же ScrollChanged снова вешал флаг. Плюс combined-события (extent+offset
+    // за один layout) проходили через `return` и флаг не обновляли.
+    private const double StickTolerance = 8;
     private bool _stickToBottom = true;
+    private double _programmaticOffset = double.NaN; // позиция нашего последнего ScrollToEnd
+    private double _lastOffset; // .NET 10: у ScrollChangedEventArgs больше нет VerticalOffsetChange —
+                                // двигаемость offset считаем сами, по предыдущему значению
 
     /// <summary>
     /// Встроенный режим (чат субагента в пузыре tool call): без тулбара сессий и без
@@ -70,6 +90,9 @@ public partial class ChatView : UserControl
 
     private void OnMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        // Полная пересборка (Clear + Add: смена сессии/загрузка истории/откат) —
+        // открываем с конца, независимо от того, где пользователь был.
+        bool fullRebuild = e.Action == NotifyCollectionChangedAction.Reset;
         if (e.NewItems is not null)
         {
             foreach (MessageViewModel message in e.NewItems)
@@ -84,22 +107,54 @@ public partial class ChatView : UserControl
                 message.PropertyChanged -= OnMessagePropertyChanged;
             }
         }
-        ScrollToEnd();
+        ScrollToEnd(force: fullRebuild);
     }
 
     private void OnMessagePropertyChanged(object? sender, PropertyChangedEventArgs e) => ScrollToEnd();
 
     private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
     {
-        if (e.ExtentHeightChange != 0)
+        bool offsetMoved = Math.Abs(e.VerticalOffset - _lastOffset) > 0.001;
+        _lastOffset = e.VerticalOffset;
+
+        // 1) Наш собственный программный скролл (DoScrollToEnd заранее записал целевую
+        // позицию) — пропускаем, чтобы не перезаписывать флаг «внизу» своим же скроллом.
+        if (offsetMoved && !double.IsNaN(_programmaticOffset) &&
+            Math.Abs(e.VerticalOffset - _programmaticOffset) < 0.5)
         {
-            if (_stickToBottom)
-            {
-                MessagesScroll.ScrollToEnd();
-            }
+            _programmaticOffset = double.NaN;
             return;
         }
-        _stickToBottom = e.VerticalOffset + e.ViewportHeight >= e.ExtentHeight - 8;
+
+        // 2) Позиция сместилась — это скролл ПОЛЬЗОВАТЕЛЯ (колесо/бар/клавиши), и он
+        // ПРОВЕРЯЕТСЯ ПЕРВЫМ: при активном стриме в том же событии меняется и extent
+        // (контент растёт), и если рост контента имеет приоритет, скролл пользователя
+        // проглатывается и вид тянет обратно в конец (оригинальный баг). Прилипаем,
+        // только если пользователь в самом конце; сам долистал до конца — залипание
+        // вернулось.
+        if (offsetMoved)
+        {
+            _stickToBottom = e.VerticalOffset + e.ViewportHeight >= e.ExtentHeight - StickTolerance;
+            return;
+        }
+
+        // 3) Позиция не менялась: рост контента (новое сообщение/стрим) или resize окна.
+        // Если прилипли — остаёмся внизу (низ уехал вместе с extent/viewport).
+        if (_stickToBottom)
+        {
+            DoScrollToEnd();
+        }
+    }
+
+    /// <summary>
+    /// Программный скролл в конец: сначала записываем позицию, которую он даст
+    /// (максимальный offset, clamp'нутый в 0..extent-viewport), — ScrollChanged
+    /// распознает наш скролл по совпадению и не тронет флаг залипания.
+    /// </summary>
+    private void DoScrollToEnd()
+    {
+        _programmaticOffset = Math.Max(0, MessagesScroll.ExtentHeight - MessagesScroll.ViewportHeight);
+        MessagesScroll.ScrollToEnd();
     }
 
     private bool _shelfMenuOpen;
@@ -143,11 +198,22 @@ public partial class ChatView : UserControl
         }
     }
 
-    private void ScrollToEnd()
+    /// <summary>
+    /// Скролл к концу, если прилипли (или force: отправка/пересборка/смена сессии —
+    /// прилипаем независимо от позиции). Синхронно (UI-поток): новый контент ещё не
+    /// в layout, так что ScrollToEnd может быть no-op на старом extent — доработает
+    /// событие ExtentHeightChange после layout (ветка 1 в OnScrollChanged).
+    /// </summary>
+    private void ScrollToEnd(bool force = false)
     {
-        if (_stickToBottom)
+        if (force)
         {
-            Dispatcher.InvokeAsync(() => MessagesScroll.ScrollToEnd());
+            _stickToBottom = true;
         }
+        if (!_stickToBottom)
+        {
+            return;
+        }
+        DoScrollToEnd();
     }
 }

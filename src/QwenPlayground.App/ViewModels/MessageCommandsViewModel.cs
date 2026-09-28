@@ -67,6 +67,7 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
         RemoveAttachmentCommand.NotifyCanExecuteChanged();
         PasteImageCommand.NotifyCanExecuteChanged();
         OpenAttachmentCommand.NotifyCanExecuteChanged();
+        OpenPendingAttachmentCommand.NotifyCanExecuteChanged();
         OpenSubagentWindowCommand.NotifyCanExecuteChanged();
     }
 
@@ -188,8 +189,19 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
         // <attachment> в сообщении), я читаю их через read_file. Текст в ввод больше не
         // вставляется: не раздувает сообщение и не обрезает крупные файлы.
         foreach (var file in dialog.FileNames) {
-            PendingAttachments.Add(new PendingAttachment(Path.GetFileName(file), file));
+            AddPending(file);
         }
+    }
+
+    /// <summary>
+    /// Кладёт файл во вложения и запускает фоновое превью. Превью не читает файл на
+    /// UI-потоке (иначе attaches фризили окно на полноразмерном скриншоте) и не
+    /// залипает на битом кадре, если файл ещё пишется.
+    /// </summary>
+    private void AddPending(string fullPath) {
+        var attachment = new PendingAttachment(Path.GetFileName(fullPath), fullPath);
+        PendingAttachments.Add(attachment);
+        attachment.BeginLoadPreview();
     }
 
     [RelayCommand(CanExecute = nameof(CanInteract))]
@@ -219,7 +231,7 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
                 encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(image));
                 encoder.Save(stream);
             }
-            PendingAttachments.Add(new PendingAttachment(Path.GetFileName(file), file));
+            AddPending(file);
             _status("картинка из буфера добавлена во вложения");
         }
         catch {
@@ -227,17 +239,44 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
         }
     }
 
-    /// <summary>Открыть прикреплённый файл системным просмотрщиком.</summary>
+    /// <summary>
+    /// Открыть файл вложения сообщения системным просмотрщиком (артефакт в
+    /// artifacts/msg_&lt;id&gt;/). Раньше при промахе (файл удалён/не создался) команда
+    /// молча выходила — клик выглядел как «не кликается». Теперь это видно в статусе.
+    /// </summary>
     [RelayCommand(CanExecute = nameof(CanInteract))]
     private void OpenAttachment(MessageAttachment? attachment) {
-        if (attachment is null || !File.Exists(attachment.FullPath))
+        if (attachment is null) {
             return;
+        }
+        OpenFile(attachment.FullPath, attachment.Name);
+    }
 
+    /// <summary>
+    /// Открыть ещё не отправленное вложение. Копии в артефактах на этом шаге ещё нет
+    /// (она появится при отправке), поэтому открываем оригинал. Раньше такой команды
+    /// не было вовсе — чип во вложениях был не кликабелен в принципе.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanInteract))]
+    private void OpenPendingAttachment(PendingAttachment? attachment) {
+        if (attachment is null) {
+            return;
+        }
+        OpenFile(attachment.FullPath, attachment.Name);
+    }
+
+    private void OpenFile(string fullPath, string name) {
+        if (!File.Exists(fullPath)) {
+            _status($"файл не найден: {name}");
+            return;
+        }
         try {
-            Process.Start(new ProcessStartInfo(attachment.FullPath) { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(fullPath) { UseShellExecute = true });
         }
         catch {
-            // просмотрщик не открылся — профилактика
+            // Нет ассоциации/просмотрщика, или файл занят — сообщаем, чтобы клик
+            // не выглядел безответным.
+            _status($"не удалось открыть: {name}");
         }
     }
 }

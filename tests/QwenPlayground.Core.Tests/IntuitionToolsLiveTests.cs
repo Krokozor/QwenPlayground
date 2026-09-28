@@ -7,11 +7,12 @@ using QwenPlayground.Core.Tools.Builtins;
 namespace QwenPlayground.Core.Tests;
 
 /// <summary>
-/// Live-проверка тулов «интуиции» end-to-end (собственная модель, сервисный слот):
+/// Live-проверка тулов «интуиции» end-to-end (собственная модель, слот пробы SlotAllocation.Probe):
 /// промпт → SelfProbePositionsAsync (erase + id_slot) → парсинг → ответ тула.
-/// Гоняется ТОЛЬКО когда сервер (AppSettings.Endpoint) доступен; без сервера — skip (гейт зелёный).
+/// Гоняется ТОЛЬКО когда сервер (AppSettings.Endpoint) доступен И запущен с --slots 5
+/// (есть слот пробы); иначе — skip (гейт зелёный).
 /// [Collection("LiveProbes")] — общий с LlmProbeClientSelfTests: все live-пробы делят один
-/// сервисный слот и должны идти последовательно (xUnit параллелит разные классы).
+/// слот пробы и должны идти последовательно (xUnit параллелит разные классы).
 /// </summary>
 [Collection("LiveProbes")]
 public sealed class IntuitionToolsLiveTests
@@ -32,12 +33,39 @@ public sealed class IntuitionToolsLiveTests
         }
     }
 
+    /// <summary>Есть ли на сервере слот пробы (GET /slots). false — skip (сервер без --slots 5).</summary>
+    private static bool ProbeSlotExists()
+    {
+        try
+        {
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            using var response = http.GetAsync(Endpoint + "/slots").GetAwaiter().GetResult();
+            using var doc = System.Text.Json.JsonDocument.Parse(
+                response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+            foreach (var element in doc.RootElement.EnumerateArray())
+            {
+                if (element.TryGetProperty("id", out var id) &&
+                    id.GetInt32() == QwenPlayground.Core.Inference.SlotAllocation.Probe)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool ProbeAvailable() => ServerReachable() && ProbeSlotExists();
+
     private static ToolContext Context() => new(SelfBuildPaths.WorkspaceRoot);
 
     [Fact]
     public void Choice_Live_ReturnsChosenOptionWithConfidence()
     {
-        if (!ServerReachable())
+        if (!ProbeAvailable())
         {
             return;
         }
@@ -58,7 +86,7 @@ public sealed class IntuitionToolsLiveTests
     [Fact]
     public void Rating_Live_ReturnsDigitWithDistribution()
     {
-        if (!ServerReachable())
+        if (!ProbeAvailable())
         {
             return;
         }
@@ -80,7 +108,7 @@ public sealed class IntuitionToolsLiveTests
     [Fact]
     public void Vibe_Live_ReturnsEmojiSequenceAndDistribution()
     {
-        if (!ServerReachable())
+        if (!ProbeAvailable())
         {
             return;
         }

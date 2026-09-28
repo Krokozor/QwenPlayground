@@ -37,6 +37,12 @@ public sealed class ChatRuntime {
     public MemorySurfacer MemorySurfacer { get; internal set; } = new();
     public SystemPromptAssembler PromptAssembler { get; internal set; } = null!;
     public StateBlockBuilder StateBlocks { get; internal set; } = null!;
+
+    /// <summary>
+    /// Напоминатель TODO-списка в state-блоке: Peek — в StateBlocks (чистый),
+    /// OnRendered — в Turns (только после реального рендера, не превью).
+    /// </summary>
+    public TodoReminder Todo { get; internal set; } = null!;
     public PromptPipeline Pipeline { get; internal set; } = null!;
     public ContextMaintenance Maintenance { get; internal set; } = null!;
     public DraftKeeper Draft { get; internal set; } = null!;

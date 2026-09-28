@@ -123,6 +123,53 @@ public sealed class ChatSessionsTests : IDisposable
         Assert.Contains(sessions.List, s => s.Id == "main" && s.Title == "★ main-агент");
     }
 
+    [Fact]
+    public void Delete_CurrentSession_LeavesNoFolderOnDisk()
+    {
+        // Репорт: после удаления остаётся пустая папка sessions/<id>/.
+        var sessions = new ChatSessions(_root);
+        sessions.StartNew();
+        var id = sessions.CurrentId;
+        sessions.SaveCurrent(new ChatLog(), 0);
+        Assert.True(Directory.Exists(Path.Combine(_root, id)));
+
+        sessions.Delete(id);
+
+        Assert.False(Directory.Exists(Path.Combine(_root, id)));
+    }
+
+    [Fact]
+    public void PruneEmptyFolders_RemovesOrphans_KeepsMainAndCurrent()
+    {
+        var sessions = new ChatSessions(_root);
+        sessions.StartNew();
+        var current = sessions.CurrentId;
+        // main и текущая сессия — пустые каталоги, которые уборка обязана сохранить.
+        Directory.CreateDirectory(Path.Combine(_root, "main"));
+        Directory.CreateDirectory(Path.Combine(_root, current));
+        // Сироты: папки без данных (удалённая сессия, «новая, но не сохранённая»).
+        var orphans = new[] { "aaaaaaaaaaaa1111aaaaaaaaaaaa1111", "bbbbbbbbbbbb2222bbbbbbbbbbbb2222" };
+        foreach (var orphan in orphans)
+        {
+            Directory.CreateDirectory(Path.Combine(_root, orphan));
+        }
+
+        var removed = sessions.PruneEmptyFolders();
+
+        Assert.Equal(2, removed.Count);
+        foreach (var orphan in orphans)
+        {
+            Assert.False(Directory.Exists(Path.Combine(_root, orphan)));
+        }
+        // main пуст законно, каталог текущей сессии — тоже (ещё не сохранялась).
+        Assert.True(Directory.Exists(Path.Combine(_root, "main")));
+        Assert.True(Directory.Exists(Path.Combine(_root, current)));
+        // Несохранённая сессия в список не попадает, но её каталог уборка не тронула.
+        sessions.RefreshList();
+        Assert.Contains(sessions.List, s => s.Id == "main");
+        Assert.DoesNotContain(sessions.List, s => s.Id == current);
+    }
+
     public void Dispose()
     {
         AppSettings.Get().LastSessionId = _savedLastSessionId; // не протекаем в другие тесты

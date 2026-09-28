@@ -35,8 +35,12 @@ public sealed class KvCacheController
 
     private string Base => _endpoint().TrimEnd('/');
 
-    /// <summary>Состояние слота из GET /slots (детальные поля — при LLAMA_SERVER_SLOTS_DEBUG=1).</summary>
-    public sealed record SlotInfo(int Id, bool IsProcessing, int? NPromptTokens);
+    /// <summary>
+    /// Состояние слота из GET /slots (детальные поля — при LLAMA_SERVER_SLOTS_DEBUG=1).
+    /// NCacheTokens — kэшированные токены последнего запроса (насколько префикс переиспользовался);
+    /// NCtx — окно слота (для доли занятости пула).
+    /// </summary>
+    public sealed record SlotInfo(int Id, bool IsProcessing, int? NPromptTokens, int? NCacheTokens = null, int? NCtx = null);
 
     /// <summary>Список слотов. Пусто — сервер недоступен/не отвечает.</summary>
     public async Task<IReadOnlyList<SlotInfo>> GetSlotsAsync(CancellationToken cancellationToken = default)
@@ -57,7 +61,13 @@ public sealed class KvCacheController
                 int? tokens = element.TryGetProperty("n_prompt_tokens", out var tokProp) && tokProp.ValueKind == JsonValueKind.Number
                     ? tokProp.GetInt32()
                     : null;
-                result.Add(new SlotInfo(id, processing, tokens));
+                int? cache = element.TryGetProperty("n_prompt_tokens_cache", out var cacheProp) && cacheProp.ValueKind == JsonValueKind.Number
+                    ? cacheProp.GetInt32()
+                    : null;
+                int? nCtx = element.TryGetProperty("n_ctx", out var ctxProp) && ctxProp.ValueKind == JsonValueKind.Number
+                    ? ctxProp.GetInt32()
+                    : null;
+                result.Add(new SlotInfo(id, processing, tokens, cache, nCtx));
             }
             return result;
         }

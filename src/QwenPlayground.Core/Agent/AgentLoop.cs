@@ -273,9 +273,9 @@ public sealed class AgentLoop
                 }
                 // Автокаппинг: большой tool-вывод → полный в attachments/ сообщения, в
                 // сообщении остаётся превью + <attachment>. Контекст не раздувается, данные
-                // не теряются (read_file чтобы увидеть весь вывод). read_file с явным
-                // offset/limit — осознанный запрос, не каппим (модель знает размер).
-                CapToolOutput(toolMessage, execution.Text, sessionDir, call.Name, arguments);
+                // не теряются (read_file чтобы увидеть весь вывод). read_file не каппим:
+                // копия неизменяемого файла бессмысленна, а кап для него делает сам тул.
+                CapToolOutput(toolMessage, execution.Text, sessionDir, call.Name);
                 yield return new ToolCallFinishedEvent(call.Name, toolMessage.Content, toolMessage);
 
                 if (call.Name == "sanity_check")
@@ -306,13 +306,12 @@ public sealed class AgentLoop
     /// теряются (read_file чтобы увидеть весь вывод). Никогда не бросает: сбой каппинга не
     /// ломает ход — вывод остаётся как есть.
     /// </summary>
-    private static void CapToolOutput(ChatMessage toolMessage, string text, string? sessionDir, string toolName, JsonObject? arguments)
+    private static void CapToolOutput(ChatMessage toolMessage, string text, string? sessionDir, string toolName)
     {
-        // read_file с явным offset/limit — осознанный запрос (модель знает размер), не каппим.
-        // Без offset/limit (весь файл) — каппим (safety net). Прочие тулы — каппим.
-        var hasOffset = arguments?.TryGetPropertyValue("offset", out _) ?? false;
-        var hasLimit = arguments?.TryGetPropertyValue("limit", out _) ?? false;
-        if (toolName == "read_file" && (hasOffset || hasLimit))
+        // read_file — исключение: его вывод это сам файл проекта (или его диапазон), и
+        // копия в attachments/ не даёт ничего — файл и так на диске. Кап для больших
+        // файлов решает сам read_file: отказ с размером и просьбой указать offset/limit.
+        if (toolName == "read_file")
         {
             return;
         }

@@ -131,7 +131,7 @@ public sealed class CSharpReferenceReportToolTests
             Assert.Contains("full report:", result);
             Assert.True(File.Exists(file), "детальный отчёт не записан");
             var detail = File.ReadAllText(file);
-            Assert.Contains("| refs | member | kind | first use | note |", detail);
+            Assert.Contains("| refs | member | kind | declaration | first use | doc | note |", detail);
             Assert.Contains("Activate", detail);
         }
         finally

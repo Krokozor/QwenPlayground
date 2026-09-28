@@ -43,10 +43,16 @@ public sealed class ShelfState
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly string _directory;
 
+    /// <summary>
+    /// Каталог сессии НЕ создаётся: конструктор не трогает диск. Раньше создавал, и это
+    /// плодило пустые sessions/&lt;id&gt;/ — состояние полок читается на каждой смене
+    /// сессии, в том числе для только что начатой (ещё не сохранённой) и для удалённой:
+    /// папка появлялась без единого файла и оставалась навсегда (вне списка сессий,
+    /// удалить из UI её было нельзя). Каталог создаёт писатель — AtomicFile.
+    /// </summary>
     public ShelfState(string? directory = null)
     {
         _directory = directory ?? Path.Combine(SelfBuildPaths.WorkspaceRoot, "sessions", "main");
-        System.IO.Directory.CreateDirectory(_directory);
     }
 
     public string FilePath => Path.Combine(_directory, "shelves.json");

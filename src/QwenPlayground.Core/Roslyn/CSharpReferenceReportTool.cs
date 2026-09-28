@@ -28,6 +28,9 @@ namespace QwenPlayground.Core.Roslyn;
     "Modes: 'members' (default) — per-member reference counts of a type (find dead API with 0 refs, " +
     "single-use abstractions with 1 ref); 'types' — per-type reference counts for a namespace or the " +
     "whole solution (find heavy classes referenced by one element). " +
+    "Every row carries the 'declaration' column — where the element is declared (line range, e.g. " +
+    "file:12-45 for a multi-line one) and the first line of the comment above it, so a dead member " +
+    "comes with its location and meaning instead of a bare name. " +
     "Refs = C# references (excluding the declaration, like VS CodeLens) + XAML references " +
     "(bindings and element tags — real references for a WPF app; breakdown in the note column). " +
     "Accessors, backing fields and source-generated methods (MVVM On*Changed in .g.cs) are folded " +
@@ -117,12 +120,15 @@ public sealed class CSharpReferenceReportTool : AgentTool
         {
             var locations = await FindSourceLocationsAsync(member, solution, ct);
             var xamlUse = xaml.TryGetValue(member.Name, out var x) ? x : default;
+            var element = await LocationFormatter.ElementAsync(member, ct);
             var row = new ReportRow
             {
                 Name = member.Name,
                 Kind = KindName(member),
                 // C#-ссылки (без декларации) + XAML-ссылки: для WPF биндинг — реальная ссылка.
                 Refs = locations.Count + xamlUse.Count,
+                Decl = element.File is null ? "—" : element.Reference,
+                Doc = element.Doc,
                 FirstUse = locations.Count > 0
                     ? FormatLocation(locations.FirstOrDefault())
                     : (xamlUse.Count > 0 ? xamlUse.First : "—"),
@@ -159,11 +165,14 @@ public sealed class CSharpReferenceReportTool : AgentTool
             {
                 var locations = await FindSourceLocationsAsync(type, solution, ct);
                 var xamlUse = xaml.TryGetValue(type.Name, out var x) ? x : default;
+                var element = await LocationFormatter.ElementAsync(type, ct);
                 var row = new ReportRow
                 {
                     Name = type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
                     Kind = "type",
                     Refs = locations.Count + xamlUse.Count,
+                    Decl = element.File is null ? "—" : element.Reference,
+                    Doc = element.Doc,
                     FirstUse = locations.Count > 0
                         ? FormatLocation(locations.FirstOrDefault())
                         : (xamlUse.Count > 0 ? xamlUse.First : "—"),
@@ -451,7 +460,7 @@ public sealed class CSharpReferenceReportTool : AgentTool
         }
         var span = location.GetLineSpan();
         var path = Path.GetRelativePath(SelfBuildPaths.WorkspaceRoot, span.Path ?? "?");
-        return $"{path.Replace('\\', '/')}:{span.StartLinePosition.Line + 1}";
+        return $"{path.Replace('\\', '/')}:{LocationFormatter.Lines(span)}";
     }
 
     private static string KindName(ISymbol member)
@@ -520,11 +529,12 @@ public sealed class CSharpReferenceReportTool : AgentTool
 
         var builder = new StringBuilder();
         builder.AppendLine($"reference report: {title}");
-        builder.AppendLine($"refs  {Pad("member", 24)} {Pad("kind", 9)} first use");
+        builder.AppendLine($"refs  {Pad("member", 24)} {Pad("kind", 9)} {Pad("declaration", 40)} first use");
         var limit = Math.Max(1, Limit);
         foreach (var row in filtered.Take(limit))
         {
-            builder.AppendLine($"{row.Refs,4}  {Pad(row.Name, 24)} {Pad(row.Kind, 9)} {row.FirstUse}{NoteSuffix(row.Note)}");
+            builder.AppendLine($"{row.Refs,4}  {Pad(row.Name, 24)} {Pad(row.Kind, 9)} {Pad(row.Decl, 40)} " +
+                               $"{LocationFormatter.WithDoc(row.FirstUse, row.Doc)}{NoteSuffix(row.Note)}");
         }
         if (filtered.Count > limit)
         {
@@ -544,11 +554,11 @@ public sealed class CSharpReferenceReportTool : AgentTool
         var detail = new StringBuilder();
         detail.AppendLine($"# reference report: {title}");
         detail.AppendLine();
-        detail.AppendLine("| refs | member | kind | first use | note |");
-        detail.AppendLine("|---:|---|---|---|---|");
+        detail.AppendLine("| refs | member | kind | declaration | first use | doc | note |");
+        detail.AppendLine("|---:|---|---|---|---|---|---|");
         foreach (var row in allRows.OrderBy(r => r.Refs).ThenBy(r => r.Name, StringComparer.Ordinal))
         {
-            detail.AppendLine($"| {row.Refs} | {row.Name} | {row.Kind} | {row.FirstUse} | {row.Note ?? ""} |");
+            detail.AppendLine($"| {row.Refs} | {row.Name} | {row.Kind} | {row.Decl} | {row.FirstUse} | {row.Doc ?? ""} | {row.Note ?? ""} |");
         }
         detail.AppendLine();
         detail.AppendLine(Summary(allRows));
@@ -569,7 +579,8 @@ public sealed class CSharpReferenceReportTool : AgentTool
 
     private static string NoteSuffix(string? note)
     {
-        return string.IsNullOrEmpty(note) ? "" : $"  [{note}]";
+        // Пробел перед скобкой: после «// описание» иначе склеивается.
+        return string.IsNullOrEmpty(note) ? "" : $" [{note}]";
     }
 
     private static string Pad(string value, int width) =>
@@ -585,6 +596,13 @@ public sealed class CSharpReferenceReportTool : AgentTool
         public string Name { get; init; } = string.Empty;
         public string Kind { get; init; } = string.Empty;
         public int Refs { get; init; }
+
+        /// <summary>Декларация: диапазон строк (см. LocationFormatter), «—» без исходников.</summary>
+        public string Decl { get; init; } = "—";
+
+        /// <summary>Первая строка комментария над декларацией — «что это за элемент».</summary>
+        public string? Doc { get; init; }
+
         public string FirstUse { get; init; } = "—";
         public string? Note { get; set; }
     }

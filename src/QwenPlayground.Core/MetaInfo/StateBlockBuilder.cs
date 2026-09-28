@@ -39,6 +39,7 @@ public sealed class StateBlockBuilder
     private readonly Func<IReadOnlyList<SurfacedMemory>> _surfaced;
     private readonly IReadOnlyList<IStateAnnouncer> _announcers;
     private readonly Func<IReadOnlyList<PendingPair>> _pendingPairs;
+    private readonly Func<TodoSnapshot?>? _todo;
 
     public StateBlockBuilder(
         Action assignPendingIds,
@@ -48,7 +49,8 @@ public sealed class StateBlockBuilder
         Func<IReadOnlyList<ChatMessage>> conversation,
         Func<IReadOnlyList<SurfacedMemory>> surfaced,
         IReadOnlyList<IStateAnnouncer> announcers,
-        Func<IReadOnlyList<PendingPair>>? pendingPairs = null)
+        Func<IReadOnlyList<PendingPair>>? pendingPairs = null,
+        Func<TodoSnapshot?>? todo = null)
     {
         _assignPendingIds = assignPendingIds;
         _nextMessageId = nextMessageId;
@@ -58,6 +60,7 @@ public sealed class StateBlockBuilder
         _surfaced = surfaced;
         _announcers = announcers;
         _pendingPairs = pendingPairs ?? (() => []);
+        _todo = todo;
     }
 
     /// <summary>
@@ -127,6 +130,15 @@ public sealed class StateBlockBuilder
         foreach (var note in notes.Take(MaxNotes))
         {
             state.AddNote(note);
+        }
+
+        // TODO-напоминание: снапшот с момента рендера (изменение/периодический интервал).
+        // Peek чистый — превью не двигает счётчик напоминателя (OnRendered — в TurnPipeline).
+        var todo = _todo?.Invoke();
+        if (todo is not null)
+        {
+            state.TodoLines.AddRange(todo.Lines);
+            state.TodoSource = todo.Source;
         }
 
         return state;

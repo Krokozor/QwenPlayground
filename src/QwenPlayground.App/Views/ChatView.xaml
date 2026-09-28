@@ -6,6 +6,8 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <views:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
+        <views:TodoDoneBrushConverter x:Key="TodoDoneBrush" />
+        <views:TodoDoneDecorationsConverter x:Key="TodoDoneDecorations" />
         <views:SubagentStatusTextConverter x:Key="SubagentStatusText" />
         <views:HalfHeightConverter x:Key="HalfHeight" />
         <views:EmbeddedInputVisibilityConverter x:Key="EmbeddedInputVis" />
@@ -13,27 +15,48 @@
             <WrapPanel />
         </ItemsPanelTemplate>
 
+        <!-- Чип неотправленного вложения. Кликабелен целиком (кнопка «×» — сосед, а не
+             вложенная кнопка: WPF запрещает Button внутри Button). Картинка рисуется по
+             HasPreview, а не по IsImage, — иначе неудачный декод давал пустой Image на
+             почти чёрном фоне карточки, то есть «чёрный скриншот». -->
         <DataTemplate x:Key="AttachChip" DataType="{x:Type vm:PendingAttachment}">
             <Border Background="#1f2733" BorderBrush="#3a5a7a" BorderThickness="1" CornerRadius="3"
                     Padding="6,2" Margin="0,0,4,4">
                 <StackPanel Orientation="Horizontal">
-                    <Image Source="{Binding Preview}" Width="40" Height="40" Stretch="Uniform"
-                           Margin="0,0,6,0" VerticalAlignment="Center" HorizontalAlignment="Center"
-                           Visibility="{Binding IsImage, Converter={StaticResource BoolToVis}}" />
-                    <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="{Binding Name}" Foreground="#e0e0e0" FontSize="11"
-                                   VerticalAlignment="Center" />
-                        <Button Content="&#215;" Padding="2,0" Margin="0,2,0,0" FontSize="10" Foreground="#e06c75"
-                                HorizontalAlignment="Left"
-                                Command="{Binding DataContext.Chat.MessageCommands.RemoveAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                CommandParameter="{Binding}" />
-                    </StackPanel>
+                    <Button Background="Transparent" BorderThickness="0" Padding="0"
+                            HorizontalContentAlignment="Left" VerticalContentAlignment="Center"
+                            Command="{Binding DataContext.Chat.MessageCommands.OpenPendingAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            CommandParameter="{Binding}"
+                            ToolTip="{Binding FullPath}">
+                        <StackPanel Orientation="Horizontal">
+                            <Image Source="{Binding Preview}" Width="40" Height="40" Stretch="Uniform"
+                                   Margin="0,0,6,0" VerticalAlignment="Center"
+                                   Visibility="{Binding HasPreview, Converter={StaticResource BoolToVis}}" />
+                            <TextBlock Text="{Binding FallbackGlyph}" FontSize="15" Margin="2,0,6,0"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding ShowFallback, Converter={StaticResource BoolToVis}}" />
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Name}" Foreground="#e0e0e0" FontSize="11" />
+                                <TextBlock Text="{Binding FallbackText}" Foreground="#e0a030" FontSize="9"
+                                           Visibility="{Binding IsPreviewBroken, Converter={StaticResource BoolToVis}}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Button>
+                    <Button Content="&#8635;" Padding="2,0" Margin="4,0,0,0" FontSize="11"
+                            Foreground="#e5c07b" VerticalAlignment="Center" ToolTip="Перезагрузить превью"
+                            Command="{Binding ReloadPreviewCommand}"
+                            Visibility="{Binding IsPreviewBroken, Converter={StaticResource BoolToVis}}" />
+                    <Button Content="&#215;" Padding="2,0" Margin="4,0,0,0" FontSize="10" Foreground="#e06c75"
+                            VerticalAlignment="Center"
+                            Command="{Binding DataContext.Chat.MessageCommands.RemoveAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            CommandParameter="{Binding}" />
                 </StackPanel>
             </Border>
         </DataTemplate>
     </UserControl.Resources>
     <Grid Margin="8">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
@@ -63,12 +86,17 @@
                 <Button Content="&#9881;" Command="{Binding OpenChatTuningCommand}" Padding="8,0" Margin="0,0,12,0"
                         ToolTip="Настройка чата: семплер, промпт, state-блок (профили из config/chat-profiles.json). Для main-сессии не действует." />
                 <!-- Слот llama.cpp сессии: KV-кеш живёт в слоте сессии → переключение между
-                     сессиями (каждая на своём слоте) не вытесняет чужие кэши. «—» = LRU сервера. -->
+                     сессиями (каждая на своём слоте) не вытесняет чужие кэши. «—» = LRU сервера.
+                     Суммаризация/компакция идут на этом же слоте (контекст сессии меняется
+                     в любом случае — отдельный сервисный слот раздувал бы KV-пул). -->
                 <TextBlock Text="Слот:" VerticalAlignment="Center" Margin="0,0,4,0" />
-                <ComboBox Width="104" Margin="0,0,12,0"
+                <ComboBox Width="104" Margin="0,0,4,0"
                           ItemsSource="{Binding SessionList.SlotOptions}"
                           SelectedItem="{Binding SessionList.SelectedSlot}"
-                          ToolTip="Слот llama.cpp для ходов этой сессии. Дефолты схемы: 0 — main, 1 — субагент, 2 — побочные окна, 3 — сервис. «—» — сервер выбирает сам (LRU)." />
+                          ToolTip="Слот llama.cpp для ходов этой сессии (и суммаризации). Схема: 0 — main, 1-2 — окна (1 — дефолт не-main, 2 — разводка). 3 (субагент) и 4 (пробы) — зарезервированы. «—» — сервер выбирает сам (LRU)." />
+                <!-- «✕» — вычистить KV слота текущей сессии (осознанный сброс кэша). -->
+                <Button Content="&#215;" Command="{Binding SessionList.EraseCurrentSlotCommand}" Padding="8,0" Margin="0,0,12,0"
+                        ToolTip="Вычистить KV слота текущей сессии: следующий ход пере-евалюирует промпт (сброс кэша)" />
             </StackPanel>
             <!-- Полки (группы инструментов): тот же механизм, что и у тулов агента
                  activate/deactivate_shelf. Отметка — немедленная активация, снятие — staged
@@ -95,6 +123,18 @@
                     <views:ShelfMenu DataContext="{Binding Shelves}" />
                 </Border>
             </Popup>
+            <!-- TODO-список сессии (TODO.json): кнопка раскрывает панель над чатом.
+                 Бейдж — выполнено/всего (пусто, пока списка нет). Правка из UI идёт с
+                 источником «user» — агент в state-напоминании увидит «edited by user». -->
+            <Button Command="{Binding Todo.TogglePanelCommand}" Padding="8,0" Margin="0,0,12,0"
+                    ToolTip="TODO-список сессии (TODO.json): цели, которые напоминаются в state-блоке. Ручная правка — в панели над чатом.">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#9745;" FontSize="13" VerticalAlignment="Center" />
+                    <TextBlock Text="TODO" Margin="4,0,0,0" FontSize="12" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Todo.CountText}" Margin="5,0,0,0" FontSize="11" Foreground="#648CFF"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
             <!-- Wake — функция main-агента: только в главном окне. -->
             <Button Content="&#9200;" Command="{Binding WakeNowCommand}" ToolTip="Разбудить main-агента: wake-сигнал или heartbeat вне расписания"
                     Padding="8,0" Margin="0,0,4,0"
@@ -125,7 +165,68 @@
                        ToolTip="Позиция курсора агента на рабочем столе" />
         </DockPanel>
 
-        <ScrollViewer x:Name="MessagesScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <!-- TODO-панель: ручной просмотр/правка списка целей сессии (TODO.json).
+             Чекбокс — done/undone, «×» — удалить, текст правится inline (сейв по
+             LostFocus), «+»/Enter — добавить. Все правки — с источником «user». -->
+        <Border Grid.Row="1" Margin="0,0,0,8" BorderThickness="1" BorderBrush="#8a7a4a" CornerRadius="4"
+                Background="#15171c" Padding="6"
+                Visibility="{Binding Todo.PanelVisible, Converter={StaticResource BoolToVis}}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <DockPanel Grid.Row="0" LastChildFill="False">
+                    <TextBlock Text="&#9745; TODO" Foreground="#e0af68" FontWeight="Bold" FontSize="12"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Todo.CountText}" Foreground="#888" FontSize="11"
+                               VerticalAlignment="Center" Margin="8,0,0,0" />
+                    <Button Content="очистить" DockPanel.Dock="Right" Padding="6,0" FontSize="11" Margin="0,0,8,0"
+                            Command="{Binding Todo.ClearAllCommand}"
+                            ToolTip="Удалить все пункты (TODO.json будет удалён)"
+                            Visibility="{Binding Todo.HasItems, Converter={StaticResource BoolToVis}}" />
+                    <Button Content="&#215;" DockPanel.Dock="Right" Padding="4,0" FontSize="11"
+                            Command="{Binding Todo.CollapsePanelCommand}" ToolTip="Скрыть панель TODO" />
+                </DockPanel>
+                <ScrollViewer Grid.Row="1" MaxHeight="160" VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                    <ItemsControl ItemsSource="{Binding Todo.Items}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:TodoItemViewModel}">
+                                <DockPanel Margin="0,1" LastChildFill="True">
+                                    <Button Content="&#215;" DockPanel.Dock="Right" Padding="4,0" FontSize="10"
+                                            Foreground="#e06c75" Margin="6,0,0,0" VerticalAlignment="Center"
+                                            Command="{Binding DataContext.Todo.RemoveItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" ToolTip="Удалить пункт" />
+                                    <CheckBox IsChecked="{Binding IsDone}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock Text="{Binding Number, StringFormat='{}{0}. '}" Foreground="#666"
+                                               FontSize="12" VerticalAlignment="Center" Width="26"
+                                               TextAlignment="Right" />
+                                    <TextBox Text="{Binding Text, UpdateSourceTrigger=LostFocus}" BorderThickness="0"
+                                             Background="Transparent" Foreground="{Binding IsCompleted, Converter={StaticResource TodoDoneBrush}}"
+                                             FontSize="13" VerticalAlignment="Center"
+                                             TextDecorations="{Binding IsCompleted, Converter={StaticResource TodoDoneDecorations}}" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+                <DockPanel Grid.Row="2" Margin="0,4,0,0" LastChildFill="True">
+                    <Button Content="+" DockPanel.Dock="Right" Padding="8,0" FontSize="12" Margin="6,0,0,0"
+                            Command="{Binding Todo.AddItemCommand}" ToolTip="Добавить цель (или Enter)" />
+                    <TextBox Text="{Binding Todo.NewItemText, UpdateSourceTrigger=PropertyChanged}"
+                             BorderThickness="1" BorderBrush="#3a5a7a" Background="#101318" Foreground="#e0e0e0"
+                             Padding="4,2" FontSize="13" VerticalContentAlignment="Center"
+                             ToolTip="Новая цель списка TODO (Enter — добавить)">
+                        <TextBox.InputBindings>
+                            <KeyBinding Key="Enter" Command="{Binding Todo.AddItemCommand}" />
+                        </TextBox.InputBindings>
+                    </TextBox>
+                </DockPanel>
+            </Grid>
+        </Border>
+
+        <ScrollViewer x:Name="MessagesScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto">
             <ItemsControl ItemsSource="{Binding Messages}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:MessageViewModel}">
@@ -253,21 +354,29 @@
                                                             CommandParameter="{Binding}"
                                                             ToolTip="Открыть файл">
                                                         <StackPanel>
+                                                            <!-- По HasPreview, а не по IsImage: расширение .png не
+                                                                 гарантирует читаемый декод, иначе был чёрный бокс. -->
                                                             <Image Source="{Binding Preview}"
                                                                    Height="{x:Static vm:MessageAttachment.MessageAttachmentPreviewHeight}"
-                                                                   Width="{Binding PreviewWidth}" Stretch="Fill" Margin="0,0,0,3"
-                                                                   Visibility="{Binding IsImage, Converter={StaticResource BoolToVis}}" />
+                                                                   Width="{Binding PreviewWidth}" Stretch="Uniform" Margin="0,0,0,3"
+                                                                   Visibility="{Binding HasPreview, Converter={StaticResource BoolToVis}}" />
                                                             <StackPanel Orientation="Horizontal"
-                                                                        Visibility="{Binding IsNotImage, Converter={StaticResource BoolToVis}}">
-                                                                <TextBlock Text="&#128196;" FontSize="14" Foreground="#aaa"
+                                                                        Visibility="{Binding ShowFallback, Converter={StaticResource BoolToVis}}">
+                                                                <TextBlock Text="{Binding FallbackGlyph}" FontSize="16" Foreground="#aaa"
                                                                            VerticalAlignment="Center" Margin="0,0,6,0" />
-                                                                <TextBlock Text="открыть" FontSize="11" Foreground="#7aa2f7"
+                                                                <TextBlock Text="{Binding FallbackText}" FontSize="11" Foreground="#7aa2f7"
                                                                            VerticalAlignment="Center" />
                                                             </StackPanel>
                                                         </StackPanel>
                                                     </Button>
-                                                    <TextBlock Text="{Binding Name}" Foreground="#888" FontSize="10"
-                                                               TextTrimming="CharacterEllipsis" />
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Name}" Foreground="#888" FontSize="10"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <Button Content="&#8635;" Padding="1,0" Margin="6,0,0,0" FontSize="10"
+                                                                Foreground="#e5c07b" ToolTip="Перезагрузить превью"
+                                                                Command="{Binding ReloadPreviewCommand}"
+                                                                Visibility="{Binding IsPreviewBroken, Converter={StaticResource BoolToVis}}" />
+                                                    </StackPanel>
                                                 </StackPanel>
                                             </Border>
                                         </DataTemplate>
@@ -280,7 +389,7 @@
             </ItemsControl>
         </ScrollViewer>
 
-        <Border Grid.Row="2" Margin="0,8,0,0" BorderThickness="1" BorderBrush="#3a5a7a" CornerRadius="4" Padding="6"
+        <Border Grid.Row="3" Margin="0,8,0,0" BorderThickness="1" BorderBrush="#3a5a7a" CornerRadius="4" Padding="6"
                 Background="#15171c"
                 Visibility="{Binding Compaction.ShowPanel, Converter={StaticResource BoolToVis}}">
             <Grid>
@@ -305,13 +414,13 @@
             </Grid>
         </Border>
 
-        <ItemsControl Grid.Row="3" ItemsSource="{Binding PendingAttachments}"
+        <ItemsControl Grid.Row="4" ItemsSource="{Binding PendingAttachments}"
                       ItemsPanel="{StaticResource AttachPanel}" ItemTemplate="{StaticResource AttachChip}"
                       Margin="0,4,0,0" />
 
         <!-- Поле ввода: только текст. Кнопки вложений переехали в нижний тулбар рядом с «усилие» (2026-09-02).
              Встроенный режим (чат субагента): скрыто по дефолту, «✎» в хедере раскрывает (ткань). -->
-        <TextBox Grid.Row="4" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
+        <TextBox Grid.Row="5" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
                  AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                  MinHeight="48" MaxHeight="160" VerticalContentAlignment="Top" Padding="6"
                  Margin="0,8,0,0"
@@ -329,7 +438,7 @@
 
         <!-- Нижний тулбар: усилие + вложения слева, действия справа. Режимы и «Самоподдув» убраны (2026-08-22):
              всегда агент, nag без tool-вызовов отключён. -->
-        <Grid Grid.Row="5" Margin="0,6,0,0">
+        <Grid Grid.Row="6" Margin="0,6,0,0">
             <Grid.Visibility>
                 <MultiBinding Converter="{StaticResource EmbeddedInputVis}">
                     <Binding Path="Embedded" RelativeSource="{RelativeSource AncestorType=UserControl}" />
@@ -360,6 +469,6 @@
             </StackPanel>
         </Grid>
 
-        <TextBlock Grid.Row="6" Text="{Binding StatusText}" Foreground="#666" FontSize="11" Margin="0,4,0,0" />
+        <TextBlock Grid.Row="7" Text="{Binding StatusText}" Foreground="#666" FontSize="11" Margin="0,4,0,0" />
     </Grid>
 </UserControl>
