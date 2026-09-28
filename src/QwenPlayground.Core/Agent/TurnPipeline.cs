@@ -81,41 +81,71 @@ public sealed class TurnPipeline
     public void Cancel() => _cancellation?.Cancel();
 
     /// <summary>
-    /// Провести ход: бюджет-проверка (кроме continue) → FSM → AgentLoop → итог.
+    /// Провести ход: FSM-вход (единый вход) → бюджет-проверка (кроме continue) → AgentLoop → итог.
     /// onEvent — sink вида для событий цикла (пузыри); доменная логика — здесь.
     /// </summary>
     public async Task<TurnOutcome> RunTurnAsync(bool continueLastAssistant, Action<AgentEvent> onEvent)
     {
-        // Бюджет-проверка идёт ДО try/catch и до перевода FSM: падение здесь
-        // (сервер недоступен, /tokenize не вернул точное число) раньше оставляло ход в тишине —
-        // fire-and-forget задача (heartbeat/wake) гасла без следа, а добавленное user-сообщение
-        // «висело» несохранённым. Показываем ошибку и сохраняем историю.
-        if (!continueLastAssistant)
+        // ЕДИНЫЙ ВХОД (фаза 1, план 2026-09-28): переход FSM — точка входа в ход, атомарна
+        // на UI-потоке и идёт ДО бюджет-чека. Второй вызов во время хода (двойной клик
+        // «отправить», wake/heartbeat, откреплённое окно) видит занятый FSM и грациозно
+        // получает Busy — без исключения и сиротского хода. IsBusy-часть гварда: таблица
+        // разрешает Compacting/AwaitingConfirmation → Generating (резюме хода внутри цикла),
+        // но новый ход стартует только из Idle. RestartPending — терминален, TryTransition
+        // упадёт в false — тоже Busy, не бросок.
+        if (_chatState.IsBusy || !_chatState.TryTransition(ChatState.Generating))
         {
-            try
-            {
-                await _maintenance.EnsureBudgetAsync(CancellationToken.None);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                _onStatus($"ошибка проверки бюджета контекста: {exception.Message}");
-                _session.SaveCurrent();
-                return new TurnOutcome { BudgetFailed = true };
-            }
+            return new TurnOutcome { Busy = true };
         }
-        // Режим всегда агентный (тумблер режимов убран из UI, 2026-08-22): инструменты
-        // доступны, если задан проект.
-        var settings = AppSettings.Get();
-        var agentic = settings.ProjectRoot.Trim().Length > 0;
-        if (agentic)
+        _onGeneratingChanged(true);
+        _cancellation = new CancellationTokenSource();
+        try
         {
-            Directory.CreateDirectory(settings.ProjectRoot);
+            // Бюджет-проверка — после входа в FSM: её падение (сервер недоступен, /tokenize
+            // не вернул точное число) раньше оставляло ход в тишине — fire-and-forget задача
+            // (heartbeat/wake) гасла без следа, а добавленное user-сообщение «висело»
+            // несохранённым. Показываем ошибку, сохраняем историю; FSM откатывается в Idle
+            // в finally ниже.
+            if (!continueLastAssistant)
+            {
+                try
+                {
+                    await _maintenance.EnsureBudgetAsync(CancellationToken.None);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    _onStatus($"ошибка проверки бюджета контекста: {exception.Message}");
+                    _session.SaveCurrent();
+                    return new TurnOutcome { BudgetFailed = true };
+                }
+            }
+            // Режим всегда агентный (тумблер режимов убран из UI, 2026-08-22): инструменты
+            // доступны, если задан проект.
+            var settings = AppSettings.Get();
+            var agentic = settings.ProjectRoot.Trim().Length > 0;
+            if (agentic)
+            {
+                Directory.CreateDirectory(settings.ProjectRoot);
+            }
+            return await RunCoreAsync(agentic, continueLastAssistant, onEvent);
         }
-        return await RunCoreAsync(agentic, continueLastAssistant, onEvent);
+        finally
+        {
+            _cancellation.Dispose();
+            _cancellation = null;
+            // FSM: Generating → Idle (если ещё не в RestartPending).
+            // Сначала FSM, потом IsGenerating=false: уведомление CanExecuteChanged должно
+            // стрельнуть, когда IsBusy уже false, иначе кнопка отправки останется серой.
+            if (_chatState.Current == ChatState.Generating)
+            {
+                _chatState.Transition(ChatState.Idle);
+            }
+            _onGeneratingChanged(false);
+        }
     }
 
     /// <summary>
@@ -126,20 +156,20 @@ public sealed class TurnPipeline
     /// </summary>
     private async Task<TurnOutcome> RunCoreAsync(bool agentic, bool continueLastAssistant, Action<AgentEvent> onEvent)
     {
+        // FSM-вход (Idle → Generating) и возврат в Idle — в RunTurnAsync: единый вход
+        // и единый выход хода (фаза 1, план 2026-09-28). Здесь — только тело хода.
+        // CTS создаёт RunTurnAsync до вызова (единый вход) — здесь не-null гарантирован.
+        var turnToken = _cancellation!.Token;
         var continued = continueLastAssistant && _log.Count > 0 &&
             _log[^1].Role == ChatRole.Assistant
             ? _log[^1]
             : null;
-        // FSM: Idle → Generating
-        _chatState.Transition(ChatState.Generating);
-        _onGeneratingChanged(true);
-        _cancellation = new CancellationTokenSource();
         TurnOutcome outcome;
         try
         {
             var sessionDir = _session.Directory();
             var settings = AppSettings.Get();
-            var multimodal = await MultimodalContext.BuildAsync(sessionDir, settings.Endpoint, _serverProps, _cancellation.Token);
+            var multimodal = await MultimodalContext.BuildAsync(sessionDir, settings.Endpoint, _serverProps, turnToken);
             // Профиль чата: три независимых куска из статичного хранилища (default = как раньше).
             // main-агент ведётся идентичностью — промпт-кусок и отключение state-блока на него не действуют.
             var isMain = _session.SessionId() == MainAgent.SessionId;
@@ -183,7 +213,7 @@ public sealed class TurnPipeline
                 Multimodal = multimodal,
                 SessionDir = sessionDir,
                 SlotId = _session.SlotId(),
-                CancellationToken = _cancellation.Token
+                CancellationToken = turnToken
             }))
             {
                 onEvent(agentEvent);
@@ -198,19 +228,6 @@ public sealed class TurnPipeline
         {
             // Куда показать ошибку (пузырь или статус) — решает вид: получает исключение в итоге.
             outcome = new TurnOutcome { Agentic = agentic, Error = exception };
-        }
-        finally
-        {
-            _cancellation.Dispose();
-            _cancellation = null;
-            // FSM: Generating → Idle (если ещё не в RestartPending).
-            // Сначала FSM, потом IsGenerating=false: уведомление CanExecuteChanged должно
-            // стрельнуть, когда IsBusy уже false, иначе кнопка отката останется серой.
-            if (_chatState.Current == ChatState.Generating)
-            {
-                _chatState.Transition(ChatState.Idle);
-            }
-            _onGeneratingChanged(false);
         }
         if (agentic && SelfBuildService.ConsumeRestartRequest() is { } restartBuildId)
         {
@@ -267,6 +284,8 @@ public sealed class TurnOutcome
     public bool Canceled { get; init; }
     /// <summary>Ход не стартовал: не прошла проверка бюджета контекста (статус и сейв уже сделаны).</summary>
     public bool BudgetFailed { get; init; }
+    /// <summary>Ход не стартовал: FSM занят (второй вход — двойной клик «отправить», wake во время хода).</summary>
+    public bool Busy { get; init; }
     /// <summary>Ход упал (цикл бросил).</summary>
     public Exception? Error { get; init; }
     /// <summary>Ход был агентным (задан проект) — для выбора показа ошибки.</summary>

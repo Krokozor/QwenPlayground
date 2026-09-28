@@ -344,6 +344,11 @@ public partial class ChatViewModel : ObservableObject {
 
     /// <summary>Ход main-агента по инициативе приложения: всегда агентный режим (иначе бессмысленно).</summary>
     public async Task RunHeartbeatTurnAsync(string prompt) {
+        // Busy-чек ПЕРЕД записью сообщения: ход, который не стартовал, не должен оставлять
+        // [heartbeat]/[wake]-зомби в разговоре — модель увидит его в следующем промпте.
+        if (IsBusy) {
+            return;
+        }
         var userMessage = ChatMessage.User(prompt);
         _runtime.Log.Add(userMessage);
         Messages.Add(MessageViewModel.FromMessage("user", userMessage));

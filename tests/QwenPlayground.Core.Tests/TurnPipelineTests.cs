@@ -32,6 +32,8 @@ public sealed class TurnPipelineTests : IDisposable
     private Exception? _effectiveSizeException;
     private readonly List<AgentEvent> _scriptedEvents = new();
     private Exception? _loopException;
+    // Шов для тестов: цикл ждёт эту задачу перед событиями (блокировка хода посреди).
+    private Task? _loopGate;
     private AgentLoopRequest? _observedRequest;
     private readonly TurnPipeline _pipeline;
     private readonly string _projectRootBackup;
@@ -134,6 +136,10 @@ public sealed class TurnPipelineTests : IDisposable
     private async IAsyncEnumerable<AgentEvent> FakeLoop(AgentLoopRequest request)
     {
         _observedRequest = request;
+        if (_loopGate is not null)
+        {
+            await _loopGate;
+        }
         foreach (var e in _scriptedEvents)
         {
             yield return e;
@@ -146,7 +152,7 @@ public sealed class TurnPipelineTests : IDisposable
     }
 
     [Fact]
-    public async Task BudgetCheck_Failure_ReturnsBudgetFailed_SavesHistory_NoFsm()
+    public async Task BudgetCheck_Failure_ReturnsBudgetFailed_SavesHistory_RollsBackToIdle()
     {
         _effectiveSizeException = new InvalidOperationException("сервер недоступен");
 
@@ -155,10 +161,42 @@ public sealed class TurnPipelineTests : IDisposable
         Assert.True(outcome.BudgetFailed);
         Assert.Null(outcome.Error);
         Assert.Contains(_statuses, s => s.Contains("бюджета"));
-        Assert.Empty(_generating); // FSM не переводился, флаг генерации не поднимался
+        // «Один вход» (фаза 1): FSM переведён на входе (до бюджет-чека) и откатился в Idle
+        // при бюджет-фейле; флаг генерации поднимался и опустился.
+        Assert.Equal(new[] { true, false }, _generating);
         Assert.Equal(ChatState.Idle, _chatState.Current);
         // История сохранена (user-сообщение не «висит» несохранённым).
         Assert.True(File.Exists(Path.Combine(_root, MainAgent.SessionId, "chat.json")));
+    }
+
+    [Fact]
+    public async Task SecondEntry_WhileBusy_ReturnsBusy_Gracefully()
+    {
+        // «Один вход» (фаза 1): второй вызов во время хода (двойной клик «отправить»,
+        // wake/heartbeat) не стартует второй ход — FSM занят, итог Busy, без исключения;
+        // первый ход не затронут и доходит до конца.
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _loopGate = gate.Task;
+
+        var first = _pipeline.RunTurnAsync(continueLastAssistant: false, _ => { });
+        for (var i = 0; i < 200 && _observedRequest is null; i++)
+        {
+            await Task.Delay(10);
+        }
+        Assert.NotNull(_observedRequest); // первый ход вошёл в цикл (FSM уже Generating)
+        Assert.Equal(ChatState.Generating, _chatState.Current);
+
+        var second = await _pipeline.RunTurnAsync(continueLastAssistant: false, _ => { });
+
+        Assert.True(second.Busy);
+        Assert.Null(second.Error);
+        Assert.Equal(ChatState.Generating, _chatState.Current); // второй вход FSM не тронул
+
+        gate.SetResult(true);
+        var outcome = await first;
+        Assert.False(outcome.Busy);
+        Assert.Null(outcome.Error);
+        Assert.Equal(ChatState.Idle, _chatState.Current);
     }
 
     [Fact]
