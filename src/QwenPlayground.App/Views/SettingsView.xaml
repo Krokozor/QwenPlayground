@@ -51,6 +51,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="endpoint"
                                ToolTip="Адрес основного LLM-эндпоинта (OpenAI-совместимый). Сюда идут запросы чата и агентного цикла." />
@@ -85,6 +86,11 @@
                     <CheckBox Grid.Row="6" Grid.Column="1" IsChecked="{Binding KvCacheEnabled}" Margin="0,3"
                               VerticalAlignment="Center"
                               ToolTip="KV-якорь субагентов: save/restore KV-кеша вызывающего вокруг хода субагента. Выкл — субагент работает без якоря (возврат может стоить пере-евалюации контекста)." />
+                    <TextBlock Grid.Row="7" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="трафик-лог"
+                               ToolTip="Писать полный промпт+вывод каждой итерации в logs/traffic-YYYYMMDD.log. По умолчанию вкл. Выкл — экономия диска на длинных прогонах; дневной файл в любом случае ограничен 500 МБ." />
+                    <CheckBox Grid.Row="7" Grid.Column="1" IsChecked="{Binding TrafficLogEnabled}" Margin="0,3"
+                              VerticalAlignment="Center"
+                              ToolTip="Трафик-лог (logs/traffic-*.log): полный промпт+вывод каждой итерации. Выкл — экономия диска на длинных прогонах." />
                 </Grid>
             </Expander>
 

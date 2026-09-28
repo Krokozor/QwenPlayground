@@ -91,6 +91,13 @@ public sealed class HeartbeatController
     /// </summary>
     public void WakeNow()
     {
+        // Busy-гвард (как в Tick): во время активного хода wake-ход не планируем —
+        // иначе второй вход в ход попадает в окно «один вход» (бюджет-чех до FSM).
+        // Сигнал НЕ съедаем: следующий тик подхватит (паттерн Disabled_NoScheduledTurn).
+        if (_isBusy())
+        {
+            return;
+        }
         _lastTurnAt = _utcNow();
         var signal = _wakeSignals.TakeNext();
         _setStatus("⏰ ручной wake");

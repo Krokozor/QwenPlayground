@@ -156,6 +156,22 @@ public sealed class HeartbeatControllerTests : IDisposable
     }
 
     [Fact]
+    public void WakeNow_WhenBusy_DoesNotStartTurn_AndKeepsSignal()
+    {
+        // Ручной wake во время хода не должен планировать второй вход (окно «один вход»:
+        // бюджет-чех до FSM). Сигнал не съедается — следующий тик подхватит.
+        var hb = Create();
+        SendWake("ручная задача");
+        _busy = true;
+
+        hb.WakeNow();
+
+        Assert.Empty(_turns);
+        Assert.Empty(_statuses);
+        Assert.Equal(1, new WakeSignalStore(_wakeDir).Count);
+    }
+
+    [Fact]
     public void TurnFailure_IsReported_NotSilent()
     {
         // Падение хода не должно умирать в невидимом таске: владелец фоновой работы

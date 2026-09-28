@@ -188,6 +188,12 @@ public sealed class SettingsViewModel : ObservableObject {
         set => Set(S.KvCacheEnabled, value, (s, v) => s.KvCacheEnabled = v);
     }
 
+    /// <summary>Трафик-лог: полный промпт+вывод каждой итерации (logs/traffic-*.log). По умолчанию вкл.</summary>
+    public bool TrafficLogEnabled {
+        get => S.TrafficLogEnabled;
+        set => Set(S.TrafficLogEnabled, value, (s, v) => s.TrafficLogEnabled = v);
+    }
+
     // ── Heartbeat / сервисы ─────────────────────────────────────────────────────────
 
     public bool HeartbeatEnabled {

@@ -40,12 +40,19 @@ I/O с возвратом через `await`. Следствия:
 ## Main — композиционный корень (Core/Main)
 
 `Main` (паттерн NekoBot) — единственный владелец графа сервисов и знание порядка
-их сборки: `Log`, `ChatState`, `Tools`, `ServerProps`, `Compaction`, `MemorySurfacer`,
-`PairsStore`, `Background`, `ServiceLlm`, `PromptAssembler`, `StateBlocks`, `Pipeline`,
-`Maintenance`, `Lifecycle`, `Draft`, `Sessions`, `Turns`, `Heartbeat` (публичные) +
-`identity`/`externalTools`/`layerStore` (приватные). UI-реакции — через `UiHooks`
-(статус, генерация, окно драфта, heartbeat-ход, flush памяти, меню полок, shutdown):
-Core не знает про WPF.
+их сборки. Две группы:
+
+- **Общие сервисы (на всё приложение)**: `Tools`, `ServerProps`, `PairsStore`,
+  `Background`, `ServiceLlm`, `Lifecycle`, `Sessions`, `Heartbeat`, `Subagents`, `KvCache`.
+- **Рантайм main-агента** — `ChatRuntime` (`Main.Runtime`): бандл пер-разговорных
+  сервисов одного окна чата — `Log`, `ChatState`, `Compaction`, `MemorySurfacer`,
+  `PromptAssembler`, `StateBlocks`, `Pipeline`, `Maintenance`, `Draft`, `Turns`, `Todo`.
+  Pinned-рантаймы (окно субагента, боковые окна) — `CreatePinnedRuntime`: тот же бандл,
+  общие сервисы шарятся, сессия закреплена. Публичные свойства `Main.Log`/`ChatState`/
+  `Turns`/… — форварды на `Runtime` (совместимость; код ходит через `Main.Runtime`).
+
+UI-реакции — через `UiHooks` (статус, генерация, окно драфта, heartbeat-ход,
+flush памяти, меню полок, shutdown): Core не знает про WPF.
 
 Договор конструктора: **ничего не стартует** (`Lifecycle.StartAll()` — за адаптером,
 после регистрации UI-сервисов) и **не грузит сессии** (за адаптером — вид должен быть
@@ -216,8 +223,11 @@ SummarizationViewModel превратится в универсальное ст
 работает, main ждёт; его окно видно владельцу (кнопка «Субагент» в тулбаре + кнопка
 в пузыре tool call; `App/Views/SubagentWindowRegistry`).
 
-**Схема слотов** (`Core/Inference/SlotAllocation`): main=0, субагент=1, побочные
-окна=2, сервисные вызовы=3 — пиннинг `id_slot` в `/completion` (через
+**Схема слотов** (`Core/Inference/SlotAllocation` — единственный источник правды):
+main=0, окна=1-2 (1 — не-main сессии главного окна, 2 — боковые окна), субагент=3
+(один на всё приложение, чистится в конце хода), пробы=4 (intuition, классификация
+памяти); сервисные вызовы (суммаризация/компакция) своего слота НЕ имеют — идут на
+слоте суммаризируемой сессии. Пиннинг `id_slot` в `/completion` (через
 `GenerationOptions.IdSlot`). При пиннинге сервер НЕ ходит в RAM prompt cache
 (`update_cache=false` для явного слота, b10353) — пиннутый слот живёт в GPU
 (`--no-cache-idle-slots`) и защищается **KV-якорем**: `SubagentSpawner` сохраняет

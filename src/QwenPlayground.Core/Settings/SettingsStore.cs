@@ -127,6 +127,14 @@ public sealed class AppSettings
     /// </summary>
     public bool SaveGenerationPrompts { get; set; } = false;
 
+    /// <summary>
+    /// Трафик-лог: полный промпт+вывод каждой итерации каждого агента в
+    /// logs/traffic-YYYYMMDD.log. По умолчанию ВКЛ (историческое поведение).
+    /// Выкл — экономия диска на длинных прогонах (десятки МБ в день). Потолок дневного
+    /// файла — 500 МБ (см. <see cref="QwenPlayground.Core.Inference.TrafficLog"/>).
+    /// </summary>
+    public bool TrafficLogEnabled { get; set; } = true;
+
     // ── Память / надмозг ─────────────────────────────────────────────────────────────
 
     /// <summary>Фактов без слоёв, обогащаемых за один heartbeat-проход классификатора.</summary>

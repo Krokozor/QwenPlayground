@@ -215,6 +215,10 @@ public sealed class SubagentSpawner
             {
                 DiagnosticsLog.Log(
                     $"Subagent: KV-якорь пропущен: нужно ~{(estimated + FreeMarginBytes) / 1e9:F1} ГБ, свободно {drive.AvailableFreeSpace / 1e9:F1} ГБ.");
+                // events-лог — без DiagnosticsMode: частота пропусков якоря в длинных
+                // сессиях — метрика, которую владелец должен видеть «после 8 часов».
+                AppEventLog.Log(
+                    $"Subagent: KV-якорь пропущен: нужно ~{(estimated + FreeMarginBytes) / 1e9:F1} ГБ, свободно {drive.AvailableFreeSpace / 1e9:F1} ГБ.");
                 return false;
             }
         }

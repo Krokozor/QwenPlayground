@@ -1,3 +1,5 @@
+using QwenPlayground.Core.Crash;
+
 namespace QwenPlayground.Core.Serialization;
 
 /// <summary>
@@ -38,6 +40,8 @@ public static class AtomicFile
                             return;
                         }
                         // Последний резерв: обычная запись поверх (temp уже содержит данные).
+                        // Атомарность потеряна — но потеря файла хуже: событие в events-лог.
+                        AppEventLog.Log($"AtomicFile: НЕАТОМАРНАЯ запись {path} (файл был заблокирован, {delays.Length} ретраев не помогли).");
                         File.Copy(temp, path, overwrite: true);
                         File.Delete(temp);
                         return;
