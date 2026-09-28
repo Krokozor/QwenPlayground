@@ -218,6 +218,11 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         _interaction = new ChatInteraction(_main.ChatState, () => Chat);
         _interaction.Register();
 
+        // Агент ждёт решения (карточка подтверждения) — фокус главного окна
+        // (настройка FocusOnConfirmation, дефолт вкл): карточка не спавнит окно,
+        // без внимания пользователь может не заметить, что его ждут.
+        Chat.AttentionRequired += () => WindowAttention.Focus(System.Windows.Application.Current.MainWindow);
+
         // Таймер — за UI (Core-класс без таймера): интервал перечитывается на каждом
         // тике, поэтому смена в настройках действует без рестарта (как раньше).
         _draftTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(_main.Draft.IntervalSeconds) };

@@ -53,6 +53,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="endpoint"
                                ToolTip="Адрес основного LLM-эндпоинта (OpenAI-совместимый). Сюда идут запросы чата и агентного цикла." />
@@ -97,6 +98,11 @@
                     <CheckBox Grid.Row="8" Grid.Column="1" IsChecked="{Binding YoloMode}" Margin="0,3"
                               VerticalAlignment="Center"
                               ToolTip="YOLO: опасные shell-команды исполняются без подтверждения (аудит в logs/events-*.log)." />
+                    <TextBlock Grid.Row="9" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="фокус при подтверждении"
+                               ToolTip="Фокусировать окно (Activate + мигание в панели задач), когда карточка подтверждения ждёт решения. Карточка не спавнит отдельное окно, поэтому без этого можно не заметить, что агент ждёт." />
+                    <CheckBox Grid.Row="9" Grid.Column="1" IsChecked="{Binding FocusOnConfirmation}" Margin="0,3"
+                              VerticalAlignment="Center"
+                              ToolTip="Фокус окна при появлении карточки подтверждения (дефолт вкл)." />
                 </Grid>
             </Expander>
 

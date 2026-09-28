@@ -50,6 +50,13 @@ public partial class ChatViewModel : ObservableObject {
     /// <summary>Закреплённое окно (субагент): своя сессия, селектор сессий скрыт.</summary>
     public bool Pinned { get; init; }
 
+    /// <summary>
+    /// Агент требует внимания: карточка подтверждения появилась в этом чате. Хост окна
+    /// подписывается и фокусирует себя (настройка FocusOnConfirmation). Срабатывает
+    /// только когда карточка реально показана (не в YOLO-пути — там кликать нечего).
+    /// </summary>
+    public event Action? AttentionRequired;
+
     /// <summary>Разговор (read-доступ для программных потребителей: отчёт субагента в spawn-флоу).</summary>
     public ChatLog Log => _runtime.Log;
 
@@ -371,6 +378,10 @@ public partial class ChatViewModel : ObservableObject {
             tcs.TrySetResult(allowed);
         };
         Messages.Add(message);
+        if (S.FocusOnConfirmation)
+        {
+            AttentionRequired?.Invoke();
+        }
         return tcs.Task;
     }
 

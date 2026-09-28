@@ -200,6 +200,12 @@ public sealed class SettingsViewModel : ObservableObject {
         set => Set(S.YoloMode, value, (s, v) => s.YoloMode = v);
     }
 
+    /// <summary>Фокус окна (Activate + мигание в панели задач), когда карточка подтверждения ждёт решения. По умолчанию вкл.</summary>
+    public bool FocusOnConfirmation {
+        get => S.FocusOnConfirmation;
+        set => Set(S.FocusOnConfirmation, value, (s, v) => s.FocusOnConfirmation = v);
+    }
+
     // ── Heartbeat / сервисы ─────────────────────────────────────────────────────────
 
     public bool HeartbeatEnabled {
