@@ -14,21 +14,30 @@ public static class WindowAttention
     /// <summary>Показать/активировать окно и (если оно не на переднем плане) замигать его в панели задач.</summary>
     public static void Focus(System.Windows.Window window)
     {
-        if (window is not { IsLoaded: true })
+        // Помощник внимания НЕ ВЗРЫВАЕТ приложение: любой сбой (маршалинг, P/Invoke,
+        // окно в странном состоянии) — в events-лог, не в краш UI-потока.
+        try
         {
-            return;
-        }
-        // Handle может быть ещё не создан — WindowInteropHelper создаёт его при необходимости.
-        var handle = new System.Windows.Interop.WindowInteropHelper(window).Handle;
-        window.Dispatcher.BeginInvoke(new Action(() =>
-        {
-            window.Show();
-            window.Activate();
-            if (GetForegroundWindow() != handle)
+            if (window is not { IsLoaded: true })
             {
-                BlinkTaskbar(handle);
+                return;
             }
-        }));
+            // Handle может быть ещё не создан — WindowInteropHelper создаёт его при необходимости.
+            var handle = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+            window.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                window.Show();
+                window.Activate();
+                if (GetForegroundWindow() != handle)
+                {
+                    BlinkTaskbar(handle);
+                }
+            }));
+        }
+        catch (Exception exception)
+        {
+            QwenPlayground.Core.Crash.AppEventLog.Log($"WindowAttention.Focus: {exception.Message}");
+        }
     }
 
     private static void BlinkTaskbar(IntPtr handle)
@@ -36,7 +45,7 @@ public static class WindowAttention
         var info = new FLASHWINFO
         {
             cbSize = (uint)Marshal.SizeOf<FLASHWINFO>(),
-            hwnd = new HandleRef(null, handle),
+            hwnd = handle,
             dwFlags = FLASHW_ALL | FLASHW_TIMED, // иконка + панель задач, 5 раз
             uCount = 5,
             dwTimeout = 0
@@ -51,11 +60,13 @@ public static class WindowAttention
     private const uint FLASHW_TIMERNOFPS = 8;
     private const uint FLASHW_TIMED = FLASHW_TIMER | FLASHW_TIMERNOFPS;
 
+    // hwnd — IntPtr, НЕ HandleRef: HandleRef — управляемый класс, и struct с ним
+    // немаршалируем (Marshal.SizeOf бросает ArgumentException — краш 2026-09-28 23:12).
     [StructLayout(LayoutKind.Sequential)]
     private struct FLASHWINFO
     {
         public uint cbSize;
-        public HandleRef hwnd;
+        public IntPtr hwnd;
         public uint dwFlags;
         public uint uCount;
         public uint dwTimeout;
