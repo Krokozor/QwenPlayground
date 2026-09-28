@@ -1,5 +1,6 @@
 using System.Windows;
 using QwenPlayground.App.ViewModels;
+using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Main;
 using QwenPlayground.Core.Runtime;
@@ -41,6 +42,8 @@ public partial class ChatWindow : Window {
         _sessionId = sessionId;
         _eraseSlotOnClose = eraseSlotOnClose;
         DataContext = new ChatWindowViewModel(chat);
+        // Агент ждёт решения (карточка подтверждения) — фокус этого окна (фаза 1.5b).
+        _chat.AttentionRequired += () => WindowAttention.Focus(this);
         // Закрываем окно — сохраняем разговор (своя сессия, SavePinned). Слот вычищаем
         // только если окно — единственный хозяин чата; у popout-окна чат живёт в пузыре
         // tool call (слот чистит спавнер в конце хода субагента).
@@ -80,6 +83,24 @@ public partial class ChatWindow : Window {
         var runtime = main.CreatePinnedRuntime(sessionId, hooks, promptKey: promptKey, slotId: slotId);
         chat = new ChatViewModel(runtime, main.Sessions, main.Heartbeat, main.Background,
             scheduleSettingsSave: () => { }, goToSettings: () => { }) { Pinned = true };
+        // Per-scope подтверждение (фаза 2, план 2026-09-28): опасная команда в этом чате
+        // (субагент) — карточка в ЭТОМ чате, FSM-кадр по СОБСТВЕННОМУ состоянию (аналог
+        // ChatInteraction для main). ShellTool читает Confirm через ToolContext.Scope.
+        runtime.Scope.Confirm = async (question, ct) => {
+            runtime.ChatState.Transition(ChatState.AwaitingConfirmation);
+            try
+            {
+                return await chat.RequestConfirmationAsync(question, ct);
+            }
+            finally
+            {
+                // Откат только если ещё ждём решения (RestartPending — терминал, не трогаем).
+                if (runtime.ChatState.Current == ChatState.AwaitingConfirmation)
+                {
+                    runtime.ChatState.Transition(ChatState.Generating);
+                }
+            }
+        };
         // История с диска (reopening). ПОСЛЕ создания VM: ReplaceAll шлёт Log.Changed, а
         // подписчик (RebuildMessageViews) появляется только в конструкторе VM — до него
         // загрузка осталась бы невидимой (пустой чат).

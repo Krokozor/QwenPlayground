@@ -22,6 +22,21 @@ public sealed class ChatProfilesTests
     }
 
     [Fact]
+    public void SubagentProfile_DeniesSpawnAndSelfBuild()
+    {
+        // Фаза 2 (план 2026-09-28): профиль субагента — «всё, кроме спавна/самосборки».
+        // Механизм: ToolsFor вычитает DeniedTools из списка, диспетчер (ToolRegistry)
+        // отказывает по имени — «рекламируется = разрешено» по построению.
+        var set = new ChatProfileSet();
+        set.EnsureDefaults();
+        var profile = set.ResolvePrompt(ChatProfileSet.SubagentPromptKey);
+
+        Assert.True(profile.Tools);
+        Assert.Contains("spawn_subagent", profile.DeniedTools);
+        Assert.Contains("rebuild_self", profile.DeniedTools);
+    }
+
+    [Fact]
     public void DefaultPieces_AreEmpty_WhichMeansInheritGlobals()
     {
         var set = new ChatProfileSet();

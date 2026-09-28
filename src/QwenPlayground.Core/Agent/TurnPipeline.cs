@@ -37,6 +37,9 @@ public sealed class TurnPipeline
     private readonly Action _shutdownApp;
     // Напоминатель TODO: OnRendered — только после реального рендера (как MemorySurfacer).
     private readonly TodoReminder? _todo;
+    // Скоуп агента рантайма (фаза 2, план 2026-09-28): ход идёт в скоупе СВОЕГО рантайма
+    // (main — AgentRuntime.Main, pinned — собственный), интерактив — через ToolContext.Scope.
+    private readonly AgentRuntime _scope;
     // Шов для тестов: по умолчанию — реальный цикл (AgentLoop строит LLM-клиент сам).
     private readonly Func<AgentLoopRequest, IAsyncEnumerable<AgentEvent>> _runLoop;
 
@@ -56,7 +59,8 @@ public sealed class TurnPipeline
         Action<bool> onGeneratingChanged,
         Action shutdownApp,
         Func<AgentLoopRequest, IAsyncEnumerable<AgentEvent>>? runLoop = null,
-        TodoReminder? todo = null)
+        TodoReminder? todo = null,
+        AgentRuntime? scope = null)
     {
         _log = log;
         _chatState = chatState;
@@ -71,6 +75,8 @@ public sealed class TurnPipeline
         _onGeneratingChanged = onGeneratingChanged;
         _shutdownApp = shutdownApp;
         _todo = todo;
+        // null (тесты/старые точки сборки) — main-скоуп: поведение прежнее.
+        _scope = scope ?? AgentRuntime.Main;
         _runLoop = runLoop ?? (request => new AgentLoop(_toolRegistry).RunAsync(request));
     }
 
@@ -180,6 +186,9 @@ public sealed class TurnPipeline
             var toolsAllowed = agentic && (isMain || prompt.Tools);
             await foreach (var agentEvent in _runLoop(new AgentLoopRequest {
                 Conversation = _log,
+                // Скоуп рантайма: цикл читает профиль настроек и маршрут интерактива
+                // из него (pinned-рантайм — собственный скоуп, не main).
+                Runtime = _scope,
                 OnFactSaved = item => _memorySurfacer.SurfaceOwnWrite(item.Id, item.Content),
                 ContinueLastAssistant = continued is not null,
                 AllowToolExecution = toolsAllowed,

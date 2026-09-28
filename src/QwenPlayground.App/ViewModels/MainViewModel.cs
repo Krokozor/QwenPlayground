@@ -567,6 +567,10 @@ public partial class MainViewModel : ObservableObject, IChatHost {
             slotId: QwenPlayground.Core.Inference.SlotAllocation.Subagent,
             promptKey: QwenPlayground.Core.Runtime.ChatProfileSet.SubagentPromptKey);
         Views.SubagentChatRegistry.SetCurrent(sessionId, chat);
+        // Карточка субагента живёт в его чате (встроенный пузырь в главном окне + popout):
+        // фокус главного окна — базовая линия; popout, если открыт, фокусируется поверх
+        // (его подписка добавляется позже — в конструкторе окна).
+        chat.AttentionRequired += () => WindowAttention.Focus(System.Windows.Application.Current.MainWindow);
         // Состояние для кнопки в тулбаре: RAW-название (без префикса «Субагент — ») —
         // тултип «Субагент работает: {title}», заголовок popout-окна собирается сам.
         const string prefix = "Субагент — ";
@@ -581,8 +585,17 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         finally {
             chat.SaveCurrent();
             // Слот субагента (3): KV вычищаем в конце хода (раньше — при закрытии окна).
-            // Fire-and-forget: ошибки не критичны (слот с медиа, сервер без флага).
-            _ = _main.KvCache.EraseSlotAsync(QwenPlayground.Core.Inference.SlotAllocation.Subagent).ContinueWith(_ => { });
+            // AWAIT (фаза 2, план 2026-09-28): fire-and-forget оставлял race — второй
+            // спавн мог стартовать, пока erase ещё летит. Ошибки не критичны (слот с
+            // медиа, сервер без флага) — в events-лог, не в краш хода.
+            try {
+                await _main.KvCache.EraseSlotAsync(QwenPlayground.Core.Inference.SlotAllocation.Subagent);
+            }
+            catch (Exception exception) {
+                QwenPlayground.Core.Crash.AppEventLog.Log($"Subagent: erase слота 3 не удался: {exception.Message}");
+            }
+            // Лизинг снят (ClearCurrent): второй спавн возможен без рестарта процесса.
+            _main.Subagents.ClearCurrent(sessionId);
         }
         var last = chat.Log.LastOrDefault(m => m.Role == ChatRole.Assistant);
         return last?.Content ?? "(субагент завершился без финального сообщения)";

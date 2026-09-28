@@ -62,6 +62,15 @@ public sealed class ToolContext
     /// </summary>
     public int? SlotId { get; }
 
+    /// <summary>
+    /// Авторизация инструментов хода: множество ИМЁН, доступных в этом скоупе
+    /// (фаза 2, план 2026-09-28). null — все (main-агент, контексты без профиля).
+    /// Строится из того же списка, что рекламируется модели (request.ToolDefinitions) —
+    /// «рекламируется = разрешено» по построению; диспетчер (ToolRegistry) отказывает
+    /// по имени ДО исполнения.
+    /// </summary>
+    public IReadOnlySet<string>? AllowedTools { get; }
+
     public ToolContext(
         string projectRoot,
         Func<int, ChatMessage?>? getMessageById = null,
@@ -71,7 +80,8 @@ public sealed class ToolContext
         Action<MemoryItem>? onFactSaved = null,
         AgentRuntime? runtime = null,
         IReadOnlyList<string>? additionalWorkspaces = null,
-        int? slotId = null)
+        int? slotId = null,
+        IReadOnlySet<string>? allowedTools = null)
     {
         ProjectRoot = Path.GetFullPath(projectRoot);
         SessionDir = sessionDir;
@@ -81,6 +91,7 @@ public sealed class ToolContext
         OnFactSaved = onFactSaved;
         Runtime = runtime;
         SlotId = slotId;
+        AllowedTools = allowedTools;
         AdditionalWorkspaces = (additionalWorkspaces ?? Array.Empty<string>())
             .Select(p => Path.GetFullPath(p))
             .ToList();

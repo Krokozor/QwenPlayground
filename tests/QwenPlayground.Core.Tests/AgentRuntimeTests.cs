@@ -41,6 +41,34 @@ public sealed class AgentRuntimeTests
     }
 
     [Fact]
+    public async Task TryConfirm_RoutesToScopeProvider()
+    {
+        // Фаза 2 (план 2026-09-28): подтверждение идёт по маршруту СВОЕГО скоупа —
+        // дочерний скоуп с собственным провайдером (карточка в окне субагента)
+        // не задевает main-маршрут.
+        var child = new AgentRuntime();
+        var calls = 0;
+        child.Confirm = (question, _) =>
+        {
+            calls++;
+            Assert.Equal("dangerous?", question);
+            return Task.FromResult(true);
+        };
+        try
+        {
+            // Провайдер только что зарегистрирован — TryConfirm не-null гарантирован.
+            var result = await child.TryConfirm("dangerous?", CancellationToken.None)!;
+
+            Assert.True(result);
+            Assert.Equal(1, calls);
+        }
+        finally
+        {
+            child.Confirm = null;
+        }
+    }
+
+    [Fact]
     public void AgentInteraction_Facade_ReadsAndWritesMainScope()
     {
         try

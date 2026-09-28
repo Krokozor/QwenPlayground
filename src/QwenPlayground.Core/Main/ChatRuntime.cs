@@ -4,6 +4,7 @@ using QwenPlayground.Core.Compaction;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.MetaInfo;
+using QwenPlayground.Core.Runtime;
 using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Settings;
 using QwenPlayground.Core.Templates;
@@ -47,6 +48,14 @@ public sealed class ChatRuntime {
     public ContextMaintenance Maintenance { get; internal set; } = null!;
     public DraftKeeper Draft { get; internal set; } = null!;
     public TurnPipeline Turns { get; internal set; } = null!;
+
+    /// <summary>
+    /// Скоуп агента этого рантайма (профиль настроек + маршрут интерактива): ход
+    /// передаёт его в AgentLoopRequest.Runtime, инструменты читают Confirm через
+    /// ToolContext.Scope. Main — <see cref="QwenPlayground.Core.Runtime.AgentRuntime.Main"/>;
+    /// pinned-рантаймы (субагент/окна) — собственные экземпляры.
+    /// </summary>
+    public AgentRuntime Scope { get; internal set; } = null!;
 
     /// <summary>
     /// Сессия рантайма: главное окно — текущая (селектор), субагент — закреплённая.

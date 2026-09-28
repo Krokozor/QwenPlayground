@@ -26,6 +26,9 @@ public sealed class PromptPipeline
     private readonly Func<IReadOnlyList<ChatMessage>, StateBlock?> _stateBlock;
     private readonly Func<CancellationToken, Task<MultimodalContext?>> _multimodal;
     private readonly Func<string, ICompletionSource> _createSource;
+    // Профиль-список инструментов (фаза 2, план 2026-09-28): тот же ToolsFor, что и ход —
+    // превью и запрос совпадают по построению (включая DeniedTools/AllowedTools профиля).
+    private readonly Func<IReadOnlyList<ToolDefinition>>? _advertisedTools;
 
     public PromptPipeline(
         Func<IReadOnlyList<ChatMessage>> conversation,
@@ -35,7 +38,8 @@ public sealed class PromptPipeline
         Func<IReadOnlyList<ChatMessage>, StateBlock?> stateBlock,
         Func<CancellationToken, Task<MultimodalContext?>> multimodal,
         Func<string, ICompletionSource>? createSource = null,
-        Func<IReadOnlyList<ToolGroup>>? activeShelves = null)
+        Func<IReadOnlyList<ToolGroup>>? activeShelves = null,
+        Func<IReadOnlyList<ToolDefinition>>? advertisedTools = null)
     {
         _conversation = conversation;
         // Единый с ходом резолвер системного промпта: идентичность main или цель сессии.
@@ -47,6 +51,7 @@ public sealed class PromptPipeline
         // Фабрика источников: по умолчанию llama.cpp-клиент; тесты подставляют заглушку.
         _createSource = createSource ?? (endpoint => new LlmCompletionClient(endpoint));
         _activeShelves = activeShelves ?? (() => Array.Empty<ToolGroup>());
+        _advertisedTools = advertisedTools;
     }
 
     /// <summary>История + системный промпт (инъекция той же семантики, что SystemPromptInjection в цикле).</summary>
@@ -81,6 +86,12 @@ public sealed class PromptPipeline
             {
                 return null;
             }
+            // Профильный список (тот же ToolsFor, что ход) — превью и запрос совпадают.
+            if (_advertisedTools is { } profiled)
+            {
+                return profiled();
+            }
+            // Без профиля (тесты): core + активные полки.
             var tools = new List<ToolDefinition>(_tools.DefinitionsByGroup(ToolGroup.Core));
             foreach (var group in _activeShelves().OrderBy(g => g))
             {

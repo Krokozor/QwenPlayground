@@ -115,6 +115,9 @@ public sealed class Main
         // лямбд, компилятор через порядок конструктора не видит).
         Runtime = new ChatRuntime(() => Sessions!.CurrentId, ServerProps);
         var rt = Runtime;
+        // Скоуп main-агента — статичный (провайдер настроек и интерактив зарегистрированы
+        // на нём исторически: AgentInteraction → Main.Confirm, UI — через ChatInteraction).
+        rt.Scope = AgentRuntime.Main;
         WireRuntimeCore(rt, new RuntimeWiring(
             hooks,
             SessionDirectory: () => Sessions!.DirectoryFor(Sessions.CurrentId),
@@ -167,6 +170,10 @@ public sealed class Main
             PromptKey = promptKey,
             StateBlockKey = stateBlockKey
         };
+        // Собственный скоуп: интерактив (карточка подтверждения) регистрирует хост окна
+        // (ChatWindow.CreatePinnedChat), профиль настроек пока — общий синглтон
+        // (per-scope профили — фаза 4/оркестратор).
+        rt.Scope = new AgentRuntime();
         // Счётчик id — на каждое сообщение в сайдкар (как у main-логa): pinned-сессия
         // (субагент) тоже может не дожить до SavePinned (hard-kill при rebuild).
         rt.Log.Added += _ => Sessions.TouchCounter(sessionId, rt.Log.NextMessageId);
@@ -246,7 +253,14 @@ public sealed class Main
             ServerProps,
             messages => rt.StateBlocks.Build(),
             ct => MultimodalContext.BuildAsync(w.SessionDirectory(), AppSettings.Get().Endpoint, ServerProps, ct),
-            activeShelves: () => rt.PromptAssembler.EffectiveShelves());
+            activeShelves: () => rt.PromptAssembler.EffectiveShelves(),
+            // Профильный список (фаза 2, план 2026-09-28): тот же ToolsFor, что ход —
+            // превью, бюджет-подсчёт и запрос совпадают (исправлен пересчёт субагента).
+            advertisedTools: () =>
+            {
+                var profile = ChatProfiles.Get().ResolvePrompt(w.PromptKey());
+                return rt.PromptAssembler.ToolsFor(profile.AllowedTools, profile.DeniedTools);
+            });
         rt.Maintenance = new ContextMaintenance(
             rt.Log,
             rt.ChatState,
@@ -299,6 +313,7 @@ public sealed class Main
             hooks.Status,
             hooks.Generating,
             hooks.ShutdownApp,
-            todo: rt.Todo);
+            todo: rt.Todo,
+            scope: rt.Scope);
     }
 }

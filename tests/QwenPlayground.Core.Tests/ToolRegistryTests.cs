@@ -54,6 +54,34 @@ public sealed class ToolRegistryTests : IDisposable
     }
 
     [Fact]
+    public async Task Execute_RefusesToolNotInAllowedTools()
+    {
+        // Фаза 2 (план 2026-09-28): авторизация в диспетчере — инструмент, которого нет
+        // в рекламируемом множестве хода, не выполняется даже если зарегистрирован
+        // (субагент: spawn_subagent/rebuild_self из DeniedTools профиля).
+        var context = new ToolContext(_root,
+            allowedTools: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "read_file" });
+
+        var result = await _registry.ExecuteAsync("shell", new JsonObject { ["command"] = "echo hi" }, context);
+
+        Assert.Contains("not available in this scope", result);
+    }
+
+    [Fact]
+    public async Task Execute_AllowedTool_Runs()
+    {
+        var context = new ToolContext(_root,
+            allowedTools: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "read_file", "write_file" });
+
+        await _registry.ExecuteAsync("write_file",
+            new JsonObject { ["path"] = "sub/allowed.txt", ["content"] = "ok" }, context);
+        var read = await _registry.ExecuteAsync("read_file", new JsonObject { ["path"] = "sub/allowed.txt" }, context);
+
+        // read_file возвращает нумерованные строки («1: ok»), не сырой контент.
+        Assert.Contains("ok", read);
+    }
+
+    [Fact]
     public async Task WriteThenRead_RoundTrips()
     {
         var write = await _registry.ExecuteAsync("write_file",

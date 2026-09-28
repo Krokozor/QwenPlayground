@@ -137,6 +137,16 @@ public sealed class ToolRegistry
     /// </summary>
     public async Task<ToolExecutionResult> ExecuteDetailedAsync(string name, JsonObject arguments, ToolContext context, CancellationToken cancellationToken = default)
     {
+        // Авторизация скоупа (фаза 2, план 2026-09-28): инструмент, которого нет в
+        // рекламируемом множестве хода, не выполняется даже если зарегистрирован
+        // (субагент: spawn_subagent/rebuild_self из DeniedTools профиля).
+        if (context.AllowedTools is { } allowed && !allowed.Contains(name))
+        {
+            return new ToolExecutionResult(
+                $"Error: tool '{name}' is not available in this scope (not in the profile's toolset). " +
+                "It is registered in the process, but the current chat profile does not advertise it — do not call it.",
+                null);
+        }
         if (!_tools.TryGetValue(name, out var entry))
         {
             return new ToolExecutionResult($"Error: unknown tool '{name}'", null);

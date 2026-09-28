@@ -233,6 +233,12 @@ public sealed class AgentLoop
             // (у main это оконный фасад AgentInteraction).
             ChatMessage? FindById(int id) =>
                 conversation.FirstOrDefault(m => m.Id == id && m.Role != ChatRole.System);
+            // Авторизация (фаза 2, план 2026-09-28): разрешено ровно то, что рекламируется
+            // модели (request.ToolDefinitions) — «рекламируется = разрешено» по построению.
+            // null — ход без списка (рекламируется весь реестр) → все инструменты.
+            var allowedTools = request.ToolDefinitions is null
+                ? null
+                : request.ToolDefinitions.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var toolContext = new ToolContext(projectRoot,
                 FindById,
                 (id, content) =>
@@ -250,7 +256,8 @@ public sealed class AgentLoop
                 request.OnFactSaved,
                 runtime,
                 QwenPlayground.Core.Settings.AppSettings.Get().AdditionalWorkspaces,
-                request.SlotId);
+                request.SlotId,
+                allowedTools);
             foreach (var call in toolCalls)
             {
                 var arguments = call.Arguments as JsonObject ?? new JsonObject();
