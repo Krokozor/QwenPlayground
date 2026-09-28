@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Sessions;
@@ -176,7 +177,7 @@ public partial class MessageViewModel : ObservableObject
     /// <summary>assistant — единственная роль, для которой осмысленны реролл/продолжить.</summary>
     public bool IsAssistant => Role == "assistant";
     /// <summary>system — служебная роль: рендерится в чате, но без кнопок действий.</summary>
-    public bool IsSystem => Role == "system";
+    public bool IsSystem => Role is "system" or "confirm";
 
     /// <summary>
     /// Время из state-блока сообщения (момент генерации) — ровно то, что видела модель
@@ -333,4 +334,65 @@ public partial class MessageViewModel : ObservableObject
         viewModel.ApplyParsed(message);
         return viewModel;
     }
+
+    // ── Карточка подтверждения (роль "confirm") ─────────────────────────────────────
+    // Не сообщение чата (не персистится в chat.json — там записан результат тула),
+    // а UI-элемент: команда + решение. Живёт в окне рантайма, который попросил
+    // подтверждения (main / субагент / откреплённое окно).
+
+    private bool _confirmResolved;
+    private string _confirmState = "⏳ ожидает решения";
+    private Brush _confirmStateBrush = Brushes.Goldenrod;
+    private bool _yoloEnabled;
+
+    /// <summary>Сообщение — карточка подтверждения опасной команды.</summary>
+    public bool IsConfirm => Role == "confirm";
+
+    /// <summary>Решение принято (кнопки скрываются, остаётся запись в истории).</summary>
+    public bool ConfirmResolved { get => _confirmResolved; private set => SetProperty(ref _confirmResolved, value); }
+
+    /// <summary>Строка состояния карточки («⏳ ожидает решения» / «✅ разрешено» / …).</summary>
+    public string ConfirmState { get => _confirmState; private set => SetProperty(ref _confirmState, value); }
+
+    /// <summary>Цвет строки состояния (золотой — ожидание, зелёный — разрешено, красный — запрещено).</summary>
+    public Brush ConfirmStateBrush { get => _confirmStateBrush; private set => SetProperty(ref _confirmStateBrush, value); }
+
+    /// <summary>Чекбокс YOLO на карточке (визуальное состояние; включение — через команду).</summary>
+    public bool YoloEnabled { get => _yoloEnabled; set => SetProperty(ref _yoloEnabled, value); }
+
+    /// <summary>
+    /// Разрешение решения: ставит состояние и оповещает владельца (TCS в ChatViewModel).
+    /// Повторное разрешение — no-op (карточка уже решена).
+    /// </summary>
+    public void ResolveConfirmation(bool allowed, bool yolo = false)
+    {
+        if (ConfirmResolved)
+        {
+            return;
+        }
+        ConfirmResolved = true;
+        ConfirmState = allowed ? (yolo ? "✅ разрешено (YOLO)" : "✅ разрешено") : "❌ запрещено";
+        ConfirmStateBrush = allowed ? Brushes.LimeGreen : Brushes.OrangeRed;
+        ConfirmResolve?.Invoke(allowed);
+    }
+
+    /// <summary>Ход отменён/завершён, пока карточка ждёт — честный отказ.</summary>
+    public void ResolveCancelled()
+    {
+        if (ConfirmResolved)
+        {
+            return;
+        }
+        ConfirmResolved = true;
+        ConfirmState = "⛔ отменено (ход завершён)";
+        ConfirmStateBrush = Brushes.Gray;
+        ConfirmResolve?.Invoke(false);
+    }
+
+    /// <summary>Оповещение владельца о решении (ставит ChatViewModel; null — карточка без ожидания).</summary>
+    internal Action<bool>? ConfirmResolve;
+
+    /// <summary>Карточка подтверждения: вопрос (команда) в Content, решение — через кнопки.</summary>
+    public static MessageViewModel Confirmation(string question) =>
+        new() { Role = "confirm", Content = question };
 }

@@ -342,6 +342,38 @@ public partial class ChatViewModel : ObservableObject {
     [RelayCommand(CanExecute = nameof(CanInteract))]
     private void WakeNow() => _heartbeat.WakeNow();
 
+    /// <summary>
+    /// Подтверждение опасной команды: КАРТОЧКА в этом чате, а не модалка (фаза 1.5,
+    /// план 2026-09-28). Карточка появляется в разговоре окна, которое идёт ход,
+    /// ход ждёт решения (FSM AwaitingConfirmation держит провайдер), UI-поток свободен
+    /// (нет ShowDialog и его вложенного message loop). После решения карточка остаётся
+    /// в истории с исходом (аудит); в chat.json попадает результат тула.
+    /// YOLO-режим: карточки нет — авто-разрешение + запись в events-лог.
+    /// </summary>
+    public Task<bool> RequestConfirmationAsync(string question, CancellationToken cancellationToken)
+    {
+        if (S.YoloMode)
+        {
+            var snippet = question.Length > 200 ? question[..200] + "…" : question;
+            AppEventLog.Log($"YOLO: авто-разрешена опасная команда: {snippet}");
+            return Task.FromResult(true);
+        }
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromResult(false);
+        }
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var message = MessageViewModel.Confirmation(question);
+        var registration = cancellationToken.Register(() => message.ResolveCancelled());
+        message.ConfirmResolve = allowed =>
+        {
+            registration.Dispose();
+            tcs.TrySetResult(allowed);
+        };
+        Messages.Add(message);
+        return tcs.Task;
+    }
+
     /// <summary>Ход main-агента по инициативе приложения: всегда агентный режим (иначе бессмысленно).</summary>
     public async Task RunHeartbeatTurnAsync(string prompt) {
         // Busy-чек ПЕРЕД записью сообщения: ход, который не стартовал, не должен оставлять

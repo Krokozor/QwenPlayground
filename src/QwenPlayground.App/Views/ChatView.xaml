@@ -247,6 +247,10 @@
                                             <Setter Property="Background" Value="#1a1f2a" />
                                             <Setter Property="BorderBrush" Value="#3a5a8a" />
                                         </DataTrigger>
+                                        <DataTrigger Binding="{Binding Role}" Value="confirm">
+                                            <Setter Property="Background" Value="#2a2318" />
+                                            <Setter Property="BorderBrush" Value="#8a6a3a" />
+                                        </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </Border.Style>
@@ -334,8 +338,45 @@
                                 </Border>
                                 <TextBox Text="{Binding Content, Mode=OneWay}" IsReadOnly="True" IsReadOnlyCaretVisible="False"
                                          BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
-                                         Margin="0,4,0,0" Foreground="White" FontSize="13"
-                                         VerticalScrollBarVisibility="Auto" />
+                                         Margin="0,4,0,0" Foreground="White"
+                                         VerticalScrollBarVisibility="Auto">
+                                    <TextBox.Style>
+                                        <Style TargetType="TextBox">
+                                            <Setter Property="FontSize" Value="13" />
+                                            <Style.Triggers>
+                                                <!-- Команда в карточке подтверждения — моноширинным, крупнее. -->
+                                                <DataTrigger Binding="{Binding Role}" Value="confirm">
+                                                    <Setter Property="FontFamily" Value="Consolas" />
+                                                    <Setter Property="FontSize" Value="14" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBox.Style>
+                                </TextBox>
+                                <!-- Карточка подтверждения (роль "confirm"): состояние + крупные
+                                     цветные кнопки + YOLO. Кнопки видны, пока решение не принято;
+                                     потом карточка остаётся в истории как запись о решении. -->
+                                <StackPanel Margin="0,8,0,0"
+                                            Visibility="{Binding IsConfirm, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding ConfirmState}" FontSize="14" FontWeight="Bold"
+                                               Foreground="{Binding ConfirmStateBrush}" Margin="0,0,0,6" />
+                                    <StackPanel Orientation="Horizontal"
+                                                Visibility="{Binding ConfirmResolved, Converter={StaticResource InverseBoolToVis}}">
+                                        <Button Content="Разрешить" Padding="24,10" FontSize="14" FontWeight="Bold"
+                                                Margin="0,0,8,0" Background="#238636" Foreground="White" BorderBrush="#2ea043"
+                                                Command="{Binding DataContext.Chat.MessageCommands.ConfirmAllowCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}" />
+                                        <Button Content="Запретить" Padding="24,10" FontSize="14" FontWeight="Bold"
+                                                Background="#da3633" Foreground="White" BorderBrush="#f85149"
+                                                Command="{Binding DataContext.Chat.MessageCommands.ConfirmDenyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}" />
+                                        <CheckBox Content="YOLO: авто-разрешать" VerticalAlignment="Center" Margin="16,0,0,0"
+                                                  FontSize="13" IsChecked="{Binding YoloEnabled, Mode=OneWay}"
+                                                  Command="{Binding DataContext.Chat.MessageCommands.ConfirmYoloCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  CommandParameter="{Binding}"
+                                                  ToolTip="Включить YOLO-режим: опасные команды исполняются без подтверждения (настройка + текущая команда)" />
+                                    </StackPanel>
+                                </StackPanel>
                                 <ItemsControl ItemsSource="{Binding Attachments}" Margin="0,6,0,0"
                                               Visibility="{Binding HasAttachments, Converter={StaticResource BoolToVis}}">
                                     <ItemsControl.ItemsPanel>

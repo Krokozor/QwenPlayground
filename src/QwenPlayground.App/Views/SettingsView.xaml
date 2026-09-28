@@ -52,6 +52,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="endpoint"
                                ToolTip="Адрес основного LLM-эндпоинта (OpenAI-совместимый). Сюда идут запросы чата и агентного цикла." />
@@ -91,6 +92,11 @@
                     <CheckBox Grid.Row="7" Grid.Column="1" IsChecked="{Binding TrafficLogEnabled}" Margin="0,3"
                               VerticalAlignment="Center"
                               ToolTip="Трафик-лог (logs/traffic-*.log): полный промпт+вывод каждой итерации. Выкл — экономия диска на длинных прогонах." />
+                    <TextBlock Grid.Row="8" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="YOLO-режим"
+                               ToolTip="Авто-разрешать «опасные» shell-команды без карточки подтверждения. Для длинных автономных прогонов. Каждое авто-разрешение пишется в events-лог (аудит). Список паттернов — подсказка, не граница безопасности." />
+                    <CheckBox Grid.Row="8" Grid.Column="1" IsChecked="{Binding YoloMode}" Margin="0,3"
+                              VerticalAlignment="Center"
+                              ToolTip="YOLO: опасные shell-команды исполняются без подтверждения (аудит в logs/events-*.log)." />
                 </Grid>
             </Expander>
 

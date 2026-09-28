@@ -50,6 +50,38 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
 
     private bool CanInteract() => _canInteract();
 
+    // ── Карточка подтверждения (роль "confirm") ─────────────────────────────────────
+    // Кнопки карточки: разрешение/запрет опасной команды + YOLO (настройка + текущая).
+    // Решение шлёт MessageViewModel в владельца (TCS в ChatViewModel) — доменная
+    // логика ожидания живёт там, здесь только перевод клика в решение.
+
+    /// <summary>«Разрешить»: команда исполняется.</summary>
+    [RelayCommand(CanExecute = nameof(CanConfirm))]
+    private void ConfirmAllow(MessageViewModel? message) => message?.ResolveConfirmation(allowed: true);
+
+    /// <summary>«Запретить»: команда не исполняется, тул получит отказ.</summary>
+    [RelayCommand(CanExecute = nameof(CanConfirm))]
+    private void ConfirmDeny(MessageViewModel? message) => message?.ResolveConfirmation(allowed: false);
+
+    /// <summary>
+    /// YOLO-чекбокс на карточке: включает режим (настройка, write-through) и разрешает
+    /// ТЕКУЩУЮ команду. Каждая авто-разрешённая команда в YOLO-режиме аудитится
+    /// в events-лог (AppEventLog) — «тихое разрешение» недопустимо.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanConfirm))]
+    private void ConfirmYolo(MessageViewModel? message)
+    {
+        if (message is null)
+        {
+            return;
+        }
+        QwenPlayground.Core.Settings.AppSettings.Update(s => s.YoloMode = true);
+        message.ResolveConfirmation(allowed: true, yolo: true);
+    }
+
+    private static bool CanConfirm(MessageViewModel? message) =>
+        message is { IsConfirm: true, ConfirmResolved: false };
+
     /// <summary>
     /// Переоценить CanExecute всех команд: вызывается VM при смене IsGenerating
     /// (Reroll/Continue зависят от него). Остальные (CanInteract) WPF сам ре-кверит

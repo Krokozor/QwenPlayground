@@ -215,7 +215,7 @@ public partial class MainViewModel : ObservableObject, IChatHost {
 
         // Интерактив инструментов (подтверждение shell) — pull-модель: оконные
         // провайдеры живут в ChatInteraction (App), Core не знает про окна и FSM.
-        _interaction = new ChatInteraction(_main.ChatState);
+        _interaction = new ChatInteraction(_main.ChatState, () => Chat);
         _interaction.Register();
 
         // Таймер — за UI (Core-класс без таймера): интервал перечитывается на каждом

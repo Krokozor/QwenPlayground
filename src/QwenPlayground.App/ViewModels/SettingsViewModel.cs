@@ -194,6 +194,12 @@ public sealed class SettingsViewModel : ObservableObject {
         set => Set(S.TrafficLogEnabled, value, (s, v) => s.TrafficLogEnabled = v);
     }
 
+    /// <summary>YOLO: авто-разрешение опасных shell-команд без подтверждения. По умолчанию выкл (аудит в events-лог).</summary>
+    public bool YoloMode {
+        get => S.YoloMode;
+        set => Set(S.YoloMode, value, (s, v) => s.YoloMode = v);
+    }
+
     // ── Heartbeat / сервисы ─────────────────────────────────────────────────────────
 
     public bool HeartbeatEnabled {
