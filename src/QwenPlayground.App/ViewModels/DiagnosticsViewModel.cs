@@ -62,6 +62,19 @@ public partial class DiagnosticsViewModel : ObservableObject
     [ObservableProperty]
     private string _selectedCrashText = "Выберите запись, чтобы увидеть детали.";
 
+    /// <summary>
+    /// Клик по записи в списке обновляет текст справа (баг владельца, 2026-09-29:
+    /// текст выставлялся только в Refresh для ПЕРВОЙ записи — выделение менялось,
+    /// детали нет).
+    /// </summary>
+    partial void OnSelectedCrashChanged(CrashEntryInfo? value)
+    {
+        SelectedCrashText = value?.FullText
+            ?? (CrashEntries.Count == 0
+                ? "Записей нет — крахов не было (или лог пуст)."
+                : "Выберите запись, чтобы увидеть детали.");
+    }
+
     // ── KV-слоты сервера ─────────────────────────────────────────────────────────────
 
     [ObservableProperty]
@@ -415,8 +428,8 @@ public partial class DiagnosticsViewModel : ObservableObject
         }
         CrashEntries = new ObservableCollection<CrashEntryInfo>(
             entries.OrderByDescending(e => e.Time).Take(20));
+        // Текст деталей следует за выбором через OnSelectedCrashChanged.
         SelectedCrash = CrashEntries.Count > 0 ? CrashEntries[0] : null;
-        SelectedCrashText = SelectedCrash?.FullText ?? "Записей нет — крахов не было (или лог пуст).";
     }
 
     private static CrashEntryInfo ParseCrashEntry(string channel, string text)
