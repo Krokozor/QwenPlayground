@@ -43,4 +43,36 @@ public sealed class ArchitectureGuardTests
         var text = CoreCsproj();
         Assert.DoesNotContain("QwenPlayground.App", text);
     }
+
+    [Fact]
+    public void ViewModels_DoNotConstructCoreStores()
+    {
+        // Фаза 3 (план 2026-09-28): Core-сторы (память, слои, сессии, KV) владеет
+        // композиционный корень (Main) — VM получают общие экземпляры. Новый экземпляр
+        // в VM = второй писатель в тот же файл (double-writer layers.json: компакция
+        // перезаписывала правки вкладки «Суммаризация») или невидимое дублирующее
+        // состояние. Тест, который поймал бы это на ревью, а не в проде.
+        var dir = Path.Combine(SelfBuildPaths.WorkspaceRoot, "src", "QwenPlayground.App", "ViewModels");
+        Assert.True(Directory.Exists(dir), $"каталог ViewModels не найден: {dir}");
+        var forbidden = new[]
+        {
+            "new MemoryStore(",
+            "new MemoryLayerStore(",
+            "new SessionStore(",
+            "new KvCacheController("
+        };
+        var offenders = new List<string>();
+        foreach (var file in Directory.GetFiles(dir, "*.cs", SearchOption.AllDirectories))
+        {
+            var text = File.ReadAllText(file);
+            foreach (var pattern in forbidden)
+            {
+                if (text.Contains(pattern))
+                {
+                    offenders.Add($"{Path.GetFileName(file)}: {pattern}");
+                }
+            }
+        }
+        Assert.Empty(offenders);
+    }
 }

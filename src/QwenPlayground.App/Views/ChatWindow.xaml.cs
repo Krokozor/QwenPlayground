@@ -82,7 +82,8 @@ public partial class ChatWindow : Window {
         var sessionId = existingSessionId ?? main.Sessions.CreateDetached();
         var runtime = main.CreatePinnedRuntime(sessionId, hooks, promptKey: promptKey, slotId: slotId);
         chat = new ChatViewModel(runtime, main.Sessions, main.Heartbeat, main.Background,
-            scheduleSettingsSave: () => { }, goToSettings: () => { }) { Pinned = true };
+            scheduleSettingsSave: () => { }, goToSettings: () => { },
+            kv: main.KvCache, subagents: main.Subagents) { Pinned = true };
         // Per-scope подтверждение (фаза 2, план 2026-09-28): опасная команда в этом чате
         // (субагент) — карточка в ЭТОМ чате, FSM-кадр по СОБСТВЕННОМУ состоянию (аналог
         // ChatInteraction для main). ShellTool читает Confirm через ToolContext.Scope.

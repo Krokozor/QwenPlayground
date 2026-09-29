@@ -182,7 +182,8 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         // Старт чата — после присваивания: Core во время RestoreLast колбэкает хук ввода,
         // который идёт через Chat (в конструкторе Chat ещё null).
         Chat = new(_main.Runtime, _main.Sessions, _main.Heartbeat, _main.Background,
-            Settings.ScheduleSave, () => SelectedTabIndex = SettingsTabIndex);
+            Settings.ScheduleSave, () => SelectedTabIndex = SettingsTabIndex,
+            _main.KvCache, _main.Subagents);
         Chat.Initialize();
         TurnsPanel = new TurnPanel(_main.Background.Turns);
 
@@ -242,10 +243,11 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         () => EffectiveContextSize,
         () => S.MaxTokens,
         _main.KvCache,
-        () => _main.Sessions.CurrentSlotId);
+        () => _main.Sessions.CurrentSlotId,
+        _main.Memory);
 
         // Вкладка «Суммаризация»: ре-прогоны и редактирование резюме/слоёв/промптов.
-        Summarization = new SummarizationViewModel(RunSummarizationCallAsync);
+        Summarization = new SummarizationViewModel(RunSummarizationCallAsync, _main);
 
         // MCP: хук перерегистрации тулов (mcp_reload) вызывается из Core на фоновом
         // потоке; реестр владеет UI, поэтому мутация — на UI-потоке (паттерн
@@ -467,7 +469,8 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         try {
             var endpoint = S.CompanionEndpoint;
             var token = _main.Turns.ActiveToken;
-            var store = new MemoryStore();
+            // Общий store Main (фаза 3, план 2026-09-28) — не новый экземпляр.
+            var store = _main.Memory;
             var processed = await MemoryClassifier.FlushAsync(store, endpoint, AppSettings.Get().MemoryFlushBudget, token);
 
             if (processed > 0) {

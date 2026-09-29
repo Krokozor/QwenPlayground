@@ -7,7 +7,9 @@ using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
 using QwenPlayground.Core.Heartbeat;
+using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Main;
+using QwenPlayground.Core.Subagents;
 using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Runtime;
 using QwenPlayground.Core.SelfBuild;
@@ -173,7 +175,9 @@ public partial class ChatViewModel : ObservableObject {
         HeartbeatController heartbeat,
         BackgroundWork background,
         Action scheduleSettingsSave,
-        Action goToSettings) {
+        Action goToSettings,
+        KvCacheController kv,
+        SubagentSpawner subagents) {
         _runtime = runtime;
         _sessions = sessions;
         _heartbeat = heartbeat;
@@ -183,7 +187,9 @@ public partial class ChatViewModel : ObservableObject {
 
         Shelves = new(() => SessionDir());
         Todo = new(() => SessionDir());
-        SessionList = new(_sessions, _runtime.Log, () => IsGenerating, status => StatusText = status);
+        // Общий KV-контроллер и спавнер (фаза 3, план 2026-09-28): панель сессий не
+        // конструирует свои new — слоты и occupancy идут через сервисы Main.
+        SessionList = new(_sessions, _runtime.Log, () => IsGenerating, status => StatusText = status, kv, subagents);
         TurnView = new(_runtime, _background, Messages, SessionDir, status => StatusText = status);
         MessageCommands = new(Messages, PendingAttachments, _runtime.Log,
             CanInteract, () => IsGenerating, continueLast => TurnView.GenerateAsync(continueLast),

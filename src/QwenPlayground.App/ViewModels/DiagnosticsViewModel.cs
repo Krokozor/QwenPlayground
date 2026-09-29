@@ -23,6 +23,7 @@ public partial class DiagnosticsViewModel : ObservableObject
     private readonly Func<int> _maxTokensProvider;
     private readonly KvCacheController _kv;
     private readonly Func<int?> _currentSlotId;
+    private readonly QwenPlayground.Core.Memory.MemoryStore _memory;
     private CancellationTokenSource? _slotsCts;
 
     [ObservableProperty]
@@ -106,7 +107,8 @@ public partial class DiagnosticsViewModel : ObservableObject
         Func<int> contextSizeProvider,
         Func<int> maxTokensProvider,
         KvCacheController kv,
-        Func<int?> currentSlotId)
+        Func<int?> currentSlotId,
+        QwenPlayground.Core.Memory.MemoryStore memory)
     {
         _chatState = chatState;
         _contextUsedTokensProvider = contextUsedTokensProvider;
@@ -114,6 +116,7 @@ public partial class DiagnosticsViewModel : ObservableObject
         _maxTokensProvider = maxTokensProvider;
         _kv = kv;
         _currentSlotId = currentSlotId;
+        _memory = memory;
 
         _chatState.StateChanged += (_, to) => UpdateChatState(to);
         UpdateChatState(_chatState.Current);
@@ -313,20 +316,22 @@ public partial class DiagnosticsViewModel : ObservableObject
     private static string LastUseDisplay(int slotId, bool hasKv)
     {
         var last = SlotUsageTracker.LastUse(slotId);
-        if (last is not { } time)
+        if (last is not { } use)
         {
             return hasKv ? "застыл? (не я)" : "—";
         }
-        var age = DateTime.Now - time;
+        var age = DateTime.Now - use.Time;
         var display = age.TotalHours >= 24
             ? $"{(int)age.TotalHours} ч"
             : age.TotalMinutes >= 1 ? $"{(int)age.TotalMinutes} мин" : "сейчас";
-        return IsStale(slotId, hasKv) ? $"застыл {display}" : display;
+        // Владелец (фаза 3, план 2026-09-28): ЧЕЙ это KV — id сессии или «пробы».
+        var owner = use.Owner == "пробы" ? "пробы" : $"сессия {use.Owner[..Math.Min(8, use.Owner.Length)]}";
+        return (IsStale(slotId, hasKv) ? $"застыл {display}" : display) + $" ({owner})";
     }
 
     /// <summary>«Застыл»: KV есть, а приложение слотом не пользовалось больше часа (кандидат на чистку).</summary>
     private static bool IsStale(int slotId, bool hasKv) =>
-        hasKv && SlotUsageTracker.LastUse(slotId) is { } time && (DateTime.Now - time).TotalHours >= 1;
+        hasKv && SlotUsageTracker.LastUse(slotId) is { } use && (DateTime.Now - use.Time).TotalHours >= 1;
 
     /// <summary>Вычистить KV одного слота (кнопка в строке).</summary>
     [RelayCommand]
@@ -392,9 +397,8 @@ public partial class DiagnosticsViewModel : ObservableObject
             journal.OrderByDescending(b => b.Timestamp).Take(10)
                 .Select(b => new BuildInfo(b.Id, b.Timestamp, b.Status, b.FailureReason, b.BuildOutputTail)));
 
-        // Память
-        var store = new MemoryStore();
-        var memories = store.List();
+        // Память (общий store Main — фаза 3, план 2026-09-28, guard-тест поймал new здесь)
+        var memories = _memory.List();
         MemoryCount = memories.Count;
         RecentMemories = new ObservableCollection<MemoryInfo>(
             memories.Take(5).Select(m => new MemoryInfo(m.Id, MemoryClassifier.TopName(m.CategoryLayers), m.CreatedAt, m.Content)));

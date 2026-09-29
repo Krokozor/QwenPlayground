@@ -419,7 +419,7 @@ public static class LlmProbeClient
     {
         if (idSlot is { } slot)
         {
-            SlotUsageTracker.Record(slot);
+            SlotUsageTracker.Record(slot, "пробы");
         }
         var payload = BuildNativePayload(prompt, nPredict, nProbs, stop, idSlot);
         var response = await PostWithBreakerAsync(

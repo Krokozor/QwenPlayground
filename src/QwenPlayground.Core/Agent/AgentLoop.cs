@@ -152,6 +152,17 @@ public sealed class AgentLoop
 
             var raw = new StringBuilder(continued?.ToRawOutput() ?? string.Empty);
             DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: render done ({prompt.Length} chars), stream begin");
+            // «Диагностика»: слот используется этой сессией (владелец для метки «застыл»;
+            // фаза 3, план 2026-09-28 — раньше запись была в клиенте, который не знает
+            // сессию, и владельца не было).
+            if (generation.IdSlot is { } usedSlot)
+            {
+                QwenPlayground.Core.Inference.SlotUsageTracker.Record(
+                    usedSlot,
+                    request.SessionDir is { Length: > 0 } dir
+                        ? Path.GetFileName(dir.TrimEnd('/', '\\'))
+                        : "chat");
+            }
             var streamStart = System.Diagnostics.Stopwatch.StartNew();
             var chunkCount = 0;
             await foreach (var chunk in client.StreamAsync(prompt, generation, multimodalData, cancellationToken))

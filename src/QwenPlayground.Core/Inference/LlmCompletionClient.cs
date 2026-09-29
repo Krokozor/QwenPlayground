@@ -272,7 +272,8 @@ public sealed class LlmCompletionClient : ICompletionSource
         if (options.IdSlot is { } idSlot)
         {
             body["id_slot"] = idSlot;
-            SlotUsageTracker.Record(idSlot); // «Диагностика»: когда слот последний раз использовался
+            // SlotUsageTracker.Record — в AgentLoop (клиент не знает сессию-владельца;
+            // фаза 3, план 2026-09-28).
         }
 
         return JsonContent(body);

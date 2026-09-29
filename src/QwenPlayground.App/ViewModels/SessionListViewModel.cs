@@ -19,6 +19,9 @@ public sealed partial class SessionListViewModel : ObservableObject {
     private readonly ChatLog _log;
     private readonly Func<bool> _isGenerating;
     private readonly Action<string> _status;
+    // Общий KV-контроллер и спавнер Main (фаза 3, план 2026-09-28): не свои new.
+    private readonly QwenPlayground.Core.Inference.KvCacheController _kv;
+    private readonly QwenPlayground.Core.Subagents.SubagentSpawner _subagents;
 
     public ObservableCollection<SessionInfo> Sessions { get; } = new();
 
@@ -58,9 +61,14 @@ public sealed partial class SessionListViewModel : ObservableObject {
     /// <summary>main-сессия управляется идентичностью — настройка чата для неё закрыта.</summary>
     public bool IsMainSession => _sessions.CurrentId == MainAgent.SessionId;
 
-    public SessionListViewModel(SessionController sessions, ChatLog log, Func<bool> isGenerating, Action<string> status) {
+    public SessionListViewModel(
+        SessionController sessions, ChatLog log, Func<bool> isGenerating, Action<string> status,
+        QwenPlayground.Core.Inference.KvCacheController kv,
+        QwenPlayground.Core.Subagents.SubagentSpawner subagents) {
         _sessions = sessions;
         _log = log;
+        _kv = kv;
+        _subagents = subagents;
         _isGenerating = isGenerating;
         _status = status;
     }
@@ -91,8 +99,17 @@ public sealed partial class SessionListViewModel : ObservableObject {
     /// </summary>
     private async Task ApplySlotAsync(SlotOption value) {
         if (value.Value is { } slotId) {
-            var kv = new QwenPlayground.Core.Inference.KvCacheController();
-            var slots = await kv.GetSlotsAsync();
+            // Занятость (фаза 3, план 2026-09-28): другой ЖИВОЙ рантайм на этом слоте =
+            // KV-трешинг двух чатов. Сегодня единственный другой живой рантайм — субагент
+            // (слот 3); откреплённые окна (стадия C) без центрального реестра — аллокатор
+            // фазы 4 закроет.
+            if (slotId == QwenPlayground.Core.Inference.SlotAllocation.Subagent && _subagents.Current is not null) {
+                _status($"слот {slotId} занят субагентом (он работает); выбор откатился");
+                SelectedSlot = SlotOptions.FirstOrDefault(o => o.Value == _sessions.CurrentSlotId)
+                               ?? SlotOptions[0];
+                return;
+            }
+            var slots = await _kv.GetSlotsAsync();
             if (slots.All(s => s.Id != slotId)) {
                 _status($"на сервере нет слота {slotId} (перезапустите llama.cpp с --slots {slotId + 1}+); выбор откатился");
                 SelectedSlot = SlotOptions.FirstOrDefault(o => o.Value == _sessions.CurrentSlotId)
@@ -118,8 +135,7 @@ public sealed partial class SessionListViewModel : ObservableObject {
             return;
         }
 
-        var kv = new QwenPlayground.Core.Inference.KvCacheController();
-        var ok = await kv.EraseSlotAsync(slotId);
+        var ok = await _kv.EraseSlotAsync(slotId);
         _status(ok ? $"слот {slotId} вычищен" : $"не удалось вычистить слот {slotId} (сервер/флаг)");
     }
 

@@ -52,12 +52,21 @@ public sealed class Main
 
     private readonly InjectedIdentity _identity = new();
     private readonly ExternalToolsNote _externalTools = new();
-    private readonly MemoryLayerStore _layerStore = new();
 
     // ── Общие сервисы (на всё приложение) ───────────────────────────────────────────
     public ToolRegistry Tools { get; }
     public ServerProps ServerProps { get; } = new();
     public PairsStore PairsStore { get; }
+
+    /// <summary>
+    /// Слои памяти main-сессии (sessions/main/layers.json) — ОДИН писатель
+    /// (фаза 3, план 2026-09-28): ContextMaintenance (компакция) и вкладка
+    /// «Суммаризация» пишут через этот экземпляр, а не через собственные new.
+    /// </summary>
+    public MemoryLayerStore LayerStore { get; } = new();
+
+    /// <summary>Хранилище фактов памяти — общий экземпляр (VM не конструируют свои new).</summary>
+    public MemoryStore Memory { get; } = new();
     public BackgroundWork Background { get; }
     public ServiceCompletionClient ServiceLlm { get; }
     public AppLifecycle Lifecycle { get; }
@@ -99,7 +108,7 @@ public sealed class Main
         // Субагенты: KV-якорь вокруг синхронного хода (якорь — слот main, файл — в sessions/).
         // Runner (окно + ход) регистрирует UI (App) после старта.
         Subagents = new SubagentSpawner(KvCache, () => Sessions!.CurrentId);
-        PairsStore = new PairsStore(new MemoryStore().Root);
+        PairsStore = new PairsStore(Memory.Root);
         Background = new BackgroundWork(hooks.Status);
         // Сервисные LLM-вызовы (суммаризация/компакция/конвейер/память): эндпоинт и
         // семплер вычисляются на каждый вызов из живых настроек.
@@ -125,7 +134,7 @@ public sealed class Main
             SlotId: () => Sessions!.CurrentSlotId,
             _identity,
             _externalTools,
-            _layerStore));
+            LayerStore));
         // Сессии: после драфта (WireRuntimeCore создаёт Draft последним — Load пользуется драфтом).
         Sessions = new SessionController(rt.Log, rt.Draft, rt.MemorySurfacer);
         // Ход: после сессий (пользуется их ключами/каталогом) и maintenance (бюджет-гард).
@@ -180,6 +189,9 @@ public sealed class Main
         // Пinned-рантайм: свои identity/layer-store (изоляция от main-агента),
         // каталог и ключи — фиксированные (сессию не переключают). Слот — закреплён
         // (SlotAllocation): субагент → 3, ручное окно → 2 (дефолт; 1 — дефолт не-main).
+        // Слои pinned-сессии — в ЕЁ каталоге (фаза 3, план 2026-09-28): дефолтный
+        // конструктор MemoryLayerStore = sessions/main, и компакция субагента
+        // перезаписывала layers.json ГЛАВНОЙ сессии.
         WireRuntimeCore(rt, new RuntimeWiring(
             hooks,
             SessionDirectory: () => Sessions.DirectoryFor(sessionId),
@@ -187,7 +199,7 @@ public sealed class Main
             SlotId: () => slotId,
             new InjectedIdentity(),
             new ExternalToolsNote(),
-            new MemoryLayerStore()));
+            new MemoryLayerStore(Sessions.DirectoryFor(sessionId))));
         WireTurns(rt, hooks, new TurnSessionView(
             rt.SessionId,
             () => Sessions.DirectoryFor(sessionId),

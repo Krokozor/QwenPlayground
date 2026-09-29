@@ -30,6 +30,8 @@ public partial class SummarizationViewModel : ObservableObject
     // Слот (5-й параметр) — слот СУММАРИЗУЕМОЙ сессии: прогон идёт на её слоте, чтобы не
     // раздувать KV-пул отдельным сервисным слотом (контекст сессии после сжатия меняется всё равно).
     private readonly Func<string, string?, Action<string>?, CancellationToken, int?, Task<string>> _complete;
+    // Композиционный корень (фаза 3, план 2026-09-28): общий LayerStore main-сессии.
+    private readonly QwenPlayground.Core.Main.Main _main;
     private readonly SessionStore _sessionStore = new(SessionsRoot);
 
     // ── Сессии ───────────────────────────────────────────────────────────────────────
@@ -92,9 +94,11 @@ public partial class SummarizationViewModel : ObservableObject
     private bool _hasLayerProposal;
 
     public SummarizationViewModel(
-        Func<string, string?, Action<string>?, CancellationToken, int?, Task<string>> complete)
+        Func<string, string?, Action<string>?, CancellationToken, int?, Task<string>> complete,
+        QwenPlayground.Core.Main.Main main)
     {
         _complete = complete;
+        _main = main;
         RefreshSessions();
         ReloadLayers();
         RefreshPromptSteps();
@@ -174,9 +178,15 @@ public partial class SummarizationViewModel : ObservableObject
 
     // ── Слои L1/L2/L3 ────────────────────────────────────────────────────────────────
 
-    /// <summary>Store слоёв выбранной сессии (per-session, sessions/<id>/layers.json).</summary>
-    private MemoryLayerStore StoreForSelected() =>
-        new(Path.Combine(SessionsRoot, SelectedSession?.Id ?? MainAgent.SessionId));
+    /// <summary>
+    /// Store слоёв выбранной сессии (per-session, sessions/&lt;id&gt;/layers.json).
+    /// Main-сессия — общий store Main (фаза 3, план 2026-09-28): компакция
+    /// (ContextMaintenance) и эта вкладка пишут через ОДИН экземпляр.
+    /// </summary>
+    private MemoryLayerStore StoreForSelected() {
+        var id = SelectedSession?.Id ?? MainAgent.SessionId;
+        return id == MainAgent.SessionId ? _main.LayerStore : new(Path.Combine(SessionsRoot, id));
+    }
 
     private void ReloadLayers()
     {
