@@ -49,6 +49,36 @@ public sealed class SystemPromptAssembler
         _toolRegistry = toolRegistry;
     }
 
+    /// <summary>
+    /// Блок «твоя сессия»: id, роль (main / субагент / pinned) и папка сессии как
+    /// личный склад «рабочих документов». Статичен внутри сессии — в base-промпт
+    /// попадает вместе с core (меняется только при смене сессии, как и core).
+    /// </summary>
+    private string BuildSessionBlock()
+    {
+        var id = _currentSessionId();
+        var role = id == MainAgent.SessionId
+            ? "main — главный чат владельца"
+            : _promptKey() == ChatProfileSet.SubagentPromptKey
+                ? "субагент (спавнен main-агентом, ходишь в своём окне/пузыре)"
+                : "pinned-сессия (отдельное окно или не-main сессия)";
+        var lines = new List<string>
+        {
+            "## Твоя сессия",
+            string.Empty,
+            $"- Сессия: {id}; роль: {role}.",
+            $"- Папка сессии: sessions/{id}/ — твой ЛИЧНЫЙ СКЛАД «рабочих документов»: " +
+            "задачи, журнал действий, черновики, заметки. Храни туда всё, что должно пережить " +
+            "компакцию и рестарт приложения (TODO.json и layers.json уже живут здесь).",
+        };
+        if (id != MainAgent.SessionId)
+        {
+            lines.Add("- То, что ты не main, не уменьшает твою важность: у тебя те же инструменты " +
+                      "и своя ответственность за свой контекст.");
+        }
+        return string.Join("\n", lines);
+    }
+
     /// <summary>Финальный системный промпт (null — ядра нет: пустой профиль и нет идентичности).</summary>
     public string? ResolveSystemPrompt()
     {
@@ -61,6 +91,11 @@ public sealed class SystemPromptAssembler
         string? core = isMain
             ? _identity.GetFor(true)
             : ChatProfiles.Get().ResolvePrompt(_promptKey()).RenderSystemPrompt();
+        // Блок «кто ты и где ты» (по просьбе владельца, 2026-09-29): в шаблоне системный
+        // промпт идёт сразу после IMPORTANT-блока — значит, вставка в начало core =
+        // ровно там. Снимает путаницу «я main или нет» и даёт сессии явный дом для
+        // рабочих документов (задачи, журнал, черновики).
+        core = Combine(BuildSessionBlock(), core);
 
         // Секция «внешние инструменты» (external/README.md) — всем интерактивным сессиям.
         var note = _externalTools.Get();

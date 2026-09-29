@@ -109,16 +109,30 @@ public static class SwapService
     public static async Task<(int ExitCode, string Message)> RebuildAndStartAsync(CancellationToken cancellationToken)
     {
         KillRunningApp();
+        // Watchdog — ребёнок ПРИЛОЖЕНИЯ, не лаунчера: хэндла на него у нас нет, а
+        // самоотключение после смерти приложения — не контракт (задержка опроса,
+        // осиротевший страж). Останавливаем явно по имени перед деплоем, иначе он
+        // держит бинари launcher/ (Windows-лок) и сборка watchdog'а падает MSB3027
+        // после 10 ретраев. Новый watchdog стартует сам новый app в OnStartup.
+        SelfBuildService.PreDeployTools = WatchdogLauncher.StopAllByName;
         Log("GUI rebuild requested");
-        var result = await SelfBuildService.BuildNextAsync(cancellationToken);
+        try
+        {
+            var result = await SelfBuildService.BuildNextAsync(cancellationToken);
         if (result.ExitCode != 0)
         {
             return (result.ExitCode, $"сборка не удалась (exit {result.ExitCode}):\n{result.OutputTail}");
         }
-        var swapCode = PointerMode(result.Id);
-        return swapCode == 0
-            ? (0, $"пересобрано и запущено: {result.Id}")
-            : (swapCode, "обмен версиями не удался — подробности в launcher.log");
+            var swapCode = PointerMode(result.Id);
+            return swapCode == 0
+                ? (0, $"пересобрано и запущено: {result.Id}")
+                : (swapCode, "обмен версиями не удался — подробности в launcher.log");
+        }
+        finally
+        {
+            // Хук статический: не оставляем его висеть на потом (лаунчер долгоживущий).
+            SelfBuildService.PreDeployTools = null;
+        }
     }
 
     /// <summary>Закрыть работающий экземпляр приложения (по имени и app.pid), чтобы swap был безопасным.</summary>

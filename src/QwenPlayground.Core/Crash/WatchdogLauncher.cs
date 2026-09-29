@@ -54,23 +54,52 @@ public static class WatchdogLauncher
     /// <summary>
     /// Остановить watchdog'а перед деплоем инструментов (вызывается из
     /// SelfBuildService.PreDeployTools). После перезапуска приложение стартует
-    /// watchdog'а заново — уже с новым бинарем.
+    /// watchdog'а заново — уже с новым бинарем. Kill по хэндлю + страховочный
+    /// проход по имени: хэндль может оказаться мёртвым/чужим (EnsureAlive
+    /// перезапускает стража), и тогда деплой упрётся в Windows-лок с MSB3027.
     /// </summary>
     public static void StopWatchdog()
     {
         try
         {
             var watchdog = _watchdog;
-            if (watchdog is null || watchdog.HasExited)
+            if (watchdog is { HasExited: false })
             {
-                return;
+                watchdog.Kill(entireProcessTree: true);
+                watchdog.WaitForExit(5000);
             }
-            watchdog.Kill(entireProcessTree: true);
-            watchdog.WaitForExit(5000);
         }
         catch
         {
-            // watchdog не остановился — деплой сам упадёт с записью в launcher.log
+            // хэндль не сработал — ловим проходом по имени ниже
+        }
+        StopAllByName();
+    }
+
+    /// <summary>
+    /// Остановить ВСЕ watchdog'и по имени процесса (без хэндлов). Для внешних
+    /// вызывателей (лаунчер: watchdog — не его ребёнок, хэндла нет) и как
+    /// fallback в <see cref="StopWatchdog"/>. Остановленный watchdog не
+    /// «потеряет» ничего: он либо уже записал смерть наблюдаемого процесса,
+    /// либо тот ещё жив и его стражем станет новый watchdog после деплоя.
+    /// </summary>
+    public static void StopAllByName()
+    {
+        foreach (var process in Process.GetProcessesByName("QwenPlayground.Watchdog"))
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(5000);
+            }
+            catch
+            {
+                // не остановился — деплой сам упадёт с записью в launcher.log
+            }
+            finally
+            {
+                process.Dispose();
+            }
         }
     }
 

@@ -17,6 +17,13 @@ internal static class TodoFormat
         {
             lines.Add($"{i + 1}. [{(list.Items[i].Done ? "x" : " ")}] {list.Items[i].Text}");
         }
+        // Подсказка при 100% (по просьбе владельца, 2026-09-29): ответ тула сам напоминает
+        // подвести итог и подчистить список, а не только state-блок.
+        if (list.Items.Count > 0 && done == list.Items.Count)
+        {
+            lines.Add("✅ Все цели выполнены. Если работа закончена — сообщи владельцу и подчисти список " +
+                      "(TODO_manage 'remove' по индексам или кнопка «очистить» в панели TODO).");
+        }
         return string.Join("\n", lines);
     }
 }

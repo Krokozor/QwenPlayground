@@ -149,11 +149,24 @@ public partial class MainWindow : Window
 
             // Установленному инструменту место в строке отдаёт зонду версии: «Проверить
             // обновления» — про сборку, а не про наличие. Не установленному — «Скачать».
+            // Если проверка найдёт обновление (или метаданных нет), кнопка ПЕРЕКЛЮЧАЕТСЯ
+            // в «Скачать» — сообщение проверки обещает именно эту кнопку (баг 2026-09-29:
+            // «нажмите «Скачать»», а кнопки нет).
             Button actionBtn;
             if (installed)
             {
                 actionBtn = new Button { Content = "Проверить обновления", Padding = new Thickness(10, 3, 10, 3), FontSize = 11 };
-                actionBtn.Click += async (_, _) => await CheckToolUpdateAsync(name, tool, actionBtn);
+                actionBtn.Click += async (_, _) =>
+                {
+                    if (actionBtn.Tag is true)
+                    {
+                        await InstallToolAsync(name, tool, actionBtn);
+                    }
+                    else
+                    {
+                        await CheckToolUpdateAsync(name, tool, actionBtn);
+                    }
+                };
             }
             else
             {
@@ -257,6 +270,13 @@ public partial class MainWindow : Window
             StatusText.Text = $"{name}: {result}";
             LogBox.AppendText($"\n[{DateTime.Now:HH:mm:ss}] {name}: проверка обновлений — {result}");
             LogBox.ScrollToEnd();
+            // Обновление найдено (или метаданных нет) — кнопка становится «Скачать»:
+            // сообщение проверки обещает её, и она должна быть.
+            if (result.Contains("нажмите «Скачать»", StringComparison.Ordinal))
+            {
+                btn.Tag = true;
+                btn.Content = "Скачать";
+            }
         }
         catch (Exception ex)
         {
@@ -265,9 +285,13 @@ public partial class MainWindow : Window
         finally
         {
             // Кнопку возвращаем в покой в finally: иначе исключение оставляет её
-            // навсегда серой с надписью «Проверка…».
+            // навсегда серой с надписью «Проверка…». Переклечённая в «Скачать»
+            // кнопка покой не сбрасывает — это её новое рабочее состояние.
             btn.IsEnabled = true;
-            btn.Content = idle;
+            if (btn.Tag is not true)
+            {
+                btn.Content = idle;
+            }
             SetBusy(false);
         }
     }
