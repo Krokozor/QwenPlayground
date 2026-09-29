@@ -25,6 +25,12 @@ public static class WatchdogLauncher
     private static string? _cleanMarker;
     private static Process? _watchdog;
 
+    /// <summary>
+    /// Rebuild-окно (BeginRebuild/EndRebuild): пока true, EnsureAlive не
+    /// воскрешает watchdog'а — сборка должна спокойно обновить бинари launcher/.
+    /// </summary>
+    private static volatile bool _rebuildInProgress;
+
     public static void TryStart()
     {
         try
@@ -54,26 +60,46 @@ public static class WatchdogLauncher
     /// <summary>
     /// Остановить watchdog'а перед деплоем инструментов (вызывается из
     /// SelfBuildService.PreDeployTools). После перезапуска приложение стартует
-    /// watchdog'а заново — уже с новым бинарем. Kill по хэндлю + страховочный
-    /// проход по имени: хэндль может оказаться мёртвым/чужим (EnsureAlive
-    /// перезапускает стража), и тогда деплой упрётся в Windows-лок с MSB3027.
+    /// watchdog'а заново — уже с новым бинарем. Открывает rebuild-окно: без него
+    /// EnsureAlive (heartbeat, 20 с) воскресит убитого стража посреди сборки, и
+    /// воскрешённый watchdog закроет собой те самые бинари, что сборка обновляет
+    /// (MSB3027 — «не всегда», зависит от фазы heartbeat-тика).
     /// </summary>
-    public static void StopWatchdog()
+    public static void StopWatchdog() => BeginRebuild();
+
+    /// <summary>
+    /// Открыть rebuild-окно: запретить EnsureAlive воскрешать watchdog'а и
+    /// остановить всех watchdog'ов. Закрывается <see cref="EndRebuild"/> — ОБЯЗАТЕЛЬНО,
+    /// в т.ч. в finally: иначе страж не восстановится (тихая деградация).
+    /// </summary>
+    public static void BeginRebuild()
     {
-        try
-        {
-            var watchdog = _watchdog;
-            if (watchdog is { HasExited: false })
-            {
-                watchdog.Kill(entireProcessTree: true);
-                watchdog.WaitForExit(5000);
-            }
-        }
-        catch
-        {
-            // хэндль не сработал — ловим проходом по имени ниже
-        }
+        _rebuildInProgress = true;
         StopAllByName();
+    }
+
+    /// <summary>
+    /// Закрыть rebuild-окно: разрешить EnsureAlive снова и, если watchdog не
+    /// работает, — запустить (старым бинарем, если сборка упала, новым — если
+    /// прошла). Страж не должен молча теряться ни в одном исходе.
+    /// </summary>
+    public static void EndRebuild()
+    {
+        _rebuildInProgress = false;
+        if (!IsAnyWatchdogRunning())
+        {
+            TryStart();
+        }
+    }
+
+    private static bool IsAnyWatchdogRunning()
+    {
+        foreach (var process in Process.GetProcessesByName("QwenPlayground.Watchdog"))
+        {
+            process.Dispose();
+            return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -113,6 +139,12 @@ public static class WatchdogLauncher
     {
         try
         {
+            // Rebuild-окно: watchdog убит намеренно (деплой инструментов),
+            // воскрешать его сейчас = закрыть лок на бинари, которые собираются.
+            if (_rebuildInProgress)
+            {
+                return;
+            }
             var watchdog = _watchdog;
             if (watchdog is null || !watchdog.HasExited)
             {

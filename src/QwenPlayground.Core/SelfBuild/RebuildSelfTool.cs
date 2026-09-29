@@ -30,7 +30,18 @@ public sealed class RebuildSelfTool : AgentTool
                    string.Join('\n', allErrors);
         }
 
-        var result = await SelfBuildService.BuildNextAsync(cancellationToken);
+        // Rebuild-окно: BuildNextAsync внутри вызывает PreDeployTools (StopWatchdog =
+        // BeginRebuild), но окно закрываем МЫ — в finally, в любом исходе: иначе
+        // EnsureAlive (heartbeat) не восстановит стража после упавшей сборки.
+        BuildResult result;
+        try
+        {
+            result = await SelfBuildService.BuildNextAsync(cancellationToken);
+        }
+        finally
+        {
+            QwenPlayground.Core.Crash.WatchdogLauncher.EndRebuild();
+        }
         if (result.ExitCode != 0)
         {
             return $"Error: build failed (exit code {result.ExitCode}). Fix the errors and call rebuild_self again.\n{result.OutputTail}";

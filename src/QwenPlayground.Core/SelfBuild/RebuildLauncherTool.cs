@@ -25,16 +25,10 @@ public sealed class RebuildLauncherTool : AgentTool
                    "binary in launcher/. Close it and call rebuild_launcher again.";
         }
 
-        // Watchdog держит лок на QwenPlayground.Core.dll в launcher/ — останавливаем перед
-        // билдом (PreDeployTools), перезапускаем после (PostDeployTools).
-        try
-        {
-            SelfBuildService.PreDeployTools?.Invoke();
-        }
-        catch
-        {
-            // watchdog не остановился — билд сам упадёт с записью лока.
-        }
+        // Watchdog держит лок на QwenPlayground.Core.dll в launcher/ — rebuild-окно:
+        // EnsureAlive (heartbeat, 20 с) не воскресит убитого стража посреди билда,
+        // EndRebuild в каждом исходе закроет окно и вернёт стража, если его нет.
+        QwenPlayground.Core.Crash.WatchdogLauncher.BeginRebuild();
 
         // Билд лаунчера + watchdog в launcher/ (та же команда, что в bootstrap.bat).
         var launcherProject = Path.Combine(
@@ -43,31 +37,32 @@ public sealed class RebuildLauncherTool : AgentTool
             SelfBuildPaths.WorkspaceRoot, @"tools\QwenPlayground.Watchdog\QwenPlayground.Watchdog.csproj");
         var outputDir = SelfBuildPaths.LauncherDir;
 
-        var (launcherCode, launcherOutput) = await RunDotnetBuild(launcherProject, outputDir, cancellationToken);
-        if (launcherCode != 0)
-        {
-            // Билд упал — watchdog всё равно перезапускаем (не бросаем приложение без стража).
-            // Хук не должен маскировать ошибку билда.
-            try { SelfBuildService.PostDeployTools?.Invoke(); } catch { }
-            return $"Error: launcher build failed (exit {launcherCode}).\n{launcherOutput}";
-        }
-
-        var (watchdogCode, watchdogOutput) = await RunDotnetBuild(watchdogProject, outputDir, cancellationToken);
-        if (watchdogCode != 0)
-        {
-            // То же, что в launcher-ветке: watchdog не бросаем, хук не маскирует ошибку.
-            try { SelfBuildService.PostDeployTools?.Invoke(); } catch { }
-            return $"Error: watchdog build failed (exit {watchdogCode}).\n{watchdogOutput}";
-        }
-
-        // Билд успешен — перезапускаем watchdog (уже с новым бинаром).
         try
         {
-            SelfBuildService.PostDeployTools?.Invoke();
+            var (launcherCode, launcherOutput) = await RunDotnetBuild(launcherProject, outputDir, cancellationToken);
+            if (launcherCode != 0)
+            {
+                // Билд упал — окно закрываем (EndRebuild вернёт стража, если его нет).
+                // Ошибка билда не маскируется.
+                QwenPlayground.Core.Crash.WatchdogLauncher.EndRebuild();
+                return $"Error: launcher build failed (exit {launcherCode}).\n{launcherOutput}";
+            }
+
+            var (watchdogCode, watchdogOutput) = await RunDotnetBuild(watchdogProject, outputDir, cancellationToken);
+            if (watchdogCode != 0)
+            {
+                QwenPlayground.Core.Crash.WatchdogLauncher.EndRebuild();
+                return $"Error: watchdog build failed (exit {watchdogCode}).\n{watchdogOutput}";
+            }
+
+            // Билд успешен — окно закрываем; EndRebuild запустит watchdog, если его нет
+            // (уже с новым бинаром).
+            QwenPlayground.Core.Crash.WatchdogLauncher.EndRebuild();
         }
-        catch
+        catch (Exception ex)
         {
-            // watchdog не перезапущен — EnsureAlive (heartbeat) подхватит в течение 20 с.
+            QwenPlayground.Core.Crash.WatchdogLauncher.EndRebuild();
+            return $"Error: {ex.Message}";
         }
 
         return "Launcher and watchdog rebuilt successfully into launcher/. " +
