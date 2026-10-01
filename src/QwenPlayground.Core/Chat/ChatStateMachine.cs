@@ -1,3 +1,5 @@
+using QwenPlayground.Core.Runtime;
+
 namespace QwenPlayground.Core.Chat;
 
 /// <summary>
@@ -63,6 +65,8 @@ public sealed class ChatStateMachine
     /// </summary>
     public bool TryTransition(ChatState to)
     {
+        // Transition() делегирует сюда — одна точка контроля для обоих API.
+        UiThreadPolicy.Assert($"ChatStateMachine.TryTransition({Current}→{to})");
         if (!CanTransition(to))
         {
             return false;

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using QwenPlayground.Core.Runtime;
 
 namespace QwenPlayground.Core.Inference;
 
@@ -18,7 +19,13 @@ public static class SlotUsageTracker
 
     private static readonly ConcurrentDictionary<int, SlotUse> _lastUse = new();
 
-    public static void Record(int slotId, string owner) => _lastUse[slotId] = new SlotUse(DateTime.Now, owner);
+    public static void Record(int slotId, string owner)
+    {
+        // ConcurrentDictionary прощает гонку, но сам инвариант (ход/пробы — на UI-потоке)
+        // проверяем: «последнее использование» — данные диагностики, порча потока меняет смысл.
+        UiThreadPolicy.Assert($"SlotUsageTracker.Record(slot {slotId}, {owner})");
+        _lastUse[slotId] = new SlotUse(DateTime.Now, owner);
+    }
 
     public static SlotUse? LastUse(int slotId) => _lastUse.TryGetValue(slotId, out var use) ? use : null;
 }

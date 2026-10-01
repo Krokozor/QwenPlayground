@@ -1,6 +1,7 @@
 using System.Windows;
 using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Mcp;
+using QwenPlayground.Core.Runtime;
 using QwenPlayground.Core.SelfBuild;
 
 namespace QwenPlayground.App;
@@ -21,6 +22,10 @@ public partial class App : Application
     {
         base.OnStartup(e);
         StartupTrace.Log("App.OnStartup: begin");
+        // Инвариант UI-потока: мутаторы ядра (ChatLog, FSM, MemoryStore, метки слотов)
+        // проверяют, что исполняются на dispatcher-потоке. Нарушение — events-лог + throw
+        // (degradation must be loud). Core не знает WPF — шнуровка здесь, в App.
+        UiThreadPolicy.IsUiThread = () => Dispatcher.CheckAccess();
         // Страж процесса: если мы умрём мимо managed-обработчиков (нативный краш),
         // watchdog запишет смерть в общий crash-лог — картина не останется по кускам.
         WatchdogLauncher.TryStart();

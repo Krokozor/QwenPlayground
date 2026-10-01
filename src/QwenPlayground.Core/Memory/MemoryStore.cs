@@ -1,5 +1,6 @@
 using System.Text.Json;
 using QwenPlayground.Core.Crash;
+using QwenPlayground.Core.Runtime;
 using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Serialization;
 
@@ -93,12 +94,15 @@ public sealed class MemoryStore
 
     private void Save(MemoryItem item)
     {
+        // Единая точка записи (Add и Update сходятся сюда) — один ассерт закрывает обе.
+        UiThreadPolicy.Assert($"MemoryStore.Save({item.Id[..8]})");
         AtomicFile.WriteAllText(Path.Combine(_directory, item.Id + ".json"), JsonSerializer.Serialize(item, JsonOptions));
         RebuildIndex();
     }
 
     public bool Remove(string id)
     {
+        UiThreadPolicy.Assert($"MemoryStore.Remove({id[..Math.Min(8, id.Length)]})");
         var file = Path.Combine(_directory, id + ".json");
         if (!File.Exists(file))
         {

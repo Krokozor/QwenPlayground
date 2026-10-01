@@ -1,3 +1,5 @@
+using QwenPlayground.Core.Runtime;
+
 namespace QwenPlayground.Core.Chat;
 
 /// <summary>
@@ -31,6 +33,7 @@ public sealed class ChatLog : IReadOnlyList<ChatMessage>
     /// <summary>Счётчик из персистентной сессии (SessionData.NextMessageId); только вперёд.</summary>
     public void SetNextMessageId(int value)
     {
+        UiThreadPolicy.Assert("ChatLog.SetNextMessageId");
         if (value > _nextMessageId)
         {
             _nextMessageId = value;
@@ -43,6 +46,7 @@ public sealed class ChatLog : IReadOnlyList<ChatMessage>
     /// </summary>
     public void Add(ChatMessage message)
     {
+        UiThreadPolicy.Assert("ChatLog.Add");
         AssignId(message);
         _messages.Add(message);
         Added?.Invoke(message);
@@ -51,6 +55,7 @@ public sealed class ChatLog : IReadOnlyList<ChatMessage>
     /// <summary>Очистить разговор.</summary>
     public void Clear()
     {
+        UiThreadPolicy.Assert("ChatLog.Clear");
         _messages.Clear();
         Changed?.Invoke();
     }
@@ -58,6 +63,7 @@ public sealed class ChatLog : IReadOnlyList<ChatMessage>
     /// <summary>Заменить разговор целиком (загрузка сессии, компакция ветки). Одно событие Changed.</summary>
     public void ReplaceAll(IEnumerable<ChatMessage> messages)
     {
+        UiThreadPolicy.Assert("ChatLog.ReplaceAll");
         _messages.Clear();
         foreach (var message in messages)
         {
@@ -81,6 +87,7 @@ public sealed class ChatLog : IReadOnlyList<ChatMessage>
     /// <summary>Обрезать хвост, оставив первые <paramref name="keepCount"/> сообщений (компакция main).</summary>
     public void TruncateKeep(int keepCount)
     {
+        UiThreadPolicy.Assert("ChatLog.TruncateKeep");
         if (keepCount >= _messages.Count)
         {
             return;
@@ -97,6 +104,7 @@ public sealed class ChatLog : IReadOnlyList<ChatMessage>
     /// </summary>
     public void TrimCompactedPrefix(int boundary)
     {
+        UiThreadPolicy.Assert("ChatLog.TrimCompactedPrefix");
         var systemEnd = _messages.Count > 0 && _messages[0].Role == ChatRole.System ? 1 : 0;
         if (boundary <= systemEnd || boundary >= _messages.Count)
         {
@@ -109,6 +117,7 @@ public sealed class ChatLog : IReadOnlyList<ChatMessage>
     /// <summary>Удалить хвост начиная с index включительно (откат к сообщению).</summary>
     public void RemoveFrom(int index)
     {
+        UiThreadPolicy.Assert("ChatLog.RemoveFrom");
         if (index >= _messages.Count)
         {
             return;
@@ -123,6 +132,7 @@ public sealed class ChatLog : IReadOnlyList<ChatMessage>
     /// </summary>
     public void AssignPendingIds()
     {
+        UiThreadPolicy.Assert("ChatLog.AssignPendingIds");
         foreach (var message in _messages)
         {
             AssignId(message);

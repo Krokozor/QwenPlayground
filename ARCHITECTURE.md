@@ -37,6 +37,28 @@ I/O с возвратом через `await`. Следствия:
 - тяжёлые вычисления в Core будут фризить UI — уводить через Task.Run + await;
 - параллельные ходы (будущий оркестратор) потребуют пересмотра этого пункта.
 
+### Механический enforcement: UiThreadPolicy (2026-10-01)
+
+Инвариант больше не держится только «по построению»: `UiThreadPolicy.Assert(context)`
+(Core/Runtime, без WPF) вшит в точки мутации ядра:
+
+- `ChatLog` — все мутаторы (Add, Clear, ReplaceAll, TruncateKeep, TrimCompactedPrefix,
+  RemoveFrom, SetNextMessageId, AssignPendingIds);
+- `ChatStateMachine.TryTransition` (Transition делегирует сюда);
+- `MemoryStore.Save` (единая точка записи: Add и Update сходятся сюда) и `Remove`;
+- `SlotUsageTracker.Record` (ход и пробы).
+
+Шнуровка — в App (OnStartup): `UiThreadPolicy.IsUiThread = () => Dispatcher.CheckAccess()`.
+Нарушение: контекст (метод + аргументы) в always-on events-лог → `InvalidOperationException`
+(degradation must be loud: тихий сломанный harness хуже громкого краша). Без `#if DEBUG` —
+приложение живёт в Release, и сам процесс — среда разработки (решение владельца).
+В тестах и в watchdog-процессе шнуровки нет — Assert no-op. Аварийный вентиль:
+`UiThreadPolicy.ThrowOnViolation = false` (только лог).
+
+Санкционированные detach-точки (Task.Run за пределами UI-потока, осознанный дизайн —
+I/O, не мутация ядра): `DesktopService` (8× Task.Run: скриншоты/мышь/клавиатура),
+`ScreenshotTool`, `McpClient` (HTTP MCP-серверов). Всё, что мутирует ядро, — на UI-потоке.
+
 ## Main — композиционный корень (Core/Main)
 
 `Main` (паттерн NekoBot) — единственный владелец графа сервисов и знание порядка
