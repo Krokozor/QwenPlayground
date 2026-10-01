@@ -185,7 +185,7 @@ public sealed class AgentLoopTests : IDisposable
     [Fact]
     public async Task ToolLoop_ExecutesTool_Continues_FinishesOnFinalAnswer()
     {
-        var source = await RunLoopAsync(responses: new[]
+        var source = await RunLoopAsync(responses: new (string, TokenUsage?)[]
         {
             (ToolCallResponse("думаю, надо прочитать файл", "read_file", ("path", "a.txt")), new TokenUsage(100, 10)),
             (FinalResponse("прочитал", "Готово, файл прочитан."), new TokenUsage(200, 20))
@@ -221,9 +221,9 @@ public sealed class AgentLoopTests : IDisposable
 
         // Токены — из LastUsage сервера (usage первой итерации): /tokenize не запрашивался.
         Assert.Equal(100, assistants[0].Message.Generation!.PromptTokens);
-        Assert.Equal(10, assistants[0].Message.Generation.CompletionTokens);
+        Assert.Equal(10, assistants[0].Message.Generation!.CompletionTokens);
         Assert.Equal(200, assistants[1].Message.Generation!.PromptTokens);
-        Assert.Equal(20, assistants[1].Message.Generation.CompletionTokens);
+        Assert.Equal(20, assistants[1].Message.Generation!.CompletionTokens);
         Assert.Equal(0, source.CountTokensCalls);
 
         // Клиент создан фабрикой и закрыт циклом (using).
@@ -236,7 +236,7 @@ public sealed class AgentLoopTests : IDisposable
     {
         await RunLoopAsync(
             modify: r => r with { MaxIterations = 2 },
-            responses: new[]
+            responses: new (string, TokenUsage?)[]
             {
                 (ToolCallResponse("итерация 1", "shell", ("command", "echo 1")), new TokenUsage(10, 1)),
                 (ToolCallResponse("итерация 2", "shell", ("command", "echo 2")), new TokenUsage(20, 2))
@@ -257,7 +257,7 @@ public sealed class AgentLoopTests : IDisposable
         var run = RunLoopAsync(
             cancellationToken: cts.Token,
             configureSource: s => s.GateSecondChunk = true,
-            responses: new[]
+            responses: new (string, TokenUsage?)[]
             {
                 (FinalResponse("долгая мысль", "долгий ответ"), new TokenUsage(10, 1))
             });
@@ -294,7 +294,7 @@ public sealed class AgentLoopTests : IDisposable
     {
         await RunLoopAsync(
             modify: r => r with { NagOnNoToolCall = true, NagText = "KEEP GOING", MaxNags = 1 },
-            responses: new[]
+            responses: new (string, TokenUsage?)[]
             {
                 (FinalResponse("первый ответ без тулов", "первый"), new TokenUsage(10, 1)),
                 (FinalResponse("второй ответ без тулов", "второй"), new TokenUsage(20, 2))
@@ -316,7 +316,7 @@ public sealed class AgentLoopTests : IDisposable
         // шум; цикл завершается после первого ответа, ничего не исполняя.
         await RunLoopAsync(
             modify: r => r with { AllowToolExecution = false },
-            responses: new[]
+            responses: new (string, TokenUsage?)[]
             {
                 (ToolCallResponse("хочу вызвать тул", "read_file", ("path", "a.txt")), new TokenUsage(10, 1))
             });
