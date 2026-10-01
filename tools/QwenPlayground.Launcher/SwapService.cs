@@ -223,6 +223,10 @@ public static class SwapService
                 ? $"process exited with code {app.ExitCode} before handshake"
                 : "handshake timeout (30s)";
             var crash = TryGetRecentCrashExcerpt();
+            var traceTail = TryGetStartupTraceTail();
+            var excerpt = crash is null ? traceTail
+                : traceTail is null ? crash
+                : crash + "\n\n" + traceTail;
             Log($"startup failed: {reason}; rolling back");
             KillQuietly(app);
             if (!string.IsNullOrEmpty(oldId) && File.Exists(Path.Combine(Root, oldId, ExeName)))
@@ -237,7 +241,7 @@ public static class SwapService
                 WriteAppPid(rollback?.Id);
                 Log($"rolled back to {oldId}");
             }
-            BuildJournal.UpdateLast(Root, "failed", reason, crash);
+            BuildJournal.UpdateLast(Root, "failed", reason, excerpt);
             return 1;
         }
         catch (Exception exception)
@@ -380,6 +384,41 @@ public static class SwapService
             Thread.Sleep(500);
         }
         return false;
+    }
+
+    /// <summary>
+    /// Хвост старт-трейса (последние 30 строк logs/startup-YYYYMMDD.log, если свежий —
+    /// последняя запись ≤3 мин): для случая «handshake timeout» — крах-лог пуст
+    /// (процесс не умер, а завис), и трейс показывает последний шаг, который UI-поток
+    /// завершил (а HANG-DUMP — на чём стоит). Никогда не бросает.
+    /// </summary>
+    private static string? TryGetStartupTraceTail()
+    {
+        try
+        {
+            var file = Path.Combine(GetWorkspaceRoot(), "logs", $"startup-{DateTime.Now:yyyyMMdd}.log");
+            if (!File.Exists(file))
+            {
+                return null;
+            }
+            if ((DateTime.Now - File.GetLastWriteTime(file)).TotalMinutes > 3)
+            {
+                return null;
+            }
+            var lines = File.ReadAllLines(file);
+            if (lines.Length == 0)
+            {
+                return null;
+            }
+            var tail = string.Join("\n", lines.TakeLast(30));
+            const int cap = 3000;
+            tail = tail.Length <= cap ? tail : tail[^cap..] + "\n… (обрезано)";
+            return $"[хвост старт-трейса, полный — logs/startup-{DateTime.Now:yyyyMMdd}.log]\n{tail}";
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>

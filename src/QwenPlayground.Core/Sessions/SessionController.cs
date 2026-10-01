@@ -260,6 +260,7 @@ public sealed class SessionController
     public void RestoreLast()
     {
         var lastId = _sessions.LastOpenedId;
+        StartupTrace.Log($"RestoreLast: last={lastId ?? "none"}, current={_sessions.CurrentId}");
         if (string.IsNullOrEmpty(lastId) || lastId == _sessions.CurrentId)
         {
             return;

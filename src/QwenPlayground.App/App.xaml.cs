@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Mcp;
@@ -26,6 +27,23 @@ public partial class App : Application
         // проверяют, что исполняются на dispatcher-потоке. Нарушение — events-лог + throw
         // (degradation must be loud). Core не знает WPF — шнуровка здесь, в App.
         UiThreadPolicy.IsUiThread = () => Dispatcher.CheckAccess();
+        // Детектор зависания старта: если UI-поток не отвечает 10+ с до рукопожатия,
+        // пишет маркер HANG + хвост трейса (баг «клиент не запускается после ребилда»).
+        StartupHangGuard.Start(Dispatcher);
+        // UI-beat до Loaded: 1-с heartbeat в старт-трейс на всё окно старта — точка
+        // зависания видна с точностью до секунды (после Loaded работает свой alive-таймер).
+        var beat = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        var beatStart = DateTime.Now;
+        beat.Tick += (_, _) =>
+        {
+            StartupTrace.Log($"UI beat (+{(DateTime.Now - beatStart).TotalSeconds:F0}s, pre-Loaded)");
+            if (File.Exists(Path.Combine(AppContext.BaseDirectory, "ok.marker"))
+                || DateTime.Now - beatStart > TimeSpan.FromSeconds(120))
+            {
+                beat.Stop();
+            }
+        };
+        beat.Start();
         // Страж процесса: если мы умрём мимо managed-обработчиков (нативный краш),
         // watchdog запишет смерть в общий crash-лог — картина не останется по кускам.
         WatchdogLauncher.TryStart();

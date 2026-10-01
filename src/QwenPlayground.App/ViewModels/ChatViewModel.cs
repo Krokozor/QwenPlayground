@@ -246,13 +246,21 @@ public partial class ChatViewModel : ObservableObject {
     // Структурные изменения разговора (компакция/загрузка/откат) сами перестраивают вид.
     private void OnLogChanged() => RebuildMessageViews();
 
+    /// <summary>Окно старта (120 с): в нём пер-сообщение трейс — диагностика зависаний
+    /// «на каком сообщении встал RebuildMessageViews» (баг handshake timeout). После — тишина.</summary>
+    private static readonly DateTime ProcessStartAt = DateTime.Now;
+
     public void RebuildMessageViews() {
         var sw = Stopwatch.StartNew();
         var count = _runtime.Log.Count;
         var sessionDir = SessionDir();
         Messages.Clear();
         var added = 0;
+        var startupWindow = DateTime.Now - ProcessStartAt < TimeSpan.FromSeconds(120);
         foreach (var message in _runtime.Log) {
+            if (startupWindow) {
+                StartupTrace.Log($"RebuildMessageViews: +msg {message.Id} {message.Role}");
+            }
             var view = MessageViewModel.FromMessage(RoleName(message), message);
             view.LoadArtifacts(sessionDir);
             Messages.Add(view);
