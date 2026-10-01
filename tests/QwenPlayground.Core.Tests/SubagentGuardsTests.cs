@@ -52,9 +52,11 @@ public sealed class SubagentGuardsTests
             "spawn_subagent", new JsonObject { ["task"] = "x" },
             Context(SlotAllocation.Main, "spawn_subagent"));
 
-        // Блэклист не сработал: дошли до самого инструмента (в тестах Main не инициализирован).
+        // Блэклист не сработал: ни hard-denied, ни скоуп-отказ. Дальше что произойдёт
+        // (инструмент исполнится или сообщит о недоступности) — вне скопа этого теста:
+        // Main.Instance — статика, другие тесты могут её инициализировать (xUnit-параллелизм).
         Assert.DoesNotContain("hard-denied", result);
-        Assert.Contains("недоступно", result);
+        Assert.DoesNotContain("not available in this scope", result);
     }
 
     [Fact]
