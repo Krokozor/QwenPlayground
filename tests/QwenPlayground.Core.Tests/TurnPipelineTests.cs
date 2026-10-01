@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
@@ -246,6 +247,60 @@ public sealed class TurnPipelineTests : IDisposable
         Assert.NotNull(outcome.Error);
         Assert.Equal("boom", outcome.Error!.Message);
         Assert.Equal(new[] { true, false }, _generating);
+        Assert.Equal(ChatState.Idle, _chatState.Current);
+    }
+
+    [Fact]
+    public async Task Turn_OutcomeCarriesStats()
+    {
+        // P2: итог хода несёт статистики (итерации, тулы, токены) — данные для
+        // саммари в events-лог и постмортема. Токены — из GenerationInfo (сервер).
+        _scriptedEvents.Add(new AssistantMessageEvent(new ChatMessage {
+            Role = ChatRole.Assistant,
+            Content = "итерация 1",
+            Generation = new GenerationInfo { Prompt = "p", PromptTokens = 100, CompletionTokens = 10 } }));
+        _scriptedEvents.Add(new ToolCallStartedEvent("read_file", new JsonObject()));
+        _scriptedEvents.Add(new AssistantMessageEvent(new ChatMessage {
+            Role = ChatRole.Assistant,
+            Content = "итерация 2",
+            Generation = new GenerationInfo { Prompt = "p", PromptTokens = 200, CompletionTokens = 20 } }));
+        _scriptedEvents.Add(new AgentDoneEvent());
+
+        var outcome = await _pipeline.RunTurnAsync(continueLastAssistant: false, _ => { });
+
+        Assert.Equal(2, outcome.Iterations);
+        Assert.Equal(1, outcome.ToolCalls);
+        Assert.Equal(300, outcome.PromptTokens);
+        Assert.Equal(30, outcome.CompletionTokens);
+        Assert.False(outcome.Compacted);
+        Assert.Null(outcome.SlotId); // тесты без пиннинга слотов
+        Assert.True(outcome.Duration >= TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task Turn_CompactingTransition_SetsCompactedFlag()
+    {
+        // P2: флаг Compacted — из переходов FSM (Generating → Compacting → Generating,
+        // как делает цикл при сжатии контекста между итерациями).
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _loopGate = gate.Task;
+        _scriptedEvents.Add(new AgentDoneEvent());
+
+        var turn = _pipeline.RunTurnAsync(continueLastAssistant: false, _ => { });
+        for (var i = 0; i < 200 && _observedRequest is null; i++)
+        {
+            await Task.Delay(10);
+        }
+        Assert.NotNull(_observedRequest); // ход вошёл в цикл (FSM — Generating)
+        _chatState.Transition(ChatState.Compacting);
+        _chatState.Transition(ChatState.Generating);
+        gate.SetResult(true);
+
+        var outcome = await turn;
+
+        Assert.True(outcome.Compacted);
+        Assert.False(outcome.Canceled);
+        Assert.Null(outcome.Error);
         Assert.Equal(ChatState.Idle, _chatState.Current);
     }
 

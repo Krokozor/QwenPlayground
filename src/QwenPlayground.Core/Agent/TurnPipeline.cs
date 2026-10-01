@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.MetaInfo;
@@ -126,6 +128,9 @@ public sealed class TurnPipeline
                 {
                     _onStatus($"ошибка проверки бюджета контекста: {exception.Message}");
                     _session.SaveCurrent();
+                    // Громко в events-лог: повторяющийся budget-failed — сигнал к действию
+                    // (бюджет ужат, контекст разросся, сервер не отвечает).
+                    AppEventLog.Log($"turn: budget-failed — {exception.Message}");
                     return new TurnOutcome { BudgetFailed = true };
                 }
             }
@@ -133,7 +138,9 @@ public sealed class TurnPipeline
             // ProjectRoot убран планом 2026-10-01): любой чат инструментален, набор
             // инструментов определяет профиль (prompt.Tools). Рабочая папка — параметр
             // path-тулов: root сессии читается AgentLoop на каждой итерации.
-            return await RunCoreAsync(continueLastAssistant, onEvent);
+            var outcome = await RunCoreAsync(continueLastAssistant, onEvent);
+            LogTurnSummary(outcome);
+            return outcome;
         }
         finally
         {
@@ -166,6 +173,22 @@ public sealed class TurnPipeline
             _log[^1].Role == ChatRole.Assistant
             ? _log[^1]
             : null;
+        // Статистики хода (P2): итерации/тулы/токены — из событий цикла, компакция —
+        // из переходов FSM (единственный источник правды «сжимали ли контекст»).
+        var stopwatch = Stopwatch.StartNew();
+        var iterations = 0;
+        var toolCalls = 0;
+        var promptTokens = 0;
+        var completionTokens = 0;
+        var compacted = false;
+        void OnStateChanged(ChatState from, ChatState to)
+        {
+            if (to == ChatState.Compacting)
+            {
+                compacted = true;
+            }
+        }
+        _chatState.StateChanged += OnStateChanged;
         TurnOutcome outcome;
         try
         {
@@ -223,24 +246,76 @@ public sealed class TurnPipeline
                 CancellationToken = turnToken
             }))
             {
+                // Счётчики до sink'а: статистика хода не зависит от вида.
+                switch (agentEvent)
+                {
+                    case AssistantMessageEvent assistant:
+                        iterations++;
+                        if (assistant.Message.Generation is { } generation)
+                        {
+                            promptTokens += generation.PromptTokens ?? 0;
+                            completionTokens += generation.CompletionTokens ?? 0;
+                        }
+                        break;
+                    case ToolCallStartedEvent:
+                        toolCalls++;
+                        break;
+                }
                 onEvent(agentEvent);
             }
-            outcome = new TurnOutcome();
+            outcome = FinishOutcome();
         }
         catch (OperationCanceledException)
         {
-            outcome = new TurnOutcome { Canceled = true };
+            outcome = FinishOutcome(canceled: true);
         }
         catch (Exception exception)
         {
             // Куда показать ошибку (пузырь или статус) — решает вид: получает исключение в итоге.
-            outcome = new TurnOutcome { Error = exception };
+            outcome = FinishOutcome(error: exception);
+        }
+        finally
+        {
+            _chatState.StateChanged -= OnStateChanged;
         }
         if (SelfBuildService.ConsumeRestartRequest() is { } restartBuildId)
         {
             RestartInto(restartBuildId);
         }
         return outcome;
+
+        // Частичные статистики при отмене/ошибке — это и есть данные для постмортема.
+        TurnOutcome FinishOutcome(bool canceled = false, Exception? error = null) => new()
+        {
+            Canceled = canceled,
+            Error = error,
+            Iterations = iterations,
+            ToolCalls = toolCalls,
+            PromptTokens = promptTokens,
+            CompletionTokens = completionTokens,
+            Compacted = compacted,
+            SlotId = _session.SlotId(),
+            Duration = stopwatch.Elapsed
+        };
+    }
+
+    /// <summary>
+    /// Саммари хода в always-on events-лог (P2, 2026-10-01): одна grep'ящаяся строка
+    /// «turn: ...» на ход — постмортем для длинных автономных прогонов (events-лог +
+    /// crash-лог вместе дают картину: что делал ход, сколько стоил, где упал).
+    /// </summary>
+    private static void LogTurnSummary(TurnOutcome outcome)
+    {
+        var kind = outcome.Canceled ? "canceled" : outcome.Error is not null ? "error" : "ok";
+        var slot = outcome.SlotId is { } slotId ? $"slot {slotId}" : "slot -";
+        var compacted = outcome.Compacted ? "compacted " : string.Empty;
+        var duration = $"{(int)outcome.Duration.TotalMinutes}m{(int)outcome.Duration.TotalSeconds % 60}s";
+        var detail = outcome.Error is { } error
+            ? $" | {error.Message.ReplaceLineEndings(" ")}"
+            : string.Empty;
+        AppEventLog.Log($"turn: {kind} | {outcome.Iterations} iter | {outcome.ToolCalls} tools | " +
+                        $"{outcome.PromptTokens} prompt / {outcome.CompletionTokens} completion tok | " +
+                        $"{compacted}{slot} | {duration}{detail}");
     }
 
     /// <summary>
@@ -295,7 +370,13 @@ public sealed record TurnSessionView(
     /// </summary>
     Func<string, string?>? SetRoot = null);
 
-/// <summary>Итог хода: вид решает, куда показать ошибку (пузырь ответа или статус-строка).</summary>
+/// <summary>
+/// Итог хода: вид решает, куда показать ошибку (пузырь ответа или статус-строка).
+/// Статистики (P2, 2026-10-01): ход — единственная единица наблюдения harness'а;
+/// саммари пишется в always-on events-лог (LogTurnSummary) — постмортем для длинных
+/// автономных прогонов. При отмене/ошибке несутся ЧАСТИЧНЫЕ статистики — они и есть
+/// данные для постмортема (где и на какой итерации упал).
+/// </summary>
 public sealed class TurnOutcome
 {
     /// <summary>Ход отменён (Cancel).</summary>
@@ -306,4 +387,18 @@ public sealed class TurnOutcome
     public bool Busy { get; init; }
     /// <summary>Ход упал (цикл бросил).</summary>
     public Exception? Error { get; init; }
+    /// <summary>Итераций цикла (ассистент-сообщений = вызовов модели).</summary>
+    public int Iterations { get; init; }
+    /// <summary>Вызовов инструментов (ToolCallStarted).</summary>
+    public int ToolCalls { get; init; }
+    /// <summary>Сумма prompt-токенов по итерациям (из GenerationInfo сервера).</summary>
+    public int PromptTokens { get; init; }
+    /// <summary>Сумма completion-токенов по итерациям.</summary>
+    public int CompletionTokens { get; init; }
+    /// <summary>Был ли переход FSM в Compacting за ход.</summary>
+    public bool Compacted { get; init; }
+    /// <summary>Слот llama.cpp хода (SlotAllocation); null — без пиннинга.</summary>
+    public int? SlotId { get; init; }
+    /// <summary>Длительность хода (старт RunCoreAsync → итог).</summary>
+    public TimeSpan Duration { get; init; }
 }
