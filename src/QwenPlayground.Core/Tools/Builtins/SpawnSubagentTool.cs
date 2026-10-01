@@ -37,6 +37,14 @@ public sealed class SpawnSubagentTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
+        // Глубина спавна (P5, defense in depth): субагент не спавнит субагентов.
+        // Основной отказ — хард-блэклист скоупа в ToolRegistry; это вторая линия.
+        if (SpawnDepth.Current >= 1)
+        {
+            return "spawn_subagent: субагенты не запускают субагентов (лимит глубины 1). " +
+                   "Верни отчёт вызывающему агенту — он решит, что делать дальше.";
+        }
+
         var task = Task.Trim();
         if (task.Length == 0)
         {

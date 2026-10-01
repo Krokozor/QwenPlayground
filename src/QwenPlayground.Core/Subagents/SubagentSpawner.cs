@@ -168,7 +168,10 @@ public sealed class SubagentSpawner
 
         try
         {
-            var report = await Runner(new SubagentSpec(task, title), cancellationToken);
+            // Глубина спавна (P5): весь ход субагента — на глубине 1; его инструменты
+            // (spawn_subagent) видят это через AsyncLocal и отказывают в рекурсии.
+            var report = await SpawnDepth.RunAsSubagentAsync(
+                () => Runner(new SubagentSpec(task, title), cancellationToken));
             return new SubagentOutcome { Report = report, KvAnchored = anchored, KvNote = kvNote };
         }
         finally

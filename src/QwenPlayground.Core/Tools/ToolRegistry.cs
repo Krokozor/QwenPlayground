@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json.Nodes;
 using QwenPlayground.Core.Chat;
+using QwenPlayground.Core.Inference;
 
 namespace QwenPlayground.Core.Tools;
 
@@ -27,6 +28,18 @@ public sealed class ToolRegistry
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ToolEntry> _tools = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _mutationLock = new();
     private volatile ToolDefinition[] _definitions = [];
+
+    // P5 (внешнее ревью 2026-10-01): хард-блэклист скоупа субагента — сильнее профиля.
+    // DeniedTools в chat-profiles.json — данные (правятся в редакторе профилей);
+    // кодовая гарантия не правится. spawn_subagent — рекурсия (слот 3 единственный,
+    // «субагент субагента» не имеет окна и некуда унести отчёт); rebuild_self —
+    // субагент пересобирает приложение посреди чужого хода: родительский ход умирает,
+    // отчёт теряется, KV-якорь остаётся висеть.
+    private static readonly HashSet<string> SubagentHardDenied = new(StringComparer.Ordinal)
+    {
+        "spawn_subagent",
+        "rebuild_self"
+    };
 
     /// <summary>Классический сценарий: встроенные инструменты из сборок (пусто → Core).</summary>
     public ToolRegistry(params Assembly[] assemblies)
@@ -137,6 +150,15 @@ public sealed class ToolRegistry
     /// </summary>
     public async Task<ToolExecutionResult> ExecuteDetailedAsync(string name, JsonObject arguments, ToolContext context, CancellationToken cancellationToken = default)
     {
+        // P5: хард-блэклист субагента — до скоуп-проверки (не зависит от профиля).
+        // Скоуп субагента = слот 3 (SlotAllocation.Subagent — единственный на субагентов).
+        if (context.SlotId == SlotAllocation.Subagent && SubagentHardDenied.Contains(name))
+        {
+            return new ToolExecutionResult(
+                $"Error: tool '{name}' is hard-denied for subagents (code-level blacklist, not a profile). " +
+                "A subagent must not spawn subagents or rebuild the application — return the report instead.",
+                null);
+        }
         // Авторизация скоупа (фаза 2, план 2026-09-28): инструмент, которого нет в
         // рекламируемом множестве хода, не выполняется даже если зарегистрирован
         // (субагент: spawn_subagent/rebuild_self из DeniedTools профиля).
