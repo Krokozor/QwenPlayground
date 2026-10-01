@@ -48,13 +48,12 @@ public sealed class TurnViewViewModel {
     /// TurnPipeline; здесь — только состояние вида (пузыри) и решение, куда показать ошибку.
     /// </summary>
     private async Task GenerateCoreAsync(bool continueLastAssistant) {
-        var agentic = S.ProjectRoot.Trim().Length > 0;
         var continued = continueLastAssistant && _runtime.Log.Count > 0 &&
             _runtime.Log[^1].Role == ChatRole.Assistant
             ? _runtime.Log[^1]
             : null;
         // Состояние одного хода: локальные мутации обработчиков событий собраны вместе.
-        var turn = new TurnState { Continued = continued, Agentic = agentic };
+        var turn = new TurnState { Continued = continued };
         if (continued is not null) {
             turn.CurrentAssistant = _messages[^1];
             turn.Raw.Append(continued.ToRawOutput());
@@ -75,13 +74,7 @@ public sealed class TurnViewViewModel {
             CommitCanceledPartial(turn.Continued, turn.CurrentAssistant, turn.Raw.ToString());
         }
         else if (outcome.Error is { } exception) {
-            // В single-режиме исторически показываем ошибку прямо в пузыре ответа.
-            if (!outcome.Agentic && turn.CurrentAssistant is not null) {
-                turn.CurrentAssistant.Content = $"[ошибка] {exception.Message}";
-            }
-            else {
-                _status($"ошибка: {exception.Message}");
-            }
+            _status($"ошибка: {exception.Message}");
         }
     }
 
@@ -93,7 +86,6 @@ public sealed class TurnViewViewModel {
         public MessageViewModel? PendingTool { get; set; }
         public TokenUsage? Usage { get; set; }
         public ChatMessage? Continued { get; init; }
-        public bool Agentic { get; init; }
         /// <summary>BeginStreaming вызван для CurrentAssistant (continue-ход: задан заранее).</summary>
         public bool StreamStarted;
     }
@@ -145,7 +137,7 @@ public sealed class TurnViewViewModel {
         }
         turn.Raw.Append(text);
         turn.CurrentAssistant.AppendStreamChunk(text);
-        _runtime.MemorySurfacer.MaybeFireLiveRecall(turn.Agentic, text, turn.Raw, turn.Continued is not null,
+        _runtime.MemorySurfacer.MaybeFireLiveRecall(text, turn.Raw, turn.Continued is not null,
             _runtime.Log, _runtime.SessionId() == MainAgent.SessionId,
             S.CompanionEndpoint, _runtime.Turns.ActiveToken);
     }
@@ -161,14 +153,13 @@ public sealed class TurnViewViewModel {
         turn.StreamStarted = false;
         turn.Raw.Clear();
         // Ассоциативный реколл: факты подтягиваются между итерациями, фоном на компаньон-модели.
-        if (turn.Agentic) {
-            var conversation = _runtime.Log;
-            var companion = S.CompanionEndpoint;
-            var token = _runtime.Turns.ActiveToken;
-            _background.Queue("реколл памяти", () =>
-                _runtime.MemorySurfacer.RecallAfterTurnAsync(
-                    conversation, _runtime.SessionId() == MainAgent.SessionId, companion, token));
-        }
+        // Все ходы агентны (гейт убран 2026-10-01) — реколл после хода всегда.
+        var conversation = _runtime.Log;
+        var companion = S.CompanionEndpoint;
+        var token = _runtime.Turns.ActiveToken;
+        _background.Queue("реколл памяти", () =>
+            _runtime.MemorySurfacer.RecallAfterTurnAsync(
+                conversation, _runtime.SessionId() == MainAgent.SessionId, companion, token));
     }
 
     private void OnToolStarted(TurnState turn, string name, JsonObject arguments) {

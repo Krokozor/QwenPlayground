@@ -51,6 +51,22 @@ public sealed partial class SessionListViewModel : ObservableObject {
     [ObservableProperty]
     private SlotOption _selectedSlot = new(null, "— (LRU)");
 
+    // Рабочая папка текущей сессии (root инструментов, план 2026-10-01): поле — своя
+    // папка сессии (пусто — действует глобальный дефолт из настроек). «…» — пикер
+    // существующей папки, Enter — применить введённое, «✕» — сброс к дефолту.
+    // Ошибка валидации — красным под строкой; тул set_session_root меняет root
+    // параллельно — поле синхронизируется событием RootChanged.
+    [ObservableProperty]
+    private string _sessionRoot = string.Empty;
+
+    [ObservableProperty]
+    private string? _sessionRootError;
+
+    /// <summary>Красная строка ошибки видна, только если валидация не прошла.</summary>
+    public bool HasSessionRootError => !string.IsNullOrEmpty(SessionRootError);
+
+    partial void OnSessionRootErrorChanged(string? value) => OnPropertyChanged(nameof(HasSessionRootError));
+
     /// <summary>
     /// Кнопка «×» (удаление сессии) видна только для не-main сессий: main удалить нельзя,
     /// поэтому нажимать на кнопку у main незачем.
@@ -71,6 +87,9 @@ public sealed partial class SessionListViewModel : ObservableObject {
         _subagents = subagents;
         _isGenerating = isGenerating;
         _status = status;
+        // Агент сменил root инструментом set_session_root — синхронизируем поле.
+        _sessions.RootChanged += SyncSessionRootField;
+        SyncSessionRootField();
     }
 
     partial void OnSelectedSessionChanged(SessionInfo? value) {
@@ -81,6 +100,7 @@ public sealed partial class SessionListViewModel : ObservableObject {
         if (_sessions.Load(value.Id))
             _status(string.Empty);
         // Реакции вида (список/превью/полки) — в OnSessionChanged (событие контроллера).
+        SyncSessionRootField();
     }
 
     /// <summary>
@@ -198,6 +218,50 @@ public sealed partial class SessionListViewModel : ObservableObject {
         SelectedSlot = SlotOptions.FirstOrDefault(o => o.Value == _sessions.CurrentSlotId)
                        ?? SlotOptions[0];
         OnPropertyChanged(nameof(IsMainSession));
+        SyncSessionRootField();
+    }
+
+    /// <summary>Поле root ← текущая рабочая папка сессии (пусто — не задано, дефолт).</summary>
+    private void SyncSessionRootField()
+    {
+        SessionRoot = _sessions.Root ?? string.Empty;
+        SessionRootError = null;
+    }
+
+    /// <summary>
+    /// Применить рабочую папку из поля (Enter или «✓»): валидация у сессии
+    /// (абсолютный путь, папка существует, создание НЕЛЬЗЯ). Ошибка — красным,
+    /// root не меняется.
+    /// </summary>
+    [RelayCommand]
+    private void ApplySessionRoot()
+    {
+        var error = _sessions.SetRoot(SessionRoot);
+        SessionRootError = error;
+        if (error is null)
+        {
+            SyncSessionRootField();
+        }
+    }
+
+    /// <summary>«…»: пикер существующей папки, затем применить.</summary>
+    [RelayCommand]
+    private void BrowseSessionRoot()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Рабочая папка сессии" };
+        if (dialog.ShowDialog() == true)
+        {
+            SessionRoot = dialog.FolderName;
+            ApplySessionRoot();
+        }
+    }
+
+    /// <summary>«✕»: сбросить рабочую папку — вернуться к глобальному дефолту из настроек.</summary>
+    [RelayCommand]
+    private void ClearSessionRoot()
+    {
+        _sessions.ClearRoot();
+        SyncSessionRootField();
     }
 
     /// <summary>

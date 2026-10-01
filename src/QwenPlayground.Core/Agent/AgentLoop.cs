@@ -63,7 +63,6 @@ public sealed class AgentLoop
             cancellationToken, request.CancellationToken);
         var conversation = request.Conversation;
         var endpoint = settings.Endpoint;
-        var projectRoot = settings.ProjectRoot;
         var nagOnNoToolCall = request.NagOnNoToolCall;
         var nagText = request.NagText;
         var maxNags = request.MaxNags;
@@ -250,6 +249,11 @@ public sealed class AgentLoop
             var allowedTools = request.ToolDefinitions is null
                 ? null
                 : request.ToolDefinitions.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // Рабочая папка (план 2026-10-01): своя у сессии, живое значение — читается
+            // на итерацию, поэтому set_session_root действует со следующей итерации того
+            // же хода. Не задана — глобальная настройка скоупа (дефолт).
+            var sessionRoot = request.SessionRoot?.Invoke();
+            var projectRoot = string.IsNullOrWhiteSpace(sessionRoot) ? settings.ProjectRoot : sessionRoot!.Trim();
             var toolContext = new ToolContext(projectRoot,
                 FindById,
                 (id, content) =>
@@ -268,7 +272,8 @@ public sealed class AgentLoop
                 runtime,
                 QwenPlayground.Core.Settings.AppSettings.Get().AdditionalWorkspaces,
                 request.SlotId,
-                allowedTools);
+                allowedTools,
+                request.SetSessionRoot);
             foreach (var call in toolCalls)
             {
                 var arguments = call.Arguments as JsonObject ?? new JsonObject();

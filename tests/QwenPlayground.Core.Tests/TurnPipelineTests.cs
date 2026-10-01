@@ -59,6 +59,7 @@ public sealed class TurnPipelineTests : IDisposable
             () => _sessions.CurrentId,
             () => _sessions.PromptKey,
             () => _sessions.DirectoryFor(_sessions.CurrentId),
+            () => SessionRoots.Resolve(_sessions.Root, AppSettings.Get().ProjectRoot),
             new InjectedIdentity(),
             new ExternalToolsNote(),
             _tools);
@@ -107,7 +108,9 @@ public sealed class TurnPipelineTests : IDisposable
                 () => _sessions.PromptKey,
                 () => _sessions.StateBlockKey,
                 _sessions.SaveCurrent,
-                () => null), // тесты без пиннинга слотов
+                () => null, // тесты без пиннинга слотов
+                () => _sessions.Root,
+                _sessions.SetRoot),
             _assembler,
             _surfacer,
             status => _statuses.Add(status),
@@ -286,7 +289,29 @@ public sealed class TurnPipelineTests : IDisposable
 
         Assert.NotNull(_observedRequest);
         var request = _observedRequest!;
-        Assert.True(request.AllowToolExecution); // agentic (ProjectRoot задан) && main-сессия
+        Assert.True(request.AllowToolExecution); // main-сессия: профиль разрешает инструменты
+        Assert.NotNull(request.ToolDefinitions);
+        Assert.NotEmpty(request.ToolDefinitions);
+        // Рабочая папка (план 2026-10-01): live-провайдер сессии + колбэк смены.
+        // У сессии своего root'а нет — провайдер отдаёт null (фоллбек в настройки
+        // делает AgentLoop на итерации), колбэк смены доступен.
+        Assert.NotNull(request.SessionRoot);
+        Assert.NotNull(request.SetSessionRoot);
+        Assert.Null(request.SessionRoot());
+    }
+
+    [Fact]
+    public async Task MainSession_WithoutProjectRoot_ToolsStillAllowed()
+    {
+        // Гейт агентности по ProjectRoot убран (2026-10-01): любой чат инструментален,
+        // набор определяет профиль. Пустой root не отключает инструменты.
+        AppSettings.Get().ProjectRoot = string.Empty;
+
+        await _pipeline.RunTurnAsync(continueLastAssistant: false, _ => { });
+
+        Assert.NotNull(_observedRequest);
+        var request = _observedRequest!;
+        Assert.True(request.AllowToolExecution);
         Assert.NotNull(request.ToolDefinitions);
         Assert.NotEmpty(request.ToolDefinitions);
     }

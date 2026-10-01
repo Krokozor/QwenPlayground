@@ -214,9 +214,10 @@ public static class MemoryClassifier
         {
             // overwriteStrings: устаревшая версия — старые строковые категории неактуальны.
             await EnrichAsync(item, endpoint, cancellationToken); // словарь мог смениться — строки выводятся из новых распределений
-            if (item.HasSemanticLayers)
+            if (item.HasSemanticLayers && store.Update(item))
             {
-                store.Update(item);
+                // Update отклоняет устаревший снимок (факт удалён/заменён за время сети) —
+                // такой факт не считаем обработанным: следующий проход снимет его заново.
                 processed++;
             }
         }

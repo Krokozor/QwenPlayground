@@ -97,6 +97,21 @@
                 <!-- «✕» — вычистить KV слота текущей сессии (осознанный сброс кэша). -->
                 <Button Content="&#215;" Command="{Binding SessionList.EraseCurrentSlotCommand}" Padding="8,0" Margin="0,0,12,0"
                         ToolTip="Вычистить KV слота текущей сессии: следующий ход пере-евалюирует промпт (сброс кэша)" />
+                <!-- Рабочая папка сессии (root инструментов, план 2026-10-01): своя папка
+                     или глобальный дефолт (пустое поле). «…» — пикер, Enter — применить,
+                     «✕» — сброс к дефолту. Папку НЕ создаём: валидация — только существование. -->
+                <TextBlock Text="Папка:" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox x:Name="SessionRootBox" Width="150" Margin="0,0,4,0" VerticalContentAlignment="Center"
+                         Text="{Binding SessionList.SessionRoot, UpdateSourceTrigger=LostFocus}"
+                         KeyDown="SessionRootBox_KeyDown"
+                         ToolTip="Рабочая папка этой сессии (root инструментов): относительные пути file-тулов и cwd shell. Пусто — глобальный дефолт из настроек. Enter — применить (папка должна существовать)." />
+                <Button Content="…" Command="{Binding SessionList.BrowseSessionRootCommand}" Padding="8,0" Margin="0,0,4,0"
+                        ToolTip="Выбрать рабочую папку (существующую)" />
+                <Button Content="&#215;" Command="{Binding SessionList.ClearSessionRootCommand}" Padding="8,0" Margin="0,0,12,0"
+                        ToolTip="Сбросить рабочую папку (вернуться к глобальному дефолту)" />
+                <TextBlock Text="{Binding SessionList.SessionRootError}" Foreground="#FF5555" FontSize="11"
+                           VerticalAlignment="Center" Margin="0,0,12,0"
+                           Visibility="{Binding SessionList.HasSessionRootError, Converter={StaticResource BoolToVis}}" />
             </StackPanel>
             <!-- Полки (группы инструментов): тот же механизм, что и у тулов агента
                  activate/deactivate_shelf. Отметка — немедленная активация, снятие — staged

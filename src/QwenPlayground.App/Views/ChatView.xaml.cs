@@ -184,6 +184,16 @@ public partial class ChatView : UserControl
 
     private void ShelfPopup_Closed(object sender, System.EventArgs e) => _shelfMenuOpen = false;
 
+    // Рабочая папка сессии (план 2026-10-01): Enter в поле — применить (валидация в VM).
+    private void SessionRootBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && DataContext is ChatViewModel chat && chat.SessionList is { } list)
+        {
+            list.ApplySessionRootCommand.Execute(null);
+            e.Handled = true;
+        }
+    }
+
     /// <summary>Ctrl+V: если в буфере картинка — вкладываем её (текстовую вставку не трогаем).</summary>
     private void OnInputPreviewKeyDown(object sender, KeyEventArgs e)
     {

@@ -70,6 +70,19 @@ public sealed record AgentLoopRequest
     public string? SessionDir { get; init; }
 
     /// <summary>
+    /// Живой провайдер рабочей папки сессии (план 2026-10-01): читается на КАЖДОЙ
+    /// итерации — set_session_root действует со следующей итерации того же хода.
+    /// null — контекст без сессии (тесты): root из настроек скоупа.
+    /// </summary>
+    public Func<string?>? SessionRoot { get; init; }
+
+    /// <summary>
+    /// Назначить рабочую папку сессии (тул set_session_root): возвращает текст ошибки,
+    /// null — успех (сессия сохранена). null — в этом контексте сессии нет.
+    /// </summary>
+    public Func<string, string?>? SetSessionRoot { get; init; }
+
+    /// <summary>
     /// Пиннинг слота llama.cpp для всех запросов хода (см. <c>SlotAllocation</c>):
     /// main → 0, окна → 1/2, субагент → 3. null — сервер выбирает сам (LRU).
     /// Проставляется из <c>TurnSessionView.SlotId</c> (пinned-рантаймы несут свой слот).

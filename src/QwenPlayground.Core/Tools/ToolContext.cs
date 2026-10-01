@@ -52,6 +52,14 @@ public sealed class ToolContext
     /// </summary>
     public AgentRuntime? Runtime { get; }
 
+    /// <summary>
+    /// Назначить рабочую папку сессии (тул set_session_root, план 2026-10-01):
+    /// возвращает текст ошибки, null — успех (сессия сохранена, действует со следующей
+    /// итерации). null — контекст без сессии (тесты/оркестратор): тул сообщает, что
+    /// смена недоступна.
+    /// </summary>
+    public Func<string, string?>? SetSessionRoot { get; }
+
     /// <summary>Скоуп исполнения: переданный Runtime или main-агент по умолчанию.</summary>
     public AgentRuntime Scope => Runtime ?? AgentRuntime.Main;
 
@@ -81,7 +89,8 @@ public sealed class ToolContext
         AgentRuntime? runtime = null,
         IReadOnlyList<string>? additionalWorkspaces = null,
         int? slotId = null,
-        IReadOnlySet<string>? allowedTools = null)
+        IReadOnlySet<string>? allowedTools = null,
+        Func<string, string?>? setSessionRoot = null)
     {
         ProjectRoot = Path.GetFullPath(projectRoot);
         SessionDir = sessionDir;
@@ -92,6 +101,7 @@ public sealed class ToolContext
         Runtime = runtime;
         SlotId = slotId;
         AllowedTools = allowedTools;
+        SetSessionRoot = setSessionRoot;
         AdditionalWorkspaces = (additionalWorkspaces ?? Array.Empty<string>())
             .Select(p => Path.GetFullPath(p))
             .ToList();

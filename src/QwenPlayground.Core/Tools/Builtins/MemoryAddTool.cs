@@ -60,13 +60,16 @@ public sealed class MemoryAddTool : AgentTool
             {
                 // классификация недоступна — факт остаётся без слоёв, это штатно
             }
-
-            if (item.HasSemanticLayers)
-            {
-                store.Update(item);
-            }
         }
 
+        // Update отклоняет устаревший снимок (факт удалён/заменён за время классификации) —
+        // тогда и сам факт может быть уже не на диске: сообщаем модели честно, а не «saved».
+        var persisted = !item.HasSemanticLayers || store.Update(item);
+        if (!persisted)
+        {
+            return $"Memory save conflict: fact {item.Id[..8]} was deleted or replaced while layers were " +
+                   "being computed — it is NOT on disk. (Conflict logged to events; re-add if needed.)";
+        }
         return $"Memory saved: {item.Id} (memories/{item.Id}.json). Index updated." +
                (item.HasSemanticLayers
                    ? $" Filed as: {MemoryClassifier.TopName(item.CategoryLayers)} {MemoryClassifier.TopEmojiOf(item.EmojiLayers)}."

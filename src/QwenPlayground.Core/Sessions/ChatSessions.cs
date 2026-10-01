@@ -175,10 +175,10 @@ public sealed class ChatSessions
 
     /// <summary>Сохранить контент текущей сессии (заголовок main проставляется здесь).</summary>
     public void SaveCurrent(IReadOnlyList<ChatMessage> messages, int nextMessageId, string purpose = "chat",
-        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null, int? slotId = null)
+        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null, int? slotId = null, string? root = null)
     {
         var title = CurrentId == MainAgent.SessionId ? MainTitle : null;
-        _store.Save(CurrentId, messages, title, nextMessageId, purpose, samplerKey, promptKey, stateBlockKey, slotId);
+        _store.Save(CurrentId, messages, title, nextMessageId, purpose, samplerKey, promptKey, stateBlockKey, slotId, root);
     }
 
     /// <summary>
@@ -186,8 +186,8 @@ public sealed class ChatSessions
     /// Заголовок не проставляется (у закреплённых сессий нет main-заголовка).
     /// </summary>
     public void Save(string id, IReadOnlyList<ChatMessage> messages, int nextMessageId, string purpose = "subagent",
-        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null, int? slotId = null) =>
-        _store.Save(id, messages, null, nextMessageId, purpose, samplerKey, promptKey, stateBlockKey, slotId);
+        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null, int? slotId = null, string? root = null) =>
+        _store.Save(id, messages, null, nextMessageId, purpose, samplerKey, promptKey, stateBlockKey, slotId, root);
 
     /// <summary>
     /// Уборка на старте: снести ПУСТЫЕ каталоги сессий (нет ни chat.json, ни сайдкаров,

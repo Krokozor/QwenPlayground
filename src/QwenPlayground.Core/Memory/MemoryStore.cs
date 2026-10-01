@@ -1,4 +1,5 @@
 using System.Text.Json;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Serialization;
 
@@ -47,10 +48,47 @@ public sealed class MemoryStore
         return item;
     }
 
-    /// <summary>Перезаписывает файл факта (после классификации слоёв). Индекс пересобирается.</summary>
-    public void Update(MemoryItem item)
+    /// <summary>
+    /// Перезаписывает файл факта (после классификации слоёв). Индекс пересобирается.
+    /// Версионная проверка (оптимистичная конкурентность, без локов — модель однопоточная):
+    /// файл должен существовать, и его CreatedAt должен совпадать с CreatedAt предмета.
+    /// Иначе факт удалён/заменён ПОСЛЕ нашего снимка — классический сценарий: flush снял
+    /// список, ушёл на сеть (await), агент за это время memory_merge'нул факт (Remove),
+    /// flush возвращается и вслепую перезаписывает X.json — «воскресание» слитого факта
+    /// (баг 2026-10-01, внешний код-ревью). Отказ — в events-лог, запись не выполняется.
+    /// Легочный файл без CreatedAt (ticks == 0) версионных данных не несёт — запись допускается.
+    /// </summary>
+    public bool Update(MemoryItem item)
     {
+        var file = Path.Combine(_directory, item.Id + ".json");
+        if (!File.Exists(file))
+        {
+            NoteConflict(item, "файл не существует (факт удалён во время операции)");
+            return false;
+        }
+        MemoryItem? disk;
+        try
+        {
+            disk = JsonSerializer.Deserialize<MemoryItem>(File.ReadAllText(file));
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            NoteConflict(item, $"файл повреждён: {exception.Message}");
+            return false;
+        }
+        if (disk is null || (disk.CreatedAt.Ticks != 0 && disk.CreatedAt != item.CreatedAt))
+        {
+            NoteConflict(item, $"несовпадение версий (на диске: {disk?.CreatedAt:O}, в снимке: {item.CreatedAt:O})");
+            return false;
+        }
         Save(item);
+        return true;
+    }
+
+    private static void NoteConflict(MemoryItem item, string reason)
+    {
+        AppEventLog.Log($"memory: Update({item.Id[..8]}) отклонён — {reason}; " +
+                        "устаревший снимок не перезаписал актуальное состояние");
     }
 
     private void Save(MemoryItem item)

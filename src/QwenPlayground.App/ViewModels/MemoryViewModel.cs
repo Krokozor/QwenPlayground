@@ -107,9 +107,11 @@ public partial class MemoryViewModel : ObservableObject
         item.Content = FactEditContent;
         // Строковые поля редактируются вручную — слои не трогаем (они про распределения).
         
-        _store.Update(item);
         RefreshMemories();
-        Status = $"Факт {SelectedFact.Id} сохранён.";
+        // Update отклоняет, если факт удалён/заменён с момента Get (конфликт — в events-лог).
+        Status = _store.Update(item)
+            ? $"Факт {SelectedFact.Id} сохранён."
+            : $"Конфликт: факт {SelectedFact.Id} изменился или удалён во время сохранения — правка не применена.";
     }
 
     /// <summary>
@@ -125,8 +127,10 @@ public partial class MemoryViewModel : ObservableObject
             item.CategoryLayers.Clear();
             item.EmojiLayers.Clear();
             item.LayersVersion = 0;
-            _store.Update(item);
-            reset++;
+            if (_store.Update(item))
+            {
+                reset++;
+            }
         }
         RefreshMemories();
         Status = $"Классификации сброшены у {reset} фактов (записи не тронуты).";
@@ -310,9 +314,11 @@ public partial class MemoryViewModel : ObservableObject
         try
         {
             await MemoryClassifier.EnrichAsync(item, AppSettings.Get().CompanionEndpoint);
-            _store.Update(item);
             RefreshMemories();
-            Status = $"Слои пересчитаны: {MemoryClassifier.TopName(item.CategoryLayers)} {MemoryClassifier.TopEmojiOf(item.EmojiLayers)}.";
+            // Факт мог быть удалён/заменён за время сети — Update отклонит устаревший снимок.
+            Status = _store.Update(item)
+                ? $"Слои пересчитаны: {MemoryClassifier.TopName(item.CategoryLayers)} {MemoryClassifier.TopEmojiOf(item.EmojiLayers)}."
+                : $"Конфликт: факт изменился или удалён во время пересчёта — слои не сохранены.";
         }
         catch (Exception ex)
         {

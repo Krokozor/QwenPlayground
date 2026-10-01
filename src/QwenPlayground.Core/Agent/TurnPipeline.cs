@@ -129,15 +129,11 @@ public sealed class TurnPipeline
                     return new TurnOutcome { BudgetFailed = true };
                 }
             }
-            // Режим всегда агентный (тумблер режимов убран из UI, 2026-08-22): инструменты
-            // доступны, если задан проект.
-            var settings = AppSettings.Get();
-            var agentic = settings.ProjectRoot.Trim().Length > 0;
-            if (agentic)
-            {
-                Directory.CreateDirectory(settings.ProjectRoot);
-            }
-            return await RunCoreAsync(agentic, continueLastAssistant, onEvent);
+            // Режим всегда агентный (тумблер режимов убран из UI, 2026-08-22; гейт по
+            // ProjectRoot убран планом 2026-10-01): любой чат инструментален, набор
+            // инструментов определяет профиль (prompt.Tools). Рабочая папка — параметр
+            // path-тулов: root сессии читается AgentLoop на каждой итерации.
+            return await RunCoreAsync(continueLastAssistant, onEvent);
         }
         finally
         {
@@ -156,11 +152,11 @@ public sealed class TurnPipeline
 
     /// <summary>
     /// Реальный ход: FSM, AgentLoop, обработка отмены/ошибки, рестарт. Единый путь
-    /// генерации (всегда агентный: тумблер режимов убран 2026-08-22);
-    /// allowToolExecution/toolDefinitions зависят от того, задан ли ProjectRoot:
-    /// без проекта ход идёт как обычный чат — инструменты не рекламируются и не выполняются.
+    /// генерации (всегда агентный: тумблер режимов убран 2026-08-22, гейт по ProjectRoot
+    /// убран 2026-10-01); allowToolExecution/toolDefinitions зависят от профиля чата
+    /// (prompt.Tools) — рабочая папка на рекламу не влияет.
     /// </summary>
-    private async Task<TurnOutcome> RunCoreAsync(bool agentic, bool continueLastAssistant, Action<AgentEvent> onEvent)
+    private async Task<TurnOutcome> RunCoreAsync(bool continueLastAssistant, Action<AgentEvent> onEvent)
     {
         // FSM-вход (Idle → Generating) и возврат в Idle — в RunTurnAsync: единый вход
         // и единый выход хода (фаза 1, план 2026-09-28). Здесь — только тело хода.
@@ -183,7 +179,7 @@ public sealed class TurnPipeline
             var sampler = profiles.ResolveSampler(_session.SamplerKey());
             var prompt = profiles.ResolvePrompt(_session.PromptKey());
             var stateEnabled = isMain || profiles.ResolveStateBlock(_session.StateBlockKey()).Enabled;
-            var toolsAllowed = agentic && (isMain || prompt.Tools);
+            var toolsAllowed = isMain || prompt.Tools;
             await foreach (var agentEvent in _runLoop(new AgentLoopRequest {
                 Conversation = _log,
                 // Скоуп рантайма: цикл читает профиль настроек и маршрут интерактива
@@ -222,23 +218,25 @@ public sealed class TurnPipeline
                 Multimodal = multimodal,
                 SessionDir = sessionDir,
                 SlotId = _session.SlotId(),
+                SessionRoot = _session.Root,
+                SetSessionRoot = _session.SetRoot,
                 CancellationToken = turnToken
             }))
             {
                 onEvent(agentEvent);
             }
-            outcome = new TurnOutcome { Agentic = agentic };
+            outcome = new TurnOutcome();
         }
         catch (OperationCanceledException)
         {
-            outcome = new TurnOutcome { Agentic = agentic, Canceled = true };
+            outcome = new TurnOutcome { Canceled = true };
         }
         catch (Exception exception)
         {
             // Куда показать ошибку (пузырь или статус) — решает вид: получает исключение в итоге.
-            outcome = new TurnOutcome { Agentic = agentic, Error = exception };
+            outcome = new TurnOutcome { Error = exception };
         }
-        if (agentic && SelfBuildService.ConsumeRestartRequest() is { } restartBuildId)
+        if (SelfBuildService.ConsumeRestartRequest() is { } restartBuildId)
         {
             RestartInto(restartBuildId);
         }
@@ -284,7 +282,18 @@ public sealed record TurnSessionView(
     Func<string?> StateBlockKey,
     Action SaveCurrent,
     /// <summary>Пиннинг слота llama.cpp для сессии (SlotAllocation): main → 0, окна → 1/2, субагент → 3.</summary>
-    Func<int?> SlotId);
+    Func<int?> SlotId,
+    /// <summary>
+    /// Рабочая папка сессии (root инструментов, план 2026-10-01): живое значение —
+    /// тул set_session_root меняет его в середине хода, следующий рендер/итерация видит.
+    /// null — не задано: фоллбек в глобальную AppSettings.ProjectRoot.
+    /// </summary>
+    Func<string?>? Root = null,
+    /// <summary>
+    /// Назначить рабочую папку сессии (тул set_session_root / UI). Возвращает текст
+    /// ошибки; null — успех (сессия сохранена). null — в этом контексте нельзя.
+    /// </summary>
+    Func<string, string?>? SetRoot = null);
 
 /// <summary>Итог хода: вид решает, куда показать ошибку (пузырь ответа или статус-строка).</summary>
 public sealed class TurnOutcome
@@ -297,6 +306,4 @@ public sealed class TurnOutcome
     public bool Busy { get; init; }
     /// <summary>Ход упал (цикл бросил).</summary>
     public Exception? Error { get; init; }
-    /// <summary>Ход был агентным (задан проект) — для выбора показа ошибки.</summary>
-    public bool Agentic { get; init; }
 }

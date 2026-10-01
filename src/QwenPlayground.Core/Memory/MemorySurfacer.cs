@@ -136,12 +136,13 @@ public sealed class MemorySurfacer : IStateAnnouncer
     /// Триггер live-реколла по мере стриминга: не чаще LiveRecallInterval и только когда
     /// с прошлой пробы натекло >= LiveRecallMinTokens. Гениальный think длиной в тысячи токенов
     /// обрабатывается в процессе, а короткий ответ живёт обычным путём (recall после хода).
+    /// Все ходы агентны (гейт по ProjectRoot убран 2026-10-01) — параметра-гейта больше нет.
     /// </summary>
-    public void MaybeFireLiveRecall(bool agentic, string chunk, StringBuilder raw, bool isContinuation,
+    public void MaybeFireLiveRecall(string chunk, StringBuilder raw, bool isContinuation,
         IReadOnlyList<ChatMessage> conversation, bool isMainSession, string endpoint,
         CancellationToken cancellationToken)
     {
-        if (!agentic || raw.Length == 0)
+        if (raw.Length == 0)
         {
             return;
         }

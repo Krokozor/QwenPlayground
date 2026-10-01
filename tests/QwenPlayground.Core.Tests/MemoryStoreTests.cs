@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using QwenPlayground.Core.Memory;
 
 namespace QwenPlayground.Core.Tests;
@@ -66,6 +66,61 @@ public sealed class MemoryStoreTests : IDisposable
 
         Assert.Single(items);
         Assert.Equal("живой факт", items[0].Content);
+    }
+
+    // ── Версионная проверка Update (баг «воскресания факта», 2026-10-01) ──────────────
+
+    [Fact]
+    public void Update_UnmodifiedItem_Writes()
+    {
+        var store = new MemoryStore(_dir);
+        var item = store.Add("факт для Update");
+        var snapshot = store.Get(item.Id)!;
+        snapshot.LayersVersion = 1;
+
+        Assert.True(store.Update(snapshot));
+        Assert.Equal(1, store.Get(item.Id)!.LayersVersion);
+    }
+
+    [Fact]
+    public void Update_AfterDelete_Refuses_NoResurrection()
+    {
+        // Сценарий бага: flush снял снимок, ушёл на await; агент за это время
+        // memory_merge'нул факт (Remove); flush возвращается с Update — файл НЕ должен
+        // воскреснуть.
+        var store = new MemoryStore(_dir);
+        var item = store.Add("факт, который сольют");
+        var snapshot = store.Get(item.Id)!;
+        store.Remove(item.Id);
+
+        Assert.False(store.Update(snapshot));
+        Assert.False(File.Exists(Path.Combine(_dir, item.Id + ".json")));
+    }
+
+    [Fact]
+    public void Update_VersionMismatch_Refuses()
+    {
+        var store = new MemoryStore(_dir);
+        var item = store.Add("факт для конфликта версий");
+        var snapshot = store.Get(item.Id)!;
+        // Снимок «старше» диска: CreatedAt не совпадает.
+        snapshot.CreatedAt = snapshot.CreatedAt.AddDays(-1);
+
+        Assert.False(store.Update(snapshot));
+        Assert.Equal("факт для конфликта версий", store.Get(item.Id)!.Content);
+    }
+
+    [Fact]
+    public void Update_LegacyFileWithoutCreatedAt_Allows()
+    {
+        // Файл без CreatedAt (ticks == 0) версионных данных не несёт — запись допускается.
+        var store = new MemoryStore(_dir);
+        var legacy = new MemoryItem { Content = "легочный факт", CreatedAt = default };
+        File.WriteAllText(Path.Combine(_dir, legacy.Id + ".json"),
+            System.Text.Json.JsonSerializer.Serialize(legacy));
+
+        Assert.True(store.Update(legacy));
+        Assert.Equal("легочный факт", store.Get(legacy.Id)!.Content);
     }
 
     public void Dispose()

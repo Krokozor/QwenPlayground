@@ -59,6 +59,14 @@ public sealed class SessionData
     /// поля — 0, при загрузке выводится как max(Id)+1 (миграция).
     /// </summary>
     public int NextMessageId { get; set; }
+
+    /// <summary>
+    /// Рабочая папка сессии (root инструментов): относительные пути file-тулов и cwd
+    /// shell резолвятся от неё. null — не задано: фоллбек в глобальную
+    /// AppSettings.ProjectRoot (значение по умолчанию). Чат владеет ею сам
+    /// (план 2026-10-01): настройка — дефолт, а не источник истины.
+    /// </summary>
+    public string? Root { get; set; }
 }
 
 /// <summary>
@@ -140,7 +148,7 @@ public sealed class SessionStore
     }
 
     public void Save(string id, IReadOnlyList<ChatMessage> messages, string? title = null, int nextMessageId = 0, string purpose = "chat",
-        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null, int? slotId = null)
+        string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null, int? slotId = null, string? root = null)
     {
         var finalTitle = title;
         if (finalTitle is null)
@@ -163,7 +171,8 @@ public sealed class SessionStore
             SamplerKey = samplerKey,
             PromptKey = promptKey,
             StateBlockKey = stateBlockKey,
-            SlotId = slotId
+            SlotId = slotId,
+            Root = root
         };
         Directory.CreateDirectory(SessionFolder(id));
         AtomicFile.WriteAllText(ChatFilePath(id), Serialize(data));

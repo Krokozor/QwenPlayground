@@ -24,6 +24,7 @@ public sealed class SystemPromptAssembler
     private readonly Func<string> _currentSessionId;
     private readonly Func<string?> _promptKey;
     private readonly Func<string> _sessionDir;
+    private readonly Func<string?> _root;
     private readonly InjectedIdentity _identity;
     private readonly ExternalToolsNote _externalTools;
     private readonly ToolRegistry _toolRegistry;
@@ -37,6 +38,7 @@ public sealed class SystemPromptAssembler
         Func<string> currentSessionId,
         Func<string?> promptKey,
         Func<string> sessionDir,
+        Func<string?> root,
         InjectedIdentity identity,
         ExternalToolsNote externalTools,
         ToolRegistry toolRegistry)
@@ -44,15 +46,18 @@ public sealed class SystemPromptAssembler
         _currentSessionId = currentSessionId;
         _promptKey = promptKey;
         _sessionDir = sessionDir;
+        _root = root;
         _identity = identity;
         _externalTools = externalTools;
         _toolRegistry = toolRegistry;
     }
 
     /// <summary>
-    /// Блок «твоя сессия»: id, роль (main / субагент / pinned) и папка сессии как
-    /// личный склад «рабочих документов». Статичен внутри сессии — в base-промпт
-    /// попадает вместе с core (меняется только при смене сессии, как и core).
+    /// Блок «твоя сессия»: id, роль (main / субагент / pinned), папка сессии как
+    /// личный склад «рабочих документов» и рабочая папка (root инструментов,
+    /// план 2026-10-01). В base-промпт попадает вместе с core; меняется при смене
+    /// сессии И при смене root'а (set_session_root) — смена root'а даёт естественный
+    /// KV-rebuild, это осознанное действие.
     /// </summary>
     private string BuildSessionBlock()
     {
@@ -62,6 +67,7 @@ public sealed class SystemPromptAssembler
             : _promptKey() == ChatProfileSet.SubagentPromptKey
                 ? "субагент (спавнен main-агентом, ходишь в своём окне/пузыре)"
                 : "pinned-сессия (отдельное окно или не-main сессия)";
+        var root = _root();
         var lines = new List<string>
         {
             "## Твоя сессия",
@@ -70,6 +76,10 @@ public sealed class SystemPromptAssembler
             $"- Папка сессии: sessions/{id}/ — твой ЛИЧНЫЙ СКЛАД «рабочих документов»: " +
             "задачи, журнал действий, черновики, заметки. Храни туда всё, что должно пережить " +
             "компакцию и рестарт приложения (TODO.json и layers.json уже живут здесь).",
+            root is null
+                ? "- Рабочая папка (root инструментов): не задана — у path-тулов нет рабочей папки."
+                : $"- Рабочая папка (root инструментов): {root} — относительные пути file-тулов " +
+                  "и cwd shell резолвятся от неё. Сменить папку в рамках чата — тул set_session_root.",
         };
         if (id != MainAgent.SessionId)
         {

@@ -35,6 +35,10 @@ public sealed class SessionController
     // null — сервер выбирает (LRU). Дефолты схемы: main → 0, не-main → 1 (SlotAllocation).
     private int? _slotId;
 
+    // Рабочая папка текущей сессии (root инструментов, план 2026-10-01). null — не
+    // задано: фоллбек в глобальную AppSettings.ProjectRoot. Живёт в SessionData.
+    private string? _root;
+
     public SessionController(ChatLog log, DraftKeeper draft, MemorySurfacer surfacer, string? sessionsRoot = null)
     {
         _log = log;
@@ -61,6 +65,15 @@ public sealed class SessionController
     /// <summary>Слот llama.cpp текущей сессии (null — LRU сервера).</summary>
     public int? CurrentSlotId => _slotId;
 
+    /// <summary>Рабочая папка текущей сессии (null — не задано, действует глобальный дефолт).</summary>
+    public string? Root => _root;
+
+    /// <summary>
+    /// Рабочая папка сессии сменилась (UI или тул set_session_root): вид обновляет
+    /// поле root и превью (системный промпт несёт resolved root).
+    /// </summary>
+    public event Action? RootChanged;
+
     /// <summary>
     /// Назначить слот текущей сессии (выбор в UI) + сохранить сразу — редкое событие,
     /// выбор не должен теряться при закрытии. Ходы сессии пойдут в этот слот (id_slot).
@@ -69,6 +82,66 @@ public sealed class SessionController
     {
         _slotId = slotId;
         SaveCurrent();
+    }
+
+    /// <summary>
+    /// Назначить рабочую папку текущей сессии (UI или тул set_session_root) + сохранить
+    /// сразу. Валидация: абсолютный путь, папка существует; тул/метод НЕ создают папку.
+    /// Возвращает текст ошибки; null — успех (сессия сохранена).
+    /// </summary>
+    public string? SetRoot(string path)
+    {
+        var error = ValidateRoot(path, out var full);
+        if (error is not null)
+        {
+            return error;
+        }
+        _root = full;
+        SaveCurrent();
+        RootChanged?.Invoke();
+        return null;
+    }
+
+    /// <summary>Сбросить рабочую папку текущей сессии (вернуться к глобальному дефолту).</summary>
+    public void ClearRoot()
+    {
+        if (_root is null)
+        {
+            return;
+        }
+        _root = null;
+        SaveCurrent();
+        RootChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Валидация рабочей папки: непустой абсолютный путь, каталог существует.
+    /// Возвращает текст ошибки; null — ок (fullPath — нормализованный путь).
+    /// </summary>
+    public static string? ValidateRoot(string? path, out string fullPath)
+    {
+        fullPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return "путь пуст — укажите рабочую папку";
+        }
+        if (!Path.IsPathRooted(path))
+        {
+            return $"путь не абсолютный: {path}";
+        }
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch (Exception exception)
+        {
+            return $"некорректный путь: {exception.Message}";
+        }
+        if (!Directory.Exists(fullPath))
+        {
+            return $"папка не существует: {fullPath}";
+        }
+        return null;
     }
 
     /// <summary>Список сессий для UI (перестраивается RefreshList).</summary>
@@ -92,12 +165,14 @@ public sealed class SessionController
             _log.ReplaceAll(StripBakedSystem(data.Messages));
             _log.SetNextMessageId(data.NextMessageId);
             _slotId = data.SlotId ?? SlotAllocation.Main; // main по умолчанию на слоте 0 (легаси)
+            _root = data.Root;
         }
         else
         {
             StartupTrace.Log($"EnsureMain: created empty ({sw.ElapsedMilliseconds}ms)");
             _log.Clear();
             _slotId = SlotAllocation.Main;
+            _root = null;
         }
         SaveCurrent();
         StartupTrace.Log($"EnsureMain: saved ({sw.ElapsedMilliseconds}ms total)");
@@ -128,6 +203,7 @@ public sealed class SessionController
         _stateBlockKey = data.StateBlockKey;
         // Слот сессии: из файла; без поля — дефолт схемы (main → 0, не-main → 1).
         _slotId = data.SlotId ?? (id == MainAgent.SessionId ? SlotAllocation.Main : SlotAllocation.NonMain);
+        _root = data.Root;
         // Смена сессии: surfaced-пул памяти и мусорка анонсов — транзитное состояние
         // прошлой сессии, не тащим его в новую (иначе чужие заметки просочатся в state-блок).
         _surfacer.Clear();
@@ -146,6 +222,7 @@ public sealed class SessionController
         _promptKey = null;
         _stateBlockKey = null;
         _slotId = SlotAllocation.NonMain; // новая не-main сессия — дефолт схемы (1)
+        _root = null;
         SessionChanged?.Invoke();
     }
 
@@ -164,6 +241,7 @@ public sealed class SessionController
             _promptKey = null;
             _stateBlockKey = null;
             _slotId = SlotAllocation.NonMain; // свежая пустая сессия — не-main, дефолт схемы
+            _root = null;
         }
         SessionChanged?.Invoke();
         return deletedCurrent;
@@ -192,12 +270,12 @@ public sealed class SessionController
         }
     }
 
-    /// <summary>Персистентность текущей истории + ключей профилей + слота.</summary>
+    /// <summary>Персистентность текущей истории + ключей профилей + слота + рабочей папки.</summary>
     public void SaveCurrent()
     {
         _log.AssignPendingIds();
         _sessions.SaveCurrent(_log, _log.NextMessageId,
-            samplerKey: _samplerKey, promptKey: _promptKey, stateBlockKey: _stateBlockKey, slotId: _slotId);
+            samplerKey: _samplerKey, promptKey: _promptKey, stateBlockKey: _stateBlockKey, slotId: _slotId, root: _root);
     }
 
     /// <summary>Назначить куски профиля текущей сессии (шестерёнка в UI) + сохранить сразу.</summary>
@@ -225,12 +303,13 @@ public sealed class SessionController
 
     /// <summary>
     /// Сохранить историю закреплённой сессии (рантайм субагента), не трогая текущую:
-    /// лог — из рантайма, ключи профилей — из рантайма.
+    /// лог — из рантайма, ключи профилей и рабочая папка — из рантайма.
     /// </summary>
-    public void SavePinned(string id, ChatLog log, string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null)
+    public void SavePinned(string id, ChatLog log, string? samplerKey = null, string? promptKey = null, string? stateBlockKey = null,
+        string? root = null)
     {
         log.AssignPendingIds();
-        _sessions.Save(id, log, log.NextMessageId, samplerKey: samplerKey, promptKey: promptKey, stateBlockKey: stateBlockKey);
+        _sessions.Save(id, log, log.NextMessageId, samplerKey: samplerKey, promptKey: promptKey, stateBlockKey: stateBlockKey, root: root);
     }
 
     /// <summary>Перестроить список сессий из хранилища (для UI).</summary>

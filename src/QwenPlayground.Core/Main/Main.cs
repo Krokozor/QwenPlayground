@@ -105,6 +105,21 @@ public sealed class Main
         Instance = this;
         // ── Общие сервисы (на всё приложение) ────────────────────────────────────────
         Tools = new ToolRegistry(toolAssemblies);
+        // Дефолтная рабочая папка (настройка ProjectRoot): создаём на старте, чтобы
+        // path-тулы работали из коробки. Автосоздание на каждый ход убрано 2026-10-01:
+        // ход и тулы папки не создают (валидация — только существование).
+        var defaultRoot = AppSettings.Get().ProjectRoot;
+        if (!string.IsNullOrWhiteSpace(defaultRoot))
+        {
+            try
+            {
+                Directory.CreateDirectory(defaultRoot);
+            }
+            catch
+            {
+                // Старт не роняем: папка может появиться позже, path-тулы скажут об ошибке.
+            }
+        }
         // Субагенты: KV-якорь вокруг синхронного хода (якорь — слот main, файл — в sessions/).
         // Runner (окно + ход) регистрирует UI (App) после старта.
         Subagents = new SubagentSpawner(KvCache, () => Sessions!.CurrentId);
@@ -131,6 +146,7 @@ public sealed class Main
             hooks,
             SessionDirectory: () => Sessions!.DirectoryFor(Sessions.CurrentId),
             PromptKey: () => Sessions!.PromptKey,
+            Root: () => SessionRoots.Resolve(Sessions!.Root, AppSettings.Get().ProjectRoot),
             SlotId: () => Sessions!.CurrentSlotId,
             _identity,
             _externalTools,
@@ -149,7 +165,9 @@ public sealed class Main
             () => Sessions.PromptKey,
             () => Sessions.StateBlockKey,
             Sessions.SaveCurrent,
-            () => Sessions.CurrentSlotId));
+            () => Sessions.CurrentSlotId,
+            () => Sessions.Root,
+            Sessions.SetRoot));
         // ── Main-специфичное ─────────────────────────────────────────────────────────
         // Heartbeat: опрос wake/ и расписания. Период опроса фиксированный (20 с),
         // частота реальных пробуждений — HeartbeatIntervalMinutes; сигналы не ждут расписания.
@@ -186,6 +204,21 @@ public sealed class Main
         // Счётчик id — на каждое сообщение в сайдкар (как у main-логa): pinned-сессия
         // (субагент) тоже может не дожить до SavePinned (hard-kill при rebuild).
         rt.Log.Added += _ => Sessions.TouchCounter(sessionId, rt.Log.NextMessageId);
+        // Рабочая папка pinned-сессии (план 2026-10-01): живёт в замыкании рантайма
+        // (сессия закреплена — контроллер главного окна её не ведёт). Стартовое значение
+        // — из файла сессии (reopening), у новой (субагент) файла ещё нет → null → дефолт.
+        var pinnedRoot = Sessions.LoadData(sessionId)?.Root;
+        string? SetPinnedRoot(string path)
+        {
+            var error = SessionController.ValidateRoot(path, out var full);
+            if (error is not null)
+            {
+                return error;
+            }
+            pinnedRoot = full;
+            Sessions.SavePinned(sessionId, rt.Log, samplerKey, promptKey, stateBlockKey, root: pinnedRoot);
+            return null;
+        }
         // Пinned-рантайм: свои identity/layer-store (изоляция от main-агента),
         // каталог и ключи — фиксированные (сессию не переключают). Слот — закреплён
         // (SlotAllocation): субагент → 3, ручное окно → 2 (дефолт; 1 — дефолт не-main).
@@ -196,6 +229,7 @@ public sealed class Main
             hooks,
             SessionDirectory: () => Sessions.DirectoryFor(sessionId),
             PromptKey: () => promptKey,
+            Root: () => SessionRoots.Resolve(pinnedRoot, AppSettings.Get().ProjectRoot),
             SlotId: () => slotId,
             new InjectedIdentity(),
             new ExternalToolsNote(),
@@ -206,8 +240,10 @@ public sealed class Main
             () => samplerKey,
             () => promptKey,
             () => stateBlockKey,
-            () => Sessions.SavePinned(sessionId, rt.Log, samplerKey, promptKey, stateBlockKey),
-            () => slotId));
+            () => Sessions.SavePinned(sessionId, rt.Log, samplerKey, promptKey, stateBlockKey, root: pinnedRoot),
+            () => slotId,
+            () => pinnedRoot,
+            SetPinnedRoot));
         return rt;
     }
 
@@ -220,6 +256,12 @@ public sealed class Main
         UiHooks Hooks,
         Func<string> SessionDirectory,
         Func<string?> PromptKey,
+        /// <summary>
+        /// Разрешённая рабочая папка сессии (план 2026-10-01): своя у сессии или
+        /// глобальный дефолт из настроек; null — нигде. Живое значение (root может
+        /// смениться в ходе сессии — set_session_root).
+        /// </summary>
+        Func<string?> Root,
         /// <summary>Слот сессии (SlotAllocation): компакция/суммаризация идут на слоте самой сессии.</summary>
         Func<int?> SlotId,
         InjectedIdentity Identity,
@@ -237,6 +279,7 @@ public sealed class Main
             rt.SessionId,
             w.PromptKey,
             w.SessionDirectory,
+            w.Root,
             w.Identity,
             w.ExternalTools,
             Tools);
