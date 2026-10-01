@@ -102,6 +102,9 @@ public static class WatchdogLauncher
         return false;
     }
 
+    /// <summary>Публичный доступ для pre-rebuild проверки страховки (RebuildSelfTool).</summary>
+    public static bool IsWatchdogRunning() => IsAnyWatchdogRunning();
+
     /// <summary>
     /// Остановить ВСЕ watchdog'и по имени процесса (без хэндлов). Для внешних
     /// вызывателей (лаунчер: watchdog — не его ребёнок, хэндла нет) и как

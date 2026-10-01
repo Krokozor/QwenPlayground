@@ -1,14 +1,43 @@
 using System.Xml;
 using Microsoft.CodeAnalysis;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.Core.SelfBuild;
 
+/// <summary>
+/// rebuild_self — рискованная операция: приложение пересобирает СОБСТВЕННЫЙ рантайм.
+///
+/// МОДЕЛЬ БЕЗОПАСНОСТИ (почему операция допустима и что её охраняет):
+///
+/// Ничего изнутри приложения не гарантирует, что новая версия будет работать. Тест-гейт
+/// покрывает тупые ошибки в лучшем случае; логический краш новой версии старая версия
+/// увидеть не может — она уже мёртва к моменту, когда новый код пошёл бы в исполнение.
+///
+/// Единственная гарантия — ЛАУНЧЕР (внешний процесс, «следующий островок безопасности»):
+/// приложение выходит → лаунчер переключает pointer → стартует новую версию → ждёт
+/// handshake (30 с, ok.marker пишется в MainWindow Loaded) → либо OK (новая версия жива),
+/// либо kill + rollback на старую. Прыжок либо на новый островок, либо назад на старый —
+/// третьего исхода нет. Эту гарантию НЕЛЬЗЯ воспроизвести изнутри приложения: self-launch
+/// без handshake/rollback (попытка 2026-10-02, отклонена владельцем) её скомпрометировал
+/// бы — при неудачном старте pointer остался бы на битой версии, а возвращать некому.
+///
+/// Поэтому ПЕРЕД ребилдом проверяется страховка (CheckRestartSafety, в самом начале
+/// ExecuteAsync): лаунчер запущен, инстанс ровно ОДИН (два лаунчера ломали deploy —
+/// 2026-10-01 15:27, MSB3027) и watchdog в строю (фиксирует смерть процесса). Без
+/// исправной страховки ребилд НЕ выполняется: приложение вышло бы, а запустить новую
+/// версию и откатить было бы некому (инцидент 2026-10-02 01:07 — клиент лежал до
+/// ручного старта). «Починка» этого отказом внутри приложения запрещена — только
+/// запускать лаунчер и повторять rebuild_self.
+/// </summary>
 [Tool("rebuild_self",
     "Rebuild the QwenPlayground application itself from source and restart into the new version. " +
     "Use after modifying the application's own code. Runs a pre-check (XAML XML validation + Roslyn " +
     "C# diagnostics), then the full dotnet build (runs the XAML compiler) and the test gate. " +
     "On failure returns the errors; fix them and call again. " +
+    "SAFETY: the restart is guaranteed by the launcher GUI (handshake 30s + rollback to the old " +
+    "version). If the launcher is not running (or not exactly one instance, or the watchdog is " +
+    "missing) the tool REFUSES to build — open the launcher and call again. " +
     "XAML: invalid XML (e.g. a raw '<' in an attribute) is reported directly with file:line:col. " +
     "XAML bindings / x:Name issues are caught by the full build with MC#### codes.")]
 public sealed class RebuildSelfTool : AgentTool
@@ -18,6 +47,14 @@ public sealed class RebuildSelfTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
+        // ПРОВЕРКА СТРАХОВКИ — ПЕРВОЕ, до любой работы (см. safety model в шапке класса):
+        // без исправного лаунчера ребилд оставляет приложение без возврата на старую версию.
+        var safety = CheckRestartSafety();
+        if (safety is not null)
+        {
+            return $"Error: {safety}";
+        }
+
         // XAML-валидация: Roslyn не гоняет XAML-компилятор, поэтому невалидный XML в .xaml
         // (сырой '<' в атрибуте и т.п.) проявляется как ложный CS0103 'InitializeComponent'.
         // Проверяем XML напрямую — корневая причина с точной строкой/колонкой.
@@ -60,6 +97,49 @@ public sealed class RebuildSelfTool : AgentTool
         var warningsInfo = result.Warnings is null ? string.Empty : $"\n{result.Warnings}";
         return $"Build {result.Id} succeeded. The application will now restart into the new version.\n" +
                $"Git: {gitInfo}" + (pushInfo is null ? string.Empty : $"\n{pushInfo}") + warningsInfo;
+    }
+
+    /// <summary>
+    /// Проверка страховки перед ребилдом (safety model в шапке класса). null — страховка
+    /// в строю; иначе — причина отказа (приложение продолжает жить, ничего не сломано).
+    /// </summary>
+    private static string? CheckRestartSafety()
+    {
+        var launchers = System.Diagnostics.Process.GetProcessesByName("QwenPlayground.Launcher");
+        try
+        {
+            if (launchers.Length == 0)
+            {
+                return "launcher GUI is not running. The launcher is the guarantee of a safe restart " +
+                       "(handshake 30s + rollback to the old version); without it the app would exit and " +
+                       "nobody would start the new version (incident 2026-10-02 01:07). Open the launcher " +
+                       "and call rebuild_self again.";
+            }
+            if (launchers.Length > 1)
+            {
+                return $"there are {launchers.Length} launcher instances — exactly one is required " +
+                       "(two simultaneous launchers broke the watchdog deploy on 2026-10-01 15:27, MSB3027). " +
+                       "Close the extra ones and call rebuild_self again.";
+            }
+        }
+        finally
+        {
+            foreach (var launcher in launchers)
+            {
+                launcher.Dispose();
+            }
+        }
+
+        // Watchdog — стража процесса (фиксирует нативную смерть в crash-лог). В dev-сборке
+        // exe может отсутствовать (TryStart — no-op) — тогда не блокируем.
+        var watchdogExe = Path.Combine(SelfBuildPaths.LauncherDir, WatchdogLauncher.WatchdogExeName);
+        if (File.Exists(watchdogExe) && !WatchdogLauncher.IsWatchdogRunning())
+        {
+            return "the watchdog is not running (the guardian that records process death). This is " +
+                   "abnormal — EnsureAlive (20s heartbeat) should have started it. Restart the app and " +
+                   "call rebuild_self again.";
+        }
+        return null;
     }
 
     /// <summary>

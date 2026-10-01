@@ -200,6 +200,11 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         // Запрошен перезапуск (rebuild_self) — выходим сами, не дожидаясь watchdog'а:
         // continuation хода держал бы UI-поток занятым, graceful-kill виснет, и рядом со
         // старым процессом запускается новый (два процесса — инцидент 2026-09-23).
+        // Дальше — дело лаунчера (deploy-флоу: pointer → старт → handshake 30s → OK или
+        // rollback): он и есть гарантия «прыжок удался или вернулись на старый островок».
+        // НЕ запускать новую версию отсюда (self-launch): это обошло бы handshake/rollback
+        // и скомпрометировало гарантию (инцидент 2026-10-02: попытка «починить» закрытый
+        // лаунчер self-launch'ем отклонена владельцем — см. RebuildSelfTool, safety model).
         _main.RestartRequested = () =>
         {
             try
@@ -209,43 +214,6 @@ public partial class MainViewModel : ObservableObject, IChatHost {
             catch
             {
                 // Сохранение best-effort: выход важнее.
-            }
-            // Self-launch новой версии ПЕРЕД выходом: не зависим от GUI-лаунчера.
-            // Инцидент 2026-10-02 01:07: rebuild_self, лаунчер закрыт — приложение
-            // вышло, запустить новую версию было некому, клиент лежал до ручного старта.
-            // Порядок: Peek (не удалять) → Process.Start → pointer → Consume (удалить).
-            // Consume только после успешного запуска: Process.Start упал — запрос
-            // остаётся, подхватит deploy-флоу лаунчера. Успешный Consume — лаунчер
-            // не увидит запрос и не запустит вторую копию (инцидент 2026-09-23).
-            try
-            {
-                var buildId = SelfBuildService.PeekRestartRequest();
-                if (!string.IsNullOrEmpty(buildId) &&
-                    SelfBuildPaths.TryGetDeployedRunRoot(out _))
-                {
-                    var exe = Path.Combine(SelfBuildPaths.VersionDir(buildId), "QwenPlayground.App.exe");
-                    if (File.Exists(exe))
-                    {
-                        var wsRoot = SelfBuildPaths.WorkspaceRoot;
-                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe)
-                        {
-                            WorkingDirectory = wsRoot,
-                            UseShellExecute = false,
-                            Environment =
-                            {
-                                ["QWENPLAYGROUND_ROOT"] = wsRoot,
-                                ["QWENPLAYGROUND_EXTERNAL_DIR"] = Path.Combine(wsRoot, SelfBuildPaths.ExternalDirName)
-                            }
-                        });
-                        File.WriteAllText(SelfBuildPaths.CurrentPointerFile, buildId);
-                        SelfBuildService.ConsumeRestartRequest();
-                        QwenPlayground.Core.Crash.AppEventLog.Log($"restart: self-launched {buildId} (GUI-лаунчер может быть закрыт)");
-                    }
-                }
-            }
-            catch (Exception exception)
-            {
-                QwenPlayground.Core.Crash.AppEventLog.Log($"restart: self-launch не удался ({exception.Message}) — запрос остаётся, подхватит лаунчер");
             }
             System.Windows.Application.Current?.Dispatcher.BeginInvoke(
                 () => System.Windows.Application.Current?.Shutdown());

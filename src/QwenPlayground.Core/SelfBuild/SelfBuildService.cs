@@ -398,18 +398,6 @@ public static class SelfBuildService
     public static void RequestRestart(string buildId, string? file = null) =>
         File.WriteAllText(file ?? SelfBuildPaths.RestartRequestFile, buildId);
 
-    /// <summary>Прочитать запрос без удаления (self-launch: запустить, и только потом Consume).</summary>
-    public static string? PeekRestartRequest(string? file = null)
-    {
-        var path = file ?? SelfBuildPaths.RestartRequestFile;
-        if (!File.Exists(path))
-        {
-            return null;
-        }
-        var buildId = File.ReadAllText(path).Trim();
-        return buildId.Length > 0 ? buildId : null;
-    }
-
     public static string? ConsumeRestartRequest(string? file = null)
     {
         var path = file ?? SelfBuildPaths.RestartRequestFile;
