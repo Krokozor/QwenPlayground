@@ -280,6 +280,7 @@ public sealed class TurnPipeline
         }
         if (SelfBuildService.ConsumeRestartRequest() is { } restartBuildId)
         {
+            RebuildEventLog.App($"rebuild: turn-end — restart.request consumed (build {restartBuildId}), app will exit; launcher deploys");
             RestartInto(restartBuildId);
         }
         return outcome;

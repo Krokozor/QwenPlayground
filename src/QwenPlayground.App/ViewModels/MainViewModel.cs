@@ -215,6 +215,39 @@ public partial class MainViewModel : ObservableObject, IChatHost {
             {
                 // Сохранение best-effort: выход важнее.
             }
+            // Деплоер — headless-инстанс лаунчера (pointer-режим: ждёт exit старого
+            // процесса → pointer → старт → handshake 30s → OK или rollback). Запускаем
+            // ЕГО, а не «надеемся на GUI»: GUI-лаунчер не наблюдает выход приложения
+            // (это была ошибка модели 2026-10-02). Раньше деплоер запускался только в
+            // turn-end-пути (TurnPipeline.RestartInto); mid-turn-выход (Shutdown во
+            // время await тула) уходил без деплоера — клиент лежал до ручного старта
+            // (инциденты 2026-10-02 01:07 и 03:51). Consume — только после успешного
+            // Process.Start: иначе запрос остаётся для turn-end-пути (второго деплоера
+            // не будет — файл один, consumer один, всё на UI-потоке).
+            try
+            {
+                var buildId = QwenPlayground.Core.SelfBuild.SelfBuildService.PeekRestartRequest();
+                if (!string.IsNullOrEmpty(buildId))
+                {
+                    var launcher = Path.Combine(
+                        QwenPlayground.Core.SelfBuild.SelfBuildPaths.LauncherDir, "QwenPlayground.Launcher.exe");
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = launcher,
+                        Arguments = $"{Environment.ProcessId} {buildId}",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    });
+                    QwenPlayground.Core.SelfBuild.SelfBuildService.ConsumeRestartRequest();
+                    QwenPlayground.Core.SelfBuild.RebuildEventLog.App(
+                        $"rebuild: RestartRequested — deployer (headless launcher) started for {buildId}; self-exit");
+                }
+            }
+            catch (Exception exception)
+            {
+                QwenPlayground.Core.SelfBuild.RebuildEventLog.App(
+                    $"rebuild: RestartRequested — deployer start FAILED ({exception.Message}) — запрос остаётся, turn-end-путь попробует ещё раз");
+            }
             System.Windows.Application.Current?.Dispatcher.BeginInvoke(
                 () => System.Windows.Application.Current?.Shutdown());
         };

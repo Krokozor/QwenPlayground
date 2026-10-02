@@ -37,6 +37,8 @@ public partial class MainWindow : Window
             StartupTrace.Log("MainWindow Loaded: begin");
             SelfBuildService.WriteHandshake();
             StartupTrace.Log("MainWindow Loaded: handshake written");
+            RebuildEventLog.App(
+                $"handshake written (window Loaded, +{(DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime).TotalSeconds:F0}s from process start) — launcher can confirm");
             BrowserService.Attach(AgentBrowser);
             StartupTrace.Log("MainWindow Loaded: browser attached");
 

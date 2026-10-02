@@ -82,8 +82,17 @@ void RecordDeath(int? exitCode, string processName, string logsDir)
 
 void Trace(string message)
 {
+    // Единая хронология ребилда: watchdog пишет в run/launcher.log с тегом [watchdog pid]
+    // (runRoot — каталог clean-маркера; он живёт в run/). Локальный watchdog.log больше
+    // не ведётся — одна лента, три автора (app, launcher, watchdog).
     try
     {
+        var runRoot = Path.GetDirectoryName(cleanMarker);
+        if (runRoot is not null)
+        {
+            QwenPlayground.Core.SelfBuild.RebuildEventLog.Watchdog(message);
+            return;
+        }
         File.AppendAllText(Path.Combine(logsDir, "watchdog.log"),
             $"[{DateTime.Now:O}] {message}\n");
     }

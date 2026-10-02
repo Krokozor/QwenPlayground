@@ -11,19 +11,6 @@ public sealed record FailedTest(string Name, string Error);
 
 public static class SelfBuildService
 {
-    /// <summary>
-    /// Хук перед деплоем инструментов (лаунчер/watchdog в launcher/): приложение
-    /// подставляет остановку своего watchdog'а — тот держит бинари launcher/
-    /// (Windows-лок), и деплой не смог бы обновить их под живым стражем.
-    /// </summary>
-    public static Action? PreDeployTools;
-
-    /// <summary>
-    /// Хук после деплоя инструментов: приложение подставляет перезапуск watchdog'а
-    /// (он был остановлен PreDeployTools). Вызывается rebuild_launcher после сборки.
-    /// </summary>
-    public static Action? PostDeployTools;
-
     public static async Task<BuildResult> BuildNextAsync(CancellationToken cancellationToken)
     {
         var id = DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -38,10 +25,13 @@ public static class SelfBuildService
         Directory.CreateDirectory(versionDir);
 
         var buildLogPath = Path.Combine(versionDir, "build.log");
+        var buildSw = System.Diagnostics.Stopwatch.StartNew();
+        RebuildEventLog.App($"rebuild: {id}: dotnet build started (→ run/{id})");
         var build = await RunProcessAsync("dotnet",
             $"build \"{SelfBuildPaths.AppProject}\" -c Release -o \"{versionDir}\"",
             cancellationToken);
         File.WriteAllText(buildLogPath, build.Output);
+        RebuildEventLog.App($"rebuild: {id}: dotnet build finished (exit {build.ExitCode}, {buildSw.Elapsed.TotalSeconds:F1}s)");
 
         if (build.ExitCode != 0)
         {
@@ -67,16 +57,22 @@ public static class SelfBuildService
         var gateArgs = $"test \"{SelfBuildPaths.TestProject}\" --nologo -v q --logger \"console;verbosity=normal\" --logger \"trx;LogFileName={gateTrxPath}\"";
 
         var gateLogPath = Path.Combine(versionDir, "gate.log");
+        var gateSw = System.Diagnostics.Stopwatch.StartNew();
+        RebuildEventLog.App($"rebuild: {id}: test gate started (dotnet test, DEBUG)");
         var gate = await RunProcessAsync("dotnet", gateArgs, cancellationToken);
         var gateAttempt = 1;
+        RebuildEventLog.App($"rebuild: {id}: test gate attempt 1 finished (exit {gate.ExitCode}, {gateSw.Elapsed.TotalSeconds:F1}s)");
         if (gate.ExitCode != 0)
         {
             // Flaky-гейт: сразу после build RoslynServiceTests иногда падает на первом прогоне
             // (конкуренция MSBuild). Настоящий сбой упадёт и на повторе.
             File.WriteAllText(gateLogPath, gate.Output);
+            RebuildEventLog.App($"rebuild: {id}: test gate retry (flaky-ретрай, +10s пауза)");
             await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+            gateSw.Restart();
             gate = await RunProcessAsync("dotnet", gateArgs, cancellationToken);
             gateAttempt = 2;
+            RebuildEventLog.App($"rebuild: {id}: test gate attempt 2 finished (exit {gate.ExitCode}, {gateSw.Elapsed.TotalSeconds:F1}s)");
         }
         File.WriteAllText(gateLogPath, gate.Output);
 
@@ -102,23 +98,6 @@ public static class SelfBuildService
             return new BuildResult(id, gate.ExitCode, gateTail);
         }
 
-        // Лаунчер и watchdog в отдельной папке (launcher/), вне run/: если бы они
-        // деплоились в run/, повторная сборка Core (общий obj\Release + -o override
-        // на весь граф) вычищала бы Core.dll из только что собранной папки версии.
-        // Перед деплоем — хук PreDeployTools: приложение останавливает своего
-        // watchdog'а, освобождающего бинари launcher/.
-        try
-        {
-            PreDeployTools?.Invoke();
-        }
-        catch
-        {
-            // Хук не должен ломать сборку: если watchdog не остановился, деплой
-            // сам упадёт с записью в launcher.log.
-        }
-        await DeployLauncherAsync(cancellationToken);
-        await DeployWatchdogAsync(cancellationToken);
-
         // Ворнинги сборки и гейта — в отчёт (НЕ блокируют: pass остаётся pass для пуша,
         // но предупреждения видны сразу, а не «где-то в build.log»).
         var warnings = ExtractWarnings(build.Output + "\n" + gate.Output);
@@ -134,6 +113,13 @@ public static class SelfBuildService
             GateLogPath = gateLogPath,
             GateExitCode = 0
         });
+
+        // Инструменты (лаунчер/watchdog в launcher/) НЕ деплоятся здесь: rebuild_self
+        // требует живого GUI-лаунчера (страховка), а он держит лок на бинари launcher/
+        // (MSB3027 — инцидент 2026-10-02 03:34). Деплой инструментов — обязанность
+        // rebuild_launcher (GUI закрыт, локов нет). Бинари в launcher/ — self-contained
+        // (свои Core.dll), от API приложения в рантайме не зависят.
+        RebuildEventLog.App($"rebuild: {id}: build + gate OK — ready for restart (launcher will deploy)");
         return new BuildResult(id, 0, finalTail, warnings);
     }
 
@@ -164,56 +150,6 @@ public static class SelfBuildService
             sb.AppendLine($"  ... ({lines.Count - 20} more in build.log)");
         }
         return sb.ToString();
-    }
-
-    /// <summary>
-    /// Сборка watchdog'а в launcher/ (сиблинг run/). Watchdog — страж процесса:
-    /// фиксирует смерти, которые обходят managed-обработчики (нативные краши).
-    /// Перед деплоем вызывается <see cref="PreDeployTools"/>: приложение останавливает
-    /// своего watchdog'а, иначе тот держит бинари launcher/ (Windows-лок) и деплой
-    /// не смог бы их обновить.
-    /// </summary>
-    private static async Task DeployWatchdogAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            var project = Path.Combine(
-                SelfBuildPaths.WorkspaceRoot, @"tools\QwenPlayground.Watchdog\QwenPlayground.Watchdog.csproj");
-            var build = await RunProcessAsync(
-                "dotnet", $"build \"{project}\" -c Release -o \"{SelfBuildPaths.LauncherDir}\"", cancellationToken);
-            if (build.ExitCode != 0)
-            {
-                File.AppendAllText(Path.Combine(SelfBuildPaths.RunRoot, "launcher.log"),
-                    $"[{DateTime.Now:O}] watchdog deploy failed (exit {build.ExitCode}):\n{Tail(build.Output)}\n");
-            }
-        }
-        catch (Exception exception)
-        {
-            File.AppendAllText(Path.Combine(SelfBuildPaths.RunRoot, "launcher.log"),
-                $"[{DateTime.Now:O}] watchdog deploy skipped: {exception.Message}\n");
-        }
-    }
-
-    /// <summary>Сборка лаунчера в его собственный каталог launcher/ (вне run/).</summary>
-    private static async Task DeployLauncherAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            var launcherProject = Path.Combine(
-                SelfBuildPaths.WorkspaceRoot, @"tools\QwenPlayground.Launcher\QwenPlayground.Launcher.csproj");
-            var build = await RunProcessAsync(
-                "dotnet", $"build \"{launcherProject}\" -c Release -o \"{SelfBuildPaths.LauncherDir}\"", cancellationToken);
-            if (build.ExitCode != 0)
-            {
-                File.AppendAllText(Path.Combine(SelfBuildPaths.RunRoot, "launcher.log"),
-                    $"[{DateTime.Now:O}] launcher deploy failed (exit {build.ExitCode}):\n{Tail(build.Output)}\n");
-            }
-        }
-        catch (Exception exception)
-        {
-            File.AppendAllText(Path.Combine(SelfBuildPaths.RunRoot, "launcher.log"),
-                $"[{DateTime.Now:O}] launcher deploy skipped: {exception.Message}\n");
-        }
     }
 
     private static async Task<(int ExitCode, string Output)> RunProcessAsync(string fileName, string arguments, CancellationToken cancellationToken)
@@ -397,6 +333,22 @@ public static class SelfBuildService
 
     public static void RequestRestart(string buildId, string? file = null) =>
         File.WriteAllText(file ?? SelfBuildPaths.RestartRequestFile, buildId);
+
+    /// <summary>
+    /// Прочитать запрос без удаления. Consume — только после успешного запуска
+    /// деплоера: если Process.Start упал, запрос остаётся, и turn-end-путь
+    /// (TurnPipeline.RestartInto) ещё может запустить деплоера.
+    /// </summary>
+    public static string? PeekRestartRequest(string? file = null)
+    {
+        var path = file ?? SelfBuildPaths.RestartRequestFile;
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+        var buildId = File.ReadAllText(path).Trim();
+        return buildId.Length > 0 ? buildId : null;
+    }
 
     public static string? ConsumeRestartRequest(string? file = null)
     {

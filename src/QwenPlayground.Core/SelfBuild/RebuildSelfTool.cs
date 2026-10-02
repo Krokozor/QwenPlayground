@@ -14,30 +14,33 @@ namespace QwenPlayground.Core.SelfBuild;
 /// покрывает тупые ошибки в лучшем случае; логический краш новой версии старая версия
 /// увидеть не может — она уже мёртва к моменту, когда новый код пошёл бы в исполнение.
 ///
-/// Единственная гарантия — ЛАУНЧЕР (внешний процесс, «следующий островок безопасности»):
-/// приложение выходит → лаунчер переключает pointer → стартует новую версию → ждёт
-/// handshake (30 с, ok.marker пишется в MainWindow Loaded) → либо OK (новая версия жива),
-/// либо kill + rollback на старую. Прыжок либо на новый островок, либо назад на старый —
-/// третьего исхода нет. Эту гарантию НЕЛЬЗЯ воспроизвести изнутри приложения: self-launch
-/// без handshake/rollback (попытка 2026-10-02, отклонена владельцем) её скомпрометировал
-/// бы — при неудачном старте pointer остался бы на битой версии, а возвращать некому.
+/// Единственная гарантия — ЛАУНЧЕР (внешний процесс, «следующий островок безопасности»).
+/// Деплоер — headless-инстанс лаунчера (pointer-режим), который приложение запускает
+/// САМО перед выходом (MainViewModel.RestartRequested; fallback — turn-end-путь
+/// TurnPipeline.RestartInto): ждёт exit старого процесса → pointer → старт новой версии
+/// → handshake (30 с, ok.marker в MainWindow Loaded) → либо OK, либо kill + rollback.
+/// Прыжок либо на новый островок, либо назад на старый — третьего исхода нет. GUI-лаунчер
+/// в деплое НЕ участвует (он не наблюдает выход приложения — ошибка модели 2026-10-02,
+/// когда «закрытый GUI» считали причиной; реальные инциденты 01:07 и 03:51 — mid-turn-
+/// выход без деплоера, фикс: деплоер запускается в общем RestartRequested). Гарантию
+/// НЕЛЬЗЯ воспроизвести изнутри приложения: self-launch без handshake/rollback
+/// (попытка 2026-10-02, отклонена владельцем) скомпрометировал бы её.
 ///
 /// Поэтому ПЕРЕД ребилдом проверяется страховка (CheckRestartSafety, в самом начале
-/// ExecuteAsync): лаунчер запущен, инстанс ровно ОДИН (два лаунчера ломали deploy —
-/// 2026-10-01 15:27, MSB3027) и watchdog в строю (фиксирует смерть процесса). Без
-/// исправной страховки ребилд НЕ выполняется: приложение вышло бы, а запустить новую
-/// версию и откатить было бы некому (инцидент 2026-10-02 01:07 — клиент лежал до
-/// ручного старта). «Починка» этого отказом внутри приложения запрещена — только
-/// запускать лаунчер и повторять rebuild_self.
+/// ExecuteAsync): GUI-лаунчер запущен (точка контроля владельца) и инстанс ровно ОДИН
+/// (два лаунчера ломали deploy — 2026-10-01 15:27, MSB3027), watchdog в строю (фиксирует
+/// смерть процесса). Без исправной страховки ребилд НЕ выполняется: приложение живо,
+/// объяснение — открыть лаунчер и повторить rebuild_self.
 /// </summary>
 [Tool("rebuild_self",
     "Rebuild the QwenPlayground application itself from source and restart into the new version. " +
     "Use after modifying the application's own code. Runs a pre-check (XAML XML validation + Roslyn " +
     "C# diagnostics), then the full dotnet build (runs the XAML compiler) and the test gate. " +
     "On failure returns the errors; fix them and call again. " +
-    "SAFETY: the restart is guaranteed by the launcher GUI (handshake 30s + rollback to the old " +
-    "version). If the launcher is not running (or not exactly one instance, or the watchdog is " +
-    "missing) the tool REFUSES to build — open the launcher and call again. " +
+    "SAFETY: the restart is guaranteed by the launcher — a headless instance (pointer mode) the app " +
+    "starts before exiting: wait for old process exit → pointer → start → handshake (30s) → OK or " +
+    "rollback to the old version. Pre-rebuild check: the launcher GUI must be running (exactly one " +
+    "instance) and the watchdog alive; otherwise the tool REFUSES to build. " +
     "XAML: invalid XML (e.g. a raw '<' in an attribute) is reported directly with file:line:col. " +
     "XAML bindings / x:Name issues are caught by the full build with MC#### codes.")]
 public sealed class RebuildSelfTool : AgentTool
@@ -52,8 +55,10 @@ public sealed class RebuildSelfTool : AgentTool
         var safety = CheckRestartSafety();
         if (safety is not null)
         {
+            RebuildEventLog.App($"rebuild_self: REFUSED — {safety}");
             return $"Error: {safety}";
         }
+        RebuildEventLog.App("rebuild_self: requested — safety OK (launcher GUI: 1 instance, watchdog: alive)");
 
         // XAML-валидация: Roslyn не гоняет XAML-компилятор, поэтому невалидный XML в .xaml
         // (сырой '<' в атрибуте и т.п.) проявляется как ложный CS0103 'InitializeComponent'.
@@ -61,24 +66,18 @@ public sealed class RebuildSelfTool : AgentTool
         var xamlErrors = CollectXamlXmlErrors();
         var roslynErrors = await CollectRoslynErrors(cancellationToken);
         var allErrors = xamlErrors.Concat(roslynErrors).ToList();
+        RebuildEventLog.App($"rebuild_self: pre-check done ({xamlErrors.Count} XAML, {roslynErrors.Count} Roslyn problem(s))");
         if (allErrors.Count > 0)
         {
             return $"Error: {allErrors.Count} problem(s) found; fix them before rebuilding:\n" +
                    string.Join('\n', allErrors);
         }
 
-        // Rebuild-окно: BuildNextAsync внутри вызывает PreDeployTools (StopWatchdog =
-        // BeginRebuild), но окно закрываем МЫ — в finally, в любом исходе: иначе
-        // EnsureAlive (heartbeat) не восстановит стража после упавшей сборки.
-        BuildResult result;
-        try
-        {
-            result = await SelfBuildService.BuildNextAsync(cancellationToken);
-        }
-        finally
-        {
-            QwenPlayground.Core.Crash.WatchdogLauncher.EndRebuild();
-        }
+        // Rebuild-окно в rebuild_self НЕ открывается: деплой инструментов (единственная
+        // причина убивать watchdog) из app-сборки убран — GUI-лаунчер должен быть жив
+        // (страховка), а он держит лок на бинари launcher/. Окно остаётся в
+        // rebuild_launcher (там GUI закрыт).
+        var result = await SelfBuildService.BuildNextAsync(cancellationToken);
         if (result.ExitCode != 0)
         {
             return $"Error: build failed (exit code {result.ExitCode}). Fix the errors and call rebuild_self again.\n{result.OutputTail}";
@@ -89,6 +88,7 @@ public sealed class RebuildSelfTool : AgentTool
         var pushInfo = MaybePush();
 
         SelfBuildService.RequestRestart(result.Id);
+        RebuildEventLog.App($"rebuild_self: restart requested for build {result.Id} — app exits now; launcher deploys (handshake 30s + rollback)");
         // Приложение само выходит (App-хук): если продолжить ход, UI-поток останется занят —
         // graceful-kill watchdog'а не дождётся закрытия, и новый процесс запустится рядом со
         // старым (два процесса, общие сессии — инцидент 2026-09-23).

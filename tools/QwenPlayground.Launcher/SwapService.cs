@@ -26,8 +26,7 @@ public static class SwapService
         : AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
     private const string ExeName = "QwenPlayground.App.exe";
 
-    private static void Log(string message) =>
-        File.AppendAllText(Path.Combine(Root, "launcher.log"), $"[{DateTime.Now:O}] {message}\n");
+    private static void Log(string message) => RebuildEventLog.Launcher(message);
 
     /// <summary>Headless self-rebuild: дождаться старый процесс, обменять версии (pointer или legacy).</summary>
     public static int RunSwapped(int pid, string? buildId)
@@ -109,30 +108,16 @@ public static class SwapService
     public static async Task<(int ExitCode, string Message)> RebuildAndStartAsync(CancellationToken cancellationToken)
     {
         KillRunningApp();
-        // Watchdog — ребёнок ПРИЛОЖЕНИЯ, не лаунчера: хэндла на него у нас нет, а
-        // самоотключение после смерти приложения — не контракт (задержка опроса,
-        // осиротевший страж). Останавливаем явно по имени перед деплоем, иначе он
-        // держит бинари launcher/ (Windows-лок) и сборка watchdog'а падает MSB3027
-        // после 10 ретраев. Новый watchdog стартует сам новый app в OnStartup.
-        SelfBuildService.PreDeployTools = WatchdogLauncher.StopAllByName;
         Log("GUI rebuild requested");
-        try
-        {
-            var result = await SelfBuildService.BuildNextAsync(cancellationToken);
+        var result = await SelfBuildService.BuildNextAsync(cancellationToken);
         if (result.ExitCode != 0)
         {
             return (result.ExitCode, $"сборка не удалась (exit {result.ExitCode}):\n{result.OutputTail}");
         }
-            var swapCode = PointerMode(result.Id);
-            return swapCode == 0
-                ? (0, $"пересобрано и запущено: {result.Id}")
-                : (swapCode, "обмен версиями не удался — подробности в launcher.log");
-        }
-        finally
-        {
-            // Хук статический: не оставляем его висеть на потом (лаунчер долгоживущий).
-            SelfBuildService.PreDeployTools = null;
-        }
+        var swapCode = PointerMode(result.Id);
+        return swapCode == 0
+            ? (0, $"пересобрано и запущено: {result.Id}")
+            : (swapCode, "обмен версиями не удался — подробности в launcher.log");
     }
 
     /// <summary>Закрыть работающий экземпляр приложения (по имени и app.pid), чтобы swap был безопасным.</summary>
@@ -209,6 +194,7 @@ public static class SwapService
                 UseShellExecute = false,
                 Environment = { ["QWENPLAYGROUND_ROOT"] = wsRoot, ["QWENPLAYGROUND_EXTERNAL_DIR"] = Path.Combine(wsRoot, SelfBuildPaths.ExternalDirName) }
             });
+            Log($"deploy: started {buildId} (pid {app?.Id})");
 
             if (WaitHandshake(app, marker))
             {
@@ -228,10 +214,12 @@ public static class SwapService
                 : traceTail is null ? crash
                 : crash + "\n\n" + traceTail;
             Log($"startup failed: {reason}; rolling back");
+            Log($"rollback: killing failed app (pid {app?.Id})");
             KillQuietly(app);
             if (!string.IsNullOrEmpty(oldId) && File.Exists(Path.Combine(Root, oldId, ExeName)))
             {
                 File.WriteAllText(pointerFile, oldId);
+                Log($"rollback: pointer -> {oldId}");
                 var rollback = Process.Start(new ProcessStartInfo(Path.Combine(Root, oldId, ExeName))
                 {
                     WorkingDirectory = wsRoot,
@@ -239,6 +227,7 @@ public static class SwapService
                     Environment = { ["QWENPLAYGROUND_ROOT"] = wsRoot, ["QWENPLAYGROUND_EXTERNAL_DIR"] = Path.Combine(wsRoot, SelfBuildPaths.ExternalDirName) }
                 });
                 WriteAppPid(rollback?.Id);
+                Log($"rollback: started {oldId} (pid {rollback?.Id})");
                 Log($"rolled back to {oldId}");
             }
             BuildJournal.UpdateLast(Root, "failed", reason, excerpt);
@@ -371,6 +360,8 @@ public static class SwapService
     private static bool WaitHandshake(Process? app, string marker)
     {
         var deadline = DateTime.Now.AddSeconds(30);
+        var started = DateTime.Now;
+        var lastProgress = 0;
         while (DateTime.Now < deadline)
         {
             if (File.Exists(marker))
@@ -380,6 +371,14 @@ public static class SwapService
             if (app is { HasExited: true })
             {
                 return false;
+            }
+            // Прогресс ожидания: при таймауте видно, что процесс был жив всё время
+            // (зависание, а не крах) — и когда именно перестал появляться маркер.
+            var elapsed = (int)(DateTime.Now - started).TotalSeconds;
+            if (elapsed / 10 > lastProgress)
+            {
+                lastProgress = elapsed / 10;
+                Log($"handshake: +{elapsed}s, no marker (app pid {app?.Id}: {(app.HasExited ? "dead" : "alive")})");
             }
             Thread.Sleep(500);
         }

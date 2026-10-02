@@ -23,6 +23,10 @@ public partial class App : Application
     {
         base.OnStartup(e);
         StartupTrace.Log("App.OnStartup: begin");
+        // Хронология ребилда: приложение записывает свои события в run/launcher.log
+        // (единый лог app+launcher+watchdog, каждая строка с автором).
+        var buildId = System.IO.Path.GetFileName(System.AppContext.BaseDirectory.TrimEnd(System.IO.Path.DirectorySeparatorChar));
+        RebuildEventLog.App($"app started (pid {Environment.ProcessId}, build {(SelfBuildPaths.TryGetDeployedRunRoot(out _) ? buildId : "dev")})");
         // Инвариант UI-потока: мутаторы ядра (ChatLog, FSM, MemoryStore, метки слотов)
         // проверяют, что исполняются на dispatcher-потоке. Нарушение — events-лог + throw
         // (degradation must be loud). Core не знает WPF — шнуровка здесь, в App.
@@ -48,10 +52,6 @@ public partial class App : Application
         // watchdog запишет смерть в общий crash-лог — картина не останется по кускам.
         WatchdogLauncher.TryStart();
         StartupTrace.Log("App.OnStartup: watchdog started");
-        // Перед деплоем инструментов rebuild останавливает watchdog'а: тот держит
-        // бинари launcher/ (Windows-лок), иначе сборка не смогла бы их обновить.
-        SelfBuildService.PreDeployTools = WatchdogLauncher.StopWatchdog;
-        SelfBuildService.PostDeployTools = WatchdogLauncher.TryStart;
         // Connect to MCP servers (non-blocking), then register their tools
         StartupTrace.Log("App.OnStartup: MCP init launched (fire-and-forget)");
         _ = McpService.InitializeAsync().ContinueWith(_ =>
@@ -68,6 +68,7 @@ public partial class App : Application
         // Маркер чистого завершения — до выхода процесса: watchdog отличает
         // «пользователь закрыл» от «умерло посреди ничего».
         WatchdogLauncher.MarkClean();
+        RebuildEventLog.App($"app OnExit (pid {Environment.ProcessId}) — clean shutdown, watchdog marker written");
         // MCP: disconnect all servers. Сбой отключения на выходе не должен мешать
         // завершению процесса: процесс уходит в любом случае, дочерние процессы
         // заберёт ОС.

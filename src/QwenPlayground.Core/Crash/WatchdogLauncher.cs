@@ -38,6 +38,7 @@ public static class WatchdogLauncher
             var exe = Path.Combine(SelfBuildPaths.LauncherDir, WatchdogExeName);
             if (!File.Exists(exe))
             {
+                SelfBuild.RebuildEventLog.App("watchdog: not started (exe missing — dev build)");
                 return; // dev-сборка без watchdog'а — не ошибка
             }
             var logsDir = Path.Combine(SelfBuildPaths.WorkspaceRoot, "logs");
@@ -50,22 +51,14 @@ public static class WatchdogLauncher
                 UseShellExecute = false,
                 CreateNoWindow = true
             });
+            SelfBuild.RebuildEventLog.App($"watchdog: started (pid {_watchdog?.Id}, watching app pid {Environment.ProcessId})");
         }
         catch
         {
             // Watchdog — вспомогательная страховка: его отсутствие не должно ломать приложение.
+            SelfBuild.RebuildEventLog.App("watchdog: start FAILED (exception) — app runs without guardian");
         }
     }
-
-    /// <summary>
-    /// Остановить watchdog'а перед деплоем инструментов (вызывается из
-    /// SelfBuildService.PreDeployTools). После перезапуска приложение стартует
-    /// watchdog'а заново — уже с новым бинарем. Открывает rebuild-окно: без него
-    /// EnsureAlive (heartbeat, 20 с) воскресит убитого стража посреди сборки, и
-    /// воскрешённый watchdog закроет собой те самые бинари, что сборка обновляет
-    /// (MSB3027 — «не всегда», зависит от фазы heartbeat-тика).
-    /// </summary>
-    public static void StopWatchdog() => BeginRebuild();
 
     /// <summary>
     /// Открыть rebuild-окно: запретить EnsureAlive воскрешать watchdog'а и
@@ -75,6 +68,7 @@ public static class WatchdogLauncher
     public static void BeginRebuild()
     {
         _rebuildInProgress = true;
+        SelfBuild.RebuildEventLog.App("rebuild window: OPENED (EnsureAlive suspended, all watchdogs stopped)");
         StopAllByName();
     }
 
@@ -89,6 +83,11 @@ public static class WatchdogLauncher
         if (!IsAnyWatchdogRunning())
         {
             TryStart();
+            SelfBuild.RebuildEventLog.App("rebuild window: CLOSED (watchdog was absent — started)");
+        }
+        else
+        {
+            SelfBuild.RebuildEventLog.App("rebuild window: CLOSED (watchdog already running)");
         }
     }
 
@@ -107,9 +106,8 @@ public static class WatchdogLauncher
 
     /// <summary>
     /// Остановить ВСЕ watchdog'и по имени процесса (без хэндлов). Для внешних
-    /// вызывателей (лаунчер: watchdog — не его ребёнок, хэндла нет) и как
-    /// fallback в <see cref="StopWatchdog"/>. Остановленный watchdog не
-    /// «потеряет» ничего: он либо уже записал смерть наблюдаемого процесса,
+    /// вызывателей (лаунчер: watchdog — не его ребёнок, хэндла нет). Остановленный
+    /// watchdog не «потеряет» ничего: он либо уже записал смерть наблюдаемого процесса,
     /// либо тот ещё жив и его стражем станет новый watchdog после деплоя.
     /// </summary>
     public static void StopAllByName()
@@ -169,6 +167,7 @@ public static class WatchdogLauncher
             watchdog.Dispose();
             _watchdog = null;
             TryStart();
+            SelfBuild.RebuildEventLog.App($"watchdog: EnsureAlive — guardian died (exit {exitCode?.ToString() ?? "unknown"}), restarted (pid {_watchdog?.Id})");
         }
         catch
         {
