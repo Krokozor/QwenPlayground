@@ -32,6 +32,7 @@ public static class SwapService
     public static int RunSwapped(int pid, string? buildId)
     {
         Environment.CurrentDirectory = Root;
+        Log($"deployer: waiting for old app pid {pid} to exit (60s budget, build {buildId ?? "legacy"})");
         try
         {
             using var process = Process.GetProcessById(pid);

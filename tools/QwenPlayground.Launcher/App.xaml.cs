@@ -19,6 +19,12 @@ public partial class App : Application
             LauncherCrash.InitializeHeadlessHandlers();
             base.OnStartup(e);
             var buildId = e.Args.Length > 1 ? e.Args[1] : null;
+            // Первая строка деплоера: его существование видно в ленте сразу.
+            // Если дальше нет строк [launcher <этот pid>] — деплоер умер до работы,
+            // и в launcher.log это читается как разрыв между «deployer started» (app)
+            // и «deployer: waiting» (отсутствует).
+            QwenPlayground.Core.SelfBuild.RebuildEventLog.Launcher(
+                $"headless deployer started (pid {Environment.ProcessId}, waiting for app pid {pid}, build {buildId ?? "legacy"})");
             Shutdown(SwapService.RunSwapped(pid, buildId));
             return;
         }

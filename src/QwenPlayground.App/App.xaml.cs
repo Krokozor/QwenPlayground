@@ -26,7 +26,11 @@ public partial class App : Application
         // Хронология ребилда: приложение записывает свои события в run/launcher.log
         // (единый лог app+launcher+watchdog, каждая строка с автором).
         var buildId = System.IO.Path.GetFileName(System.AppContext.BaseDirectory.TrimEnd(System.IO.Path.DirectorySeparatorChar));
-        RebuildEventLog.App($"app started (pid {Environment.ProcessId}, build {(SelfBuildPaths.TryGetDeployedRunRoot(out _) ? buildId : "dev")})");
+        // Pointer рядом: если запущена не та версия (ручной старт старой, pointer уже
+        // переключён) — несоответствие видно на одной строке, без сопоставления.
+        var pointerPath = Path.Combine(SelfBuildPaths.RunRoot, "current.txt");
+        var pointer = File.Exists(pointerPath) ? File.ReadAllText(pointerPath).Trim() : "none";
+        RebuildEventLog.App($"app started (pid {Environment.ProcessId}, build {(SelfBuildPaths.TryGetDeployedRunRoot(out _) ? buildId : "dev")}, pointer={pointer})");
         // Инвариант UI-потока: мутаторы ядра (ChatLog, FSM, MemoryStore, метки слотов)
         // проверяют, что исполняются на dispatcher-потоке. Нарушение — events-лог + throw
         // (degradation must be loud). Core не знает WPF — шнуровка здесь, в App.
