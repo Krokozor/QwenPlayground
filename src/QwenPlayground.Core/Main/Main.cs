@@ -30,7 +30,15 @@ public sealed record UiHooks(
     Func<string, Task> HeartbeatStartTurn,
     Func<Task> FlushMemory,
     Action OnCompactedUi,
-    Action ShutdownApp);
+    Action ShutdownApp,
+    /// <summary>
+    /// «Отправить при следующей возможности»: провайдер queued-сообщения. Агентный цикл
+    /// вызывает его в начале каждой итерации (со 2-й) — если пользователь вооружил очередь
+    /// во время хода, возвращается user-сообщение, которое вставляется в разговор ПЕРЕД
+    /// следующим вызовом модели (после инструментов текущей итерации). Провайдер сам
+    /// снимает вооружение и очищает ввод. null — очереди нет (или контекст без UI).
+    /// </summary>
+    Func<ChatMessage?>? QueuedMessage);
 
 /// <summary>
 /// Композиционный корень main-агента (паттерн NekoBot): владеет всем графом
@@ -369,6 +377,7 @@ public sealed class Main
             hooks.Generating,
             hooks.ShutdownApp,
             todo: rt.Todo,
-            scope: rt.Scope);
+            scope: rt.Scope,
+            queuedMessage: hooks.QueuedMessage);
     }
 }

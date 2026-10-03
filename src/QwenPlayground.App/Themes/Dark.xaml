@@ -21,6 +21,9 @@
     <SolidColorBrush x:Key="DimBrush" Color="#9d9d9d" />
     <SolidColorBrush x:Key="BorderBrush" Color="#3f3f46" />
     <SolidColorBrush x:Key="HoverBrush" Color="#3e3e42" />
+    <!-- Акцент «вооружено/ожидает» (кнопка очереди отправки): тёплый янтарный, тёмный
+         текст поверх (#1e1e1e) — контраст по паре. -->
+    <SolidColorBrush x:Key="AccentBrush" Color="#d9a441" />
 
     <!-- ============ Базовые ============ -->
     <Style TargetType="Window">

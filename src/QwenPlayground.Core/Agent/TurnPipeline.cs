@@ -42,6 +42,10 @@ public sealed class TurnPipeline
     // Скоуп агента рантайма (фаза 2, план 2026-09-28): ход идёт в скоупе СВОЕГО рантайма
     // (main — AgentRuntime.Main, pinned — собственный), интерактив — через ToolContext.Scope.
     private readonly AgentRuntime _scope;
+    // «Отправить при следующей возможности»: провайдер queued-сообщения (UI-хук).
+    // Агентный цикл вызывает его в начале итерации (со 2-й) — сообщение вставляется
+    // в разговор перед следующим вызовом модели. null — контекст без UI (тесты).
+    private readonly Func<ChatMessage?>? _queuedMessage;
     // Шов для тестов: по умолчанию — реальный цикл (AgentLoop строит LLM-клиент сам).
     private readonly Func<AgentLoopRequest, IAsyncEnumerable<AgentEvent>> _runLoop;
 
@@ -62,7 +66,8 @@ public sealed class TurnPipeline
         Action shutdownApp,
         Func<AgentLoopRequest, IAsyncEnumerable<AgentEvent>>? runLoop = null,
         TodoReminder? todo = null,
-        AgentRuntime? scope = null)
+        AgentRuntime? scope = null,
+        Func<ChatMessage?>? queuedMessage = null)
     {
         _log = log;
         _chatState = chatState;
@@ -79,6 +84,7 @@ public sealed class TurnPipeline
         _todo = todo;
         // null (тесты/старые точки сборки) — main-скоуп: поведение прежнее.
         _scope = scope ?? AgentRuntime.Main;
+        _queuedMessage = queuedMessage;
         _runLoop = runLoop ?? (request => new AgentLoop(_toolRegistry).RunAsync(request));
     }
 
@@ -243,6 +249,10 @@ public sealed class TurnPipeline
                 SlotId = _session.SlotId(),
                 SessionRoot = _session.Root,
                 SetSessionRoot = _session.SetRoot,
+                // «Отправить при следующей возможности»: queued-сообщение вставляется
+                // в разговор в середине хода (перед следующим вызовом модели), а не
+                // после его конца. Провайдер сам снимает вооружение и очищает ввод.
+                QueuedMessageProvider = _queuedMessage,
                 CancellationToken = turnToken
             }))
             {

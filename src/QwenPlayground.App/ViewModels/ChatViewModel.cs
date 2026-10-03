@@ -78,11 +78,87 @@ public partial class ChatViewModel : ObservableObject {
     private bool _isGenerating;
 
     /// <summary>
+    /// «Отправить при следующей возможности» вооружено: во время хода кнопка «Отправить»
+    /// — тоггл буфера следующего хода. Текст остаётся в окне ввода (редактируемый), а
+    /// когда ход завершится (IsGenerating → false), OnIsGeneratingChanged сам запустит
+    /// отправку. Снятие: повторный клик по кнопке, окно ввода опустело, смена сессии
+    /// или очистка разговора.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SendCommand))]
+    private bool _queueArmed;
+
+    /// <summary>
+    /// Ход отменяется (кнопка «Стоп»): тогда OnIsGeneratingChanged(false) НЕ должен
+    /// отправлять queued-сообщение — пользователь ждал прекращения и генерации, и
+    /// отправки. Сбрасывается в начале нового хода.
+    /// </summary>
+    private bool _cancelRequested;
+
+    /// <summary>
+    /// Подпись кнопки «Отправить»: «Отправить» (хода нет) / «➤ В очередь» и
+    /// «✕ Отменить очередь» (идёт ход — кнопка тоггл очереди).
+    /// </summary>
+    public string SendButtonText => !IsGenerating
+        ? "Отправить"
+        : QueueArmed ? "✕ Отменить" : "➤ В очередь";
+
+    /// <summary>Подсказка кнопки: режим меняется вместе с ходом.</summary>
+    public string SendButtonToolTip => !IsGenerating
+        ? "Отправить сообщение"
+        : QueueArmed
+            ? "Снять с очереди: текст останется в окне ввода"
+            : "Поставить в очередь: сообщение влетит в разговор после ближайших инструментов, до следующего моего ответа";
+
+    /// <summary>
     /// Команды сообщений живут в MessageCommands — их CanExecute (Reroll/Continue)
     /// зависит от IsGenerating: уведомляем модуль, когда флаг переключается.
+    /// Конец хода + вооружённая очередь — «следующая возможность»: отправляем
+    /// queued-сообщение (текст и вложения читаются в момент отправки — пользователь
+    /// мог отредактировать их, пока ход шёл).
     /// </summary>
     partial void OnIsGeneratingChanged(bool value) {
         MessageCommands?.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(SendButtonText));
+        OnPropertyChanged(nameof(SendButtonToolTip));
+        if (value) {
+            // Новый ход — флаг отмены предыдущего хода больше не актуален.
+            _cancelRequested = false;
+            return;
+        }
+        // Ход завершён (IsGenerating → false).
+        if (_cancelRequested) {
+            // Ход отменён (Стоп): queued-сообщение НЕ отправляем — пользователь ждал
+            // прекращения и генерации, и отправки. Очередь снимаем, текст остаётся
+            // в окне ввода (его можно отредактировать и отправить вручную).
+            _cancelRequested = false;
+            if (QueueArmed) {
+                QueueArmed = false;
+                StatusText = "Ход отменён: очередь снята, текст остался в окне ввода";
+            }
+            return;
+        }
+        // Нормальное завершение хода — «следующая возможность»: отправляем queued
+        // (текст и вложения читаются в момент отправки — пользователь мог
+        // отредактировать их, пока ход шёл).
+        if (!QueueArmed) {
+            return;
+        }
+        QueueArmed = false;
+        _ = SendQueuedAsync();
+    }
+
+    partial void OnQueueArmedChanged(bool value) {
+        OnPropertyChanged(nameof(SendButtonText));
+        OnPropertyChanged(nameof(SendButtonToolTip));
+    }
+
+    partial void OnInputTextChanged(string value) {
+        // Очередь без контента бессмысленна: окно ввода опустело (и вложений нет) —
+        // вооружение снимается само (состояние читается по подписи кнопки).
+        if (QueueArmed && string.IsNullOrWhiteSpace(value) && PendingAttachments.Count == 0) {
+            QueueArmed = false;
+        }
     }
 
     /// <summary>Чат занят (нельзя принимать новые ходы/ручную компакцию). Вычисляется из FSM.</summary>
@@ -207,8 +283,13 @@ public partial class ChatViewModel : ObservableObject {
         };
 
         // Вложения к следующему сообщению: SendCommand.canexec меняется (можно отправить
-        // и картинку без текста) + чипсы в UI.
-        PendingAttachments.CollectionChanged += (_, _) => SendCommand.NotifyCanExecuteChanged();
+        // и картинку без текста) + чипсы в UI. Очередь снимается, если контент стал пустым.
+        PendingAttachments.CollectionChanged += (_, _) => {
+            SendCommand.NotifyCanExecuteChanged();
+            if (QueueArmed && PendingAttachments.Count == 0 && InputText.Trim().Length == 0) {
+                QueueArmed = false;
+            }
+        };
     }
 
     /// <summary>
@@ -274,8 +355,26 @@ public partial class ChatViewModel : ObservableObject {
 
     private static string RoleName(ChatMessage message) => message.Role.ToString().ToLowerInvariant();
 
-    [RelayCommand(CanExecute = nameof(CanSend))]
+    [RelayCommand(CanExecute = nameof(CanSend), AllowConcurrentExecutions = true)]
     private async Task SendAsync() {
+        if (IsGenerating) {
+            // Идёт ход: кнопка — тоггл «отправить при следующей возможности». Текст
+            // остаётся в окне ввода (редактируемый); отправку запустит
+            // OnIsGeneratingChanged(false) в конце хода.
+            QueueArmed = !QueueArmed;
+            StatusText = QueueArmed
+                ? "Сообщение в очереди: влетит в разговор после ближайших инструментов — до следующего моего ответа (кнопка — отмена)"
+                : "Очередь отменена: текст остался в окне ввода";
+            return;
+        }
+        await SendNowAsync();
+    }
+
+    /// <summary>
+    /// Отправка сообщения — единый путь: ручная кнопка (холостой чат) и queued-отправка
+    /// после хода. Текст и вложения читаются в момент вызова.
+    /// </summary>
+    private async Task SendNowAsync() {
         var text = InputText.Trim();
         InputText = string.Empty;
         // Текст отправлен (стал сообщением) — драфт удаляем, чтобы не восстанавливать
@@ -324,6 +423,63 @@ public partial class ChatViewModel : ObservableObject {
         SaveCurrent();
     }
 
+    /// <summary>
+    /// Провайдер queued-сообщения для агентного цикла (mid-turn инъекция, «отправить при
+    /// следующей возможности»): если очередь вооружена и есть контент — создаёт
+    /// user-сообщение, добавляет его в разговор (ID присваивается, вложения пришиваются
+    /// тем же путём, что и при ручной отправке), снимает вооружение и очищает ввод,
+    /// возвращает сообщение. Агентный цикл вставляет его в разговор перед следующим
+    /// вызовом модели (после инструментов текущей итерации). null — очереди нет.
+    /// Вызывается на UI-потоке (агентный цикл живёт на потоке UI).
+    /// </summary>
+    public ChatMessage? GetQueuedMessage() {
+        if (!QueueArmed) {
+            return null;
+        }
+        var text = InputText.Trim();
+        var hasAttachments = PendingAttachments.Count > 0;
+        if (text.Length == 0 && !hasAttachments) {
+            // Пустая очередь — снимаем вооружение, сообщения нет.
+            QueueArmed = false;
+            return null;
+        }
+        // Сначала снимаем вооружение, потом очищаем ввод (чтобы OnInputTextChanged
+        // не пытался снять уже снятую очередь).
+        QueueArmed = false;
+        var userMessage = ChatMessage.User(text);
+        _runtime.Log.Add(userMessage); // ID присваивается здесь же
+        // Вложения — тот же путь, что и при ручной отправке (SendNowAsync).
+        var attachments = PendingAttachments.ToList();
+        PendingAttachments.Clear();
+        InputText = string.Empty;
+        _runtime.Draft.ClearOnSend();
+        var metaStore = new MessageMetaStore(SessionDir());
+        var announcedPaths = new List<string>();
+        foreach (var attachment in attachments) {
+            try {
+                if (attachment.IsImage) {
+                    metaStore.AddArtifact(userMessage.Id, attachment.FullPath);
+                } else {
+                    announcedPaths.Add(metaStore.AddFileArtifact(userMessage.Id, attachment.FullPath));
+                }
+            } catch {
+                // файл не прочитался — пропускаем (как в SendNowAsync).
+            }
+        }
+        if (announcedPaths.Count > 0) {
+            var tags = string.Join("\n", announcedPaths.Select(p => $"<attachment path=\"{ToWorkspaceRelative(p)}\">"));
+            userMessage.Content = (userMessage.Content + "\n" + tags).Trim();
+        }
+        // UI-рендер: явно добавляем MessageViewModel в Messages (как в SendNowAsync).
+        // Log.Changed → RebuildMessageViews не срабатывает при добавлении из агентного
+        // цикла, поэтому без явного Add сообщение не появится в UI до рестарта.
+        var userView = MessageViewModel.FromMessage("user", userMessage);
+        userView.LoadArtifacts(SessionDir());
+        Messages.Add(userView);
+        StatusText = "Сообщение из очереди вставлено в разговор";
+        return userMessage;
+    }
+
     /// <summary>Путь относительно корня workspace (для read_file и тега &lt;attachment&gt;).</summary>
     private static string ToWorkspaceRelative(string path) {
         var wsRoot = SelfBuildPaths.WorkspaceRoot;
@@ -332,16 +488,42 @@ public partial class ChatViewModel : ObservableObject {
             : path;
     }
 
-    private bool CanSend() => !IsBusy && (InputText.Trim().Length > 0 || PendingAttachments.Count > 0) && S.Endpoint.Trim().Length > 0;
+    private bool CanSend() {
+        // Кнопка неактивна ТОЛЬКО когда нет ни текста, ни вложений. Остальные проверки
+        // (endpoint, ход) — в момент реальной отправки, не на уровне CanExecute.
+        return InputText.Trim().Length > 0 || PendingAttachments.Count > 0;
+    }
+
+    /// <summary>
+    /// Отправка queued-сообщения в конце хода (fire-and-forget из OnIsGeneratingChanged):
+    /// тот же путь, что и ручная отправка; ошибка — в статусную строку, не в краш.
+    /// </summary>
+    private async Task SendQueuedAsync() {
+        if (InputText.Trim().Length == 0 && PendingAttachments.Count == 0) {
+            return;
+        }
+        try {
+            await SendNowAsync();
+        }
+        catch (Exception exception) {
+            StatusText = $"ошибка отправки queued-сообщения: {exception.Message}";
+        }
+    }
 
     [RelayCommand(CanExecute = nameof(IsGenerating))]
-    private void Cancel() => _runtime.Turns.Cancel();
+    private void Cancel() {
+        // Помечаем отмену: когда IsGenerating станет false, OnIsGeneratingChanged
+        // не отправит queued-сообщение (а снимет очередь).
+        _cancelRequested = true;
+        _runtime.Turns.Cancel();
+    }
 
     /// <summary>
     /// Очистка текущего разговора — программный доступ (Harness). UI-кнопка «Очистить»
     /// убрана (2026-09-02): сценарий покрывает «откат» первого сообщения.
     /// </summary>
     public void Clear() {
+        QueueArmed = false; // очередь привязана к текущему тексту — с разговором ушла
         _runtime.Log.Clear();
         StatusText = string.Empty;
         SaveCurrent();
@@ -461,6 +643,9 @@ public partial class ChatViewModel : ObservableObject {
     /// main (в SessionList), превью, меню полок (полки per-session).
     /// </summary>
     private void OnSessionChanged() {
+        // Сессия сменилась: текст в окне уже драфт НОВОЙ сессии (Restore идёт до
+        // события) — очередь, указывавшая на старый текст, бессмысленна.
+        QueueArmed = false;
         SessionList.Refresh();
         RefreshPromptPreview();
         Shelves.Refresh();

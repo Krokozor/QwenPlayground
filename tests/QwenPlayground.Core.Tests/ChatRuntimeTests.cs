@@ -20,7 +20,8 @@ public sealed class ChatRuntimeTests {
         _ => Task.CompletedTask,
         () => Task.CompletedTask,
         () => { },
-        () => { }),
+        () => { },
+        null),
         typeof(AgentTool).Assembly);
 
     [Fact]
@@ -58,7 +59,7 @@ public sealed class ChatRuntimeTests {
         var main = BuildMain();
         var hooks = new UiHooks(
             _ => { }, _ => { }, () => string.Empty, _ => { }, () => { },
-            _ => Task.CompletedTask, () => Task.CompletedTask, () => { }, () => { });
+            _ => Task.CompletedTask, () => Task.CompletedTask, () => { }, () => { }, null);
 
         var pinned = main.CreatePinnedRuntime("pinned-test-session", hooks);
 

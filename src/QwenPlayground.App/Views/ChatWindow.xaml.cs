@@ -78,7 +78,8 @@ public partial class ChatWindow : Window {
             _ => Task.CompletedTask,
             () => Task.CompletedTask,
             () => chat?.Shelves.Refresh(),
-            shutdownApp);
+            shutdownApp,
+            () => chat?.GetQueuedMessage());
         var sessionId = existingSessionId ?? main.Sessions.CreateDetached();
         var runtime = main.CreatePinnedRuntime(sessionId, hooks, promptKey: promptKey, slotId: slotId);
         chat = new ChatViewModel(runtime, main.Sessions, main.Heartbeat, main.Background,

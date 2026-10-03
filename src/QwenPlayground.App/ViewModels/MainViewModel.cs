@@ -175,7 +175,8 @@ public partial class MainViewModel : ObservableObject, IChatHost {
             prompt => Chat!.RunHeartbeatTurnAsync(prompt),
             FlushMemoryVectorsAsync,
             () => Chat!.Shelves.Refresh(), // меню должно показать снятые полки
-            () => System.Windows.Application.Current?.Shutdown()),
+            () => System.Windows.Application.Current?.Shutdown(),
+            () => Chat!.GetQueuedMessage()),
             typeof(AgentTool).Assembly, // Core: базовые инструменты
             typeof(MainViewModel).Assembly); // App: UI-инструменты (screenshot, switch_tab)
         // Окно чата: ядро разговора + LEGO-модули (сессии/полки/команды/проекция хода).

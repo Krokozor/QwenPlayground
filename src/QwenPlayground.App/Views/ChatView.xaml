@@ -11,6 +11,40 @@
         <views:SubagentStatusTextConverter x:Key="SubagentStatusText" />
         <views:HalfHeightConverter x:Key="HalfHeight" />
         <views:EmbeddedInputVisibilityConverter x:Key="EmbeddedInputVis" />
+        <!-- Кнопка «Отправить» (и тоггл очереди во время хода). Свой шаблон, а не BasedOn
+             темы: DataTrigger «вооружена» должен переживать hover-триггер (в общем шаблоне
+             темы template-triggers выше style-triggers — акцент проигрывал бы на наведении).
+             DataTrigger — ПОСЛЕ hover/pressed: вооружённая кнопка держит акцент и на наведении. -->
+        <Style x:Key="SendButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource FgBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{StaticResource PanelBrush}"
+                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                CornerRadius="3" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource BorderBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                            <DataTrigger Binding="{Binding QueueArmed}" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="#1e1e1e" />
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     <ItemsPanelTemplate x:Key="AttachPanel">
             <WrapPanel />
         </ItemsPanelTemplate>
@@ -516,7 +550,11 @@
                         FontWeight="Bold" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="Отправить" Command="{Binding SendCommand}"
+                <!-- Во время хода кнопка — тоггл «отправить при следующей возможности»
+                     (подпись/подсказка из VM): текст остаётся в окне ввода, сообщение
+                     влетает в разговор после ближайших инструментов, до следующего ответа. -->
+                <Button Content="{Binding SendButtonText}" Command="{Binding SendCommand}"
+                        ToolTip="{Binding SendButtonToolTip}" Style="{StaticResource SendButtonStyle}"
                         Padding="16,4" Margin="0,0,8,0" />
                 <Button Content="Продолжить" Command="{Binding MessageCommands.ContinueCommand}"
                         Padding="16,4" Margin="0,0,8,0" />

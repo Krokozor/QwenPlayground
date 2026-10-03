@@ -88,6 +88,20 @@ public sealed class AgentLoop
         for (var iteration = 0; iteration < bound; iteration++)
         {
             DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1} begin");
+            // «Отправить при следующей возможности»: пользователь вооружил очередь во
+            // время хода — вставляем его сообщение в разговор ПОСЛЕ инструментов
+            // предыдущей итерации, ПЕРЕД следующим вызовом модели. Провайдер сам
+            // добавляет сообщение в разговор (конвертацию), снимает вооружение и
+            // очищает ввод; цикл не добавляет его повторно. Первая итерация — исключение
+            // (очередь ещё не могла быть вооружена: ход только начался).
+            if (iteration > 0 && request.QueuedMessageProvider is { } queuedProvider)
+            {
+                var queued = queuedProvider();
+                if (queued is not null)
+                {
+                    DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: queued user message injected (id={queued.Id})");
+                }
+            }
             // Бюджет контекста: результат инструментов предыдущей итерации (иногда огромный —
             // файлы, картинки) уже лежит в conversation. Следующий рендер будет больше последнего
             // запроса, поэтому проверяем/сжимаем ДО рендера — иначе переполнение окна ударит
