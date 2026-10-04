@@ -58,6 +58,21 @@ public sealed class McpClient : IAsyncDisposable
     public string Transport => _config.Transport;
     public bool IsConnected { get; private set; }
 
+    /// <summary>
+    /// Транспорт жив: stdio — процесс не завершился; http — всегда true
+    /// (состояние определяется ошибками ответов). Используется для решений
+    /// об автопереподключении (McpServerManager).
+    /// </summary>
+    public bool IsTransportAlive
+    {
+        get
+        {
+            if (_config.Transport != "stdio") return true;
+            try { return _process is not null && !_process.HasExited; }
+            catch { return false; } // процесс мог быть уже disposed
+        }
+    }
+
     /// <summary>Сколько строк сервер написал в stderr с момента подключения.</summary>
     public int StderrLineCount => Volatile.Read(ref _stderrLines);
 
@@ -339,7 +354,8 @@ public sealed class McpClient : IAsyncDisposable
             try { if (process.HasExited) code = process.ExitCode; } catch { /* ExitCode может бросить, если процесс не был дождён — код в сообщении опционален */ }
             DiagnosticsLog.Log($"MCP '{Name}': process exited during session" + (code is null ? "" : $" (code {code})"));
             AnnouncementBoard.Push("mcp:" + Name,
-                "процесс сервера завершился во время сессии" + (code is null ? "" : $" (код {code})") + $" — stderr: {StderrLogPath}");
+                "процесс сервера завершился во время сессии" + (code is null ? "" : $" (код {code})") +
+                " — автопереподключение попробует восстановить его в течение ~30 с — stderr: " + StderrLogPath);
         }
     }
 

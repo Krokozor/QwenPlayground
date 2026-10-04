@@ -172,10 +172,12 @@ class Bridge
         }
     }
 
-    public async Task<JsonElement?> CallAsync(string commandType, object? @params, TimeSpan timeout)
+    public async Task<JsonElement?> CallAsync(string commandType, object? @params, TimeSpan timeout, string? requestId = null)
     {
         if (!Connected) return null;
-        var id = Guid.NewGuid().ToString("N");
+        // B1: внешний requestId позволяет повторить вызов с тем же id после обрыва pipe —
+        // мост дедуплицирует in-flight запросы по requestId и кэширует результаты 5 минут.
+        var id = requestId ?? Guid.NewGuid().ToString("N");
         var tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = tcs;
         SendRaw(new { type = commandType, @params, requestId = id });
@@ -215,13 +217,15 @@ static class Program
 
         Log.Write($"starting (project filter: {_projectPathFilter ?? "any"})");
 
-        // Discover + connect with retries (Unity may still be starting)
-        for (int attempt = 1; attempt <= 10; attempt++)
+        // B2 (2026-10-04): короткий стартовый wait (~3 с). MCP-клиент имеет собственный
+        // 15-с handshake-таймаут и автопереподключение, а ReconnectLoop (каждые 3 с)
+        // ищет bridge в фоне. Длинный блокирующий wait на старте (было 10×3 с) отодвигал
+        // stdio-цикл за таймаут клиента — сервер казался мёртвым, хотя bridge мог
+        // появиться в любой момент.
+        for (int attempt = 1; attempt <= 2; attempt++)
         {
             if (await TryConnectBridge()) break;
-            if (attempt == 10)
-                Log.Write("no Unity MCP bridge found after retries — will keep trying in background");
-            await Task.Delay(3000);
+            await Task.Delay(1500);
         }
 
         _ = Task.Run(ReconnectLoop);
@@ -300,12 +304,15 @@ static class Program
     static string NormalizePath(string p) =>
         p.Trim().TrimEnd('\\', '/').Replace('/', '\\').ToUpperInvariant();
 
+    static string? _lastMismatchLog;
+
     static BridgeInfo? FindBridge()
     {
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".unity", "mcp", "connections");
         if (!Directory.Exists(dir)) return null;
 
         BridgeInfo? best = null;
+        var seenProjects = new List<string>();
         foreach (var file in Directory.GetFiles(dir, "bridge-*.json"))
         {
             try
@@ -319,6 +326,7 @@ static class Program
                     Modified = File.GetLastWriteTime(file)
                 };
                 if (string.IsNullOrEmpty(info.ConnectionPath)) continue;
+                seenProjects.Add(info.ProjectPath);
                 if (!IsEditorAlive(info.EditorPid)) continue;
                 if (_projectPathFilter != null &&
                     NormalizePath(info.ProjectPath) != NormalizePath(_projectPathFilter)) continue;
@@ -326,6 +334,25 @@ static class Program
             }
             catch { /* skip bad file */ }
         }
+
+        // A2: filter не совпал ни с одним bridge (проект перенесли? редактор на другой
+        // копии?) — явное сообщение вместо молчаливого «no bridge». Лог только при
+        // изменении: ReconnectLoop зовёт FindBridge каждые 3 с.
+        if (best == null && _projectPathFilter != null && seenProjects.Count > 0)
+        {
+            var msg = "project filter '" + _projectPathFilter + "' matches no bridge; found projects: " +
+                      string.Join("; ", seenProjects.Distinct());
+            if (msg != _lastMismatchLog)
+            {
+                Log.Write(msg);
+                _lastMismatchLog = msg;
+            }
+        }
+        else if (best != null)
+        {
+            _lastMismatchLog = null;
+        }
+
         return best;
     }
 
@@ -358,13 +385,16 @@ static class Program
         }
     }
 
-    static async Task EnsureBridgeAsync()
+    static async Task EnsureBridgeAsync(TimeSpan? cap = null)
     {
         // Domain reloads take ~37s on this machine — wait generously and try
         // connecting directly, so a tool call issued DURING a reload simply
         // blocks until the bridge is back (no client-side sleep rituals).
+        // B2: tools/list использует короткий cap (5 с) — у MCP-клиента свой
+        // 15-с handshake-таймаут и автопереподключение, длинный hang бесполезен.
+        var limit = cap ?? TimeSpan.FromSeconds(120);
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        while (sw.Elapsed < TimeSpan.FromSeconds(120))
+        while (sw.Elapsed < limit)
         {
             Bridge? b;
             lock (BridgeLock) b = _bridge;
@@ -380,7 +410,10 @@ static class Program
 
     static async Task HandleToolsListAsync(StreamWriter stdout, Encoding enc, JsonElement? id)
     {
-        await EnsureBridgeAsync();
+        // B2: короткий wait (5 с вместо 120 с). У MCP-клиента 15-с handshake-таймаут
+        // и автопереподключение: быстрый error → клиент переподключит сервер сам,
+        // а 120-с hang превращался в timeout + kill процесса relay.
+        await EnsureBridgeAsync(TimeSpan.FromSeconds(5));
         Bridge? b;
         lock (BridgeLock) b = _bridge;
         var tools = b?.Tools;
@@ -413,44 +446,74 @@ static class Program
         var name = p.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
         var arguments = p.TryGetProperty("arguments", out var a) ? a.Clone() : JsonSerializer.Deserialize<JsonElement>("{}");
 
-        // Retry across domain reloads: if the bridge dies mid-call (e.g. the
-        // tool entered play mode), wait for it to come back and re-send the
-        // request. A fresh execution on the reconnected bridge is intended —
-        // tools must be idempotent w.r.t. re-execution after a reload.
-        const int MaxAttempts = 3;
-        JsonElement? resp = null;
-        for (int attempt = 1; attempt <= MaxAttempts; attempt++)
+        // B1 (2026-10-04): слепой retry после смерти bridge убран. Старая логика
+        // повторно отправляла запрос после domain reload — для неидемпотентных
+        // тулов (RunCommand!) это означало ДВОЙНОЕ исполнение. Теперь:
+        // - мост дедуплицирует in-flight запросы по requestId и кэширует результаты
+        //   5 минут, поэтому повтор с ТЕМ ЖЕ requestId безопасен, если мост НЕ
+        //   рестартовал (обрыв pipe);
+        // - если мост рестартовал (domain reload: discovery-файл переписан с новым
+        //   created_date), кэш снесён и повтор = переисполнение — НЕ повторяем,
+        //   возвращаем явную ошибку и даём модели решать.
+        var requestId = Guid.NewGuid().ToString("N");
+        var startInfo = FindBridge();
+        await EnsureBridgeAsync();
+        Bridge? b;
+        lock (BridgeLock) b = _bridge;
+        if (b == null || !b.Connected)
         {
-            await EnsureBridgeAsync();
-            Bridge? b;
-            lock (BridgeLock) b = _bridge;
-            if (b == null || !b.Connected)
-            {
-                await WriteErrorAsync(stdout, enc, id, -32000, "Not connected to Unity MCP bridge (is the editor open?)");
-                return;
-            }
+            await WriteErrorAsync(stdout, enc, id, -32000, "Not connected to Unity MCP bridge (is the editor open?)");
+            return;
+        }
 
-            Log.Write($"tool call: {name} (attempt {attempt}/{MaxAttempts})");
-            resp = await b.CallAsync(name, arguments, TimeSpan.FromSeconds(600));
-            if (resp != null) break;
-
-            // No response: either a timeout (bridge still alive) or a
-            // disconnection (bridge died, e.g. domain reload). Only retry
-            // on disconnection — a timeout means the op took too long.
+        Log.Write($"tool call: {name} (req {requestId[..8]})");
+        var resp = await b.CallAsync(name, arguments, TimeSpan.FromSeconds(600), requestId);
+        if (resp == null)
+        {
             bool alive;
             lock (BridgeLock) alive = _bridge?.Connected ?? false;
             if (alive)
             {
-                Log.Write($"tool call {name} timed out (bridge alive) — not retrying");
-                break;
+                await WriteErrorAsync(stdout, enc, id, -32000,
+                    $"Unity bridge timed out after 600s on '{name}' (bridge alive — the operation may still be running on the editor's main thread)");
+                return;
             }
-            Log.Write($"tool call {name} lost (bridge died) — waiting for reconnect before retry");
-        }
 
-        if (resp == null)
-        {
-            await WriteErrorAsync(stdout, enc, id, -32000, "No response from Unity bridge (timeout or disconnected)");
-            return;
+            // Bridge умер во время вызова. Ждём переподключения.
+            Log.Write($"tool call {name} lost (bridge died) — waiting for reconnect");
+            await EnsureBridgeAsync();
+            lock (BridgeLock) b = _bridge;
+            if (b == null || !b.Connected)
+            {
+                await WriteErrorAsync(stdout, enc, id, -32000,
+                    $"Unity bridge was lost during the call '{name}' and did not come back within 120s (is the editor open?)");
+                return;
+            }
+
+            // Мост рестартовал? Новый created_date discovery-файла / новый PID =
+            // domain reload или рестарт редактора → кэш результатов снесён →
+            // повтор = переисполнение операции.
+            var nowInfo = FindBridge();
+            bool restarted = nowInfo == null || startInfo == null
+                || nowInfo.EditorPid != startInfo.EditorPid
+                || nowInfo.Modified != startInfo.Modified;
+            if (restarted)
+            {
+                await WriteErrorAsync(stdout, enc, id, -32000,
+                    $"Unity bridge restarted (domain reload) during the call '{name}': the operation was interrupted. " +
+                    "The editor is ready now — retry the call explicitly if the operation is safe to re-run.");
+                return;
+            }
+
+            // Мост жив и НЕ рестартовался (обрыв pipe): повтор с тем же requestId —
+            // дедуп/кэш результатов моста гарантирует отсутствие двойного исполнения.
+            Log.Write($"bridge back without restart — retrying {name} with same requestId (cache-safe)");
+            resp = await b.CallAsync(name, arguments, TimeSpan.FromSeconds(600), requestId);
+            if (resp == null)
+            {
+                await WriteErrorAsync(stdout, enc, id, -32000, "No response from Unity bridge on retry (timeout or disconnected)");
+                return;
+            }
         }
 
         var r = resp.Value;

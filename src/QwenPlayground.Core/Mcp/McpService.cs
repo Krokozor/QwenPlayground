@@ -33,6 +33,11 @@ public static class McpService
             await Instance.ConnectAllAsync();
             StartupTrace.Log("MCP init: ConnectAllAsync done");
 
+            // Автопереподключение: восстанавливает серверы, не поднявшиеся на старте
+            // (приложение-цель ещё не было запущено) и умершие во время сессии
+            // (например, процесс relay).
+            Instance.StartAutoReconnect();
+
             var clients = Instance.Clients;
             if (clients.Count > 0)
             {
@@ -60,6 +65,7 @@ public static class McpService
     {
         if (Instance is not null)
         {
+            Instance.StopAutoReconnect();
             await Instance.DisconnectAllAsync();
             Instance = null;
         }
