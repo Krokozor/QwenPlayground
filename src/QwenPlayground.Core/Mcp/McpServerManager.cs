@@ -31,11 +31,12 @@ public sealed class McpServerManager
 
     /// <summary>
     /// Таймаут tool-вызова (B3): защита от зависшего сервера. Значение покрывает
-    /// худший случай relay (120 с ожидания bridge + 600 с вызова = 720 с) — канал
-    /// последовательный, поэтому зависший вызов блокирует и следующие; таймаут
-    /// ограничивает это время.
+    /// худший случай relay (120 с ожидания bridge + 1800 с вызова = 1920 с) —
+    /// канал последовательный, поэтому зависший вызов блокирует и следующие;
+    /// таймаут ограничивает это время. 1860 с — длинные одиночные вызовы с
+    /// наблюдением (sim_run до 900 с) проходят с запасом.
     /// </summary>
-    private static readonly TimeSpan ToolCallTimeout = TimeSpan.FromSeconds(720);
+    private static readonly TimeSpan ToolCallTimeout = TimeSpan.FromSeconds(1860);
 
     /// <summary>All connected clients, keyed by server name.</summary>
     public IReadOnlyDictionary<string, McpClient> Clients

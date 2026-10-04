@@ -466,8 +466,12 @@ static class Program
             return;
         }
 
+        // Таймаут 1800 с (2026-10-05): длинные одиночные вызовы с наблюдением (sim_run:
+        // до 900 с симуляции + периферия) должны проходить без таймаута. Зависший
+        // синхронный тул теперь блокирует до 30 мин — принимается: редактор при этом
+        // либо жив (async-тулы), либо замёрз целиком и виден владельцу.
         Log.Write($"tool call: {name} (req {requestId[..8]})");
-        var resp = await b.CallAsync(name, arguments, TimeSpan.FromSeconds(600), requestId);
+        var resp = await b.CallAsync(name, arguments, TimeSpan.FromSeconds(1800), requestId);
         if (resp == null)
         {
             bool alive;
@@ -475,7 +479,7 @@ static class Program
             if (alive)
             {
                 await WriteErrorAsync(stdout, enc, id, -32000,
-                    $"Unity bridge timed out after 600s on '{name}' (bridge alive — the operation may still be running on the editor's main thread)");
+                    $"Unity bridge timed out after 1800s on '{name}' (bridge alive — the operation may still be running on the editor's main thread)");
                 return;
             }
 
@@ -508,7 +512,7 @@ static class Program
             // Мост жив и НЕ рестартовался (обрыв pipe): повтор с тем же requestId —
             // дедуп/кэш результатов моста гарантирует отсутствие двойного исполнения.
             Log.Write($"bridge back without restart — retrying {name} with same requestId (cache-safe)");
-            resp = await b.CallAsync(name, arguments, TimeSpan.FromSeconds(600), requestId);
+            resp = await b.CallAsync(name, arguments, TimeSpan.FromSeconds(1800), requestId);
             if (resp == null)
             {
                 await WriteErrorAsync(stdout, enc, id, -32000, "No response from Unity bridge on retry (timeout or disconnected)");
