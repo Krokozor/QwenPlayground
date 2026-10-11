@@ -68,6 +68,14 @@ public sealed class ChatRuntime {
     public string? PromptKey { get; internal set; }
     public string? StateBlockKey { get; internal set; }
 
+    /// <summary>
+    /// Рабочая папка сессии рантайма (live-провайдер, план 2026-10-01): main — текущая
+    /// сессия (селектор), pinned — закреплённая. Нужна ChatViewModel.SaveCurrent: сейв
+    /// pinned-сессии (SavePinned) обязан нести root, иначе запись затирает его null.
+    /// null — контекст без сессии (тесты).
+    /// </summary>
+    public Func<string?>? Root { get; internal set; }
+
     private readonly ServerProps _serverProps;
 
     public ChatRuntime(Func<string> sessionId, ServerProps serverProps) {

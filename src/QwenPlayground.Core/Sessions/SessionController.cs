@@ -4,6 +4,7 @@ using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.MetaInfo;
+using QwenPlayground.Core.Settings;
 
 namespace QwenPlayground.Core.Sessions;
 
@@ -36,14 +37,22 @@ public sealed class SessionController
     private int? _slotId;
 
     // Рабочая папка текущей сессии (root инструментов, план 2026-10-01). null — не
-    // задано: фоллбек в глобальную AppSettings.ProjectRoot. Живёт в SessionData.
+    // задано: фоллбек в глобальную AppSettings.ProjectRoot (осталось только у сессий
+    // старых версий чата; новые получают дефолт при создании, см. NewSessionRoot).
+    // Живёт в SessionData.
     private string? _root;
 
-    public SessionController(ChatLog log, DraftKeeper draft, MemorySurfacer surfacer, string? sessionsRoot = null)
+    // Провайдер дефолтной рабочей папки для новых сессии (шов для тестов): по умолчанию
+    // глобальная настройка AppSettings.ProjectRoot (папка проекта).
+    private readonly Func<string?> _defaultRootProvider;
+
+    public SessionController(ChatLog log, DraftKeeper draft, MemorySurfacer surfacer, string? sessionsRoot = null,
+        Func<string?>? defaultRootProvider = null)
     {
         _log = log;
         _draft = draft;
         _surfacer = surfacer;
+        _defaultRootProvider = defaultRootProvider ?? (() => AppSettings.Get().ProjectRoot);
         // Шов для тестов: изолированный каталог (как у ChatSessions).
         _sessions = new ChatSessions(sessionsRoot);
         // Счётчик id — на каждое сообщение в сайдкар (sessions/<id>/counter): полный
@@ -67,6 +76,13 @@ public sealed class SessionController
 
     /// <summary>Рабочая папка текущей сессии (null — не задано, действует глобальный дефолт).</summary>
     public string? Root => _root;
+
+    /// <summary>
+    /// Стартовая рабочая папка новой сессии (2026-10-05): текущий глобальный дефолт
+    /// (AppSettings.ProjectRoot — папка проекта). Пустой дефолт — null (фоллбек при
+    /// разрешении, как у сессий старых версий).
+    /// </summary>
+    private string? NewSessionRoot() => SessionRoots.DefaultForNew(_defaultRootProvider());
 
     /// <summary>
     /// Рабочая папка сессии сменилась (UI или тул set_session_root): вид обновляет
@@ -172,7 +188,7 @@ public sealed class SessionController
             StartupTrace.Log($"EnsureMain: created empty ({sw.ElapsedMilliseconds}ms)");
             _log.Clear();
             _slotId = SlotAllocation.Main;
-            _root = null;
+            _root = NewSessionRoot(); // новая сессия стартует с папкой проекта (дефолт)
         }
         SaveCurrent();
         StartupTrace.Log($"EnsureMain: saved ({sw.ElapsedMilliseconds}ms total)");
@@ -222,7 +238,7 @@ public sealed class SessionController
         _promptKey = null;
         _stateBlockKey = null;
         _slotId = SlotAllocation.NonMain; // новая не-main сессия — дефолт схемы (1)
-        _root = null;
+        _root = NewSessionRoot(); // новая сессия стартует с папкой проекта (дефолт)
         SessionChanged?.Invoke();
     }
 
@@ -241,7 +257,7 @@ public sealed class SessionController
             _promptKey = null;
             _stateBlockKey = null;
             _slotId = SlotAllocation.NonMain; // свежая пустая сессия — не-main, дефолт схемы
-            _root = null;
+            _root = NewSessionRoot(); // свежая сессия стартует с папкой проекта (дефолт)
         }
         SessionChanged?.Invoke();
         return deletedCurrent;

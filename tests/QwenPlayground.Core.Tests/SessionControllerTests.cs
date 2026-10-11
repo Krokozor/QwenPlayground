@@ -24,6 +24,7 @@ public sealed class SessionControllerTests : IDisposable
     private readonly string _root;
     private readonly string? _savedLastSessionId;
     private readonly bool _savedMemoryEnabled;
+    private readonly string _savedProjectRoot;
     private readonly ChatLog _log = new();
     private string _input = string.Empty;
     private readonly DraftKeeper _draft;
@@ -37,6 +38,7 @@ public sealed class SessionControllerTests : IDisposable
         Directory.CreateDirectory(_root);
         _savedLastSessionId = AppSettings.Get().LastSessionId;
         _savedMemoryEnabled = AppSettings.Get().MemoryEnabled;
+        _savedProjectRoot = AppSettings.Get().ProjectRoot;
         _draft = new DraftKeeper(
             () => _input,
             text => _input = text,
@@ -51,6 +53,7 @@ public sealed class SessionControllerTests : IDisposable
     {
         AppSettings.Get().LastSessionId = _savedLastSessionId; // не протекаем в другие тесты
         AppSettings.Get().MemoryEnabled = _savedMemoryEnabled;
+        AppSettings.Get().ProjectRoot = _savedProjectRoot;
         try
         {
             if (Directory.Exists(_root))
@@ -229,6 +232,57 @@ public sealed class SessionControllerTests : IDisposable
         Assert.Equal("sampler-x", _controller.SamplerKey);
         Assert.Equal("prompt-y", _controller.PromptKey);
         Assert.Equal("state-z", _controller.StateBlockKey);
+    }
+
+    /// <summary>
+    /// Дефолтная рабочая папка новых сессий (2026-10-05): новая сессия стартует с
+    /// текущим AppSettings.ProjectRoot (папка проекта), а не с пустым root; пустой
+    /// дефолт — root остаётся null (фоллбек, как у сессий старых версий).
+    /// </summary>
+    [Fact]
+    public void StartNew_AssignsDefaultProjectRoot()
+    {
+        AppSettings.Get().ProjectRoot = _root; // «папка проекта» — изолированный тестовый каталог
+        _controller.EnsureMain();
+
+        _controller.StartNew();
+
+        Assert.Equal(_root, _controller.Root);
+    }
+
+    [Fact]
+    public void EnsureMain_FreshSession_GetsDefaultProjectRoot()
+    {
+        AppSettings.Get().ProjectRoot = _root;
+
+        _controller.EnsureMain();
+
+        Assert.Equal(_root, _controller.Root);
+    }
+
+    [Fact]
+    public void StartNew_EmptyDefaultRoot_StaysNull()
+    {
+        AppSettings.Get().ProjectRoot = string.Empty;
+        _controller.EnsureMain();
+
+        _controller.StartNew();
+
+        Assert.Null(_controller.Root);
+    }
+
+    [Fact]
+    public void Delete_CurrentSession_FreshSessionGetsDefaultProjectRoot()
+    {
+        AppSettings.Get().ProjectRoot = _root;
+        _controller.EnsureMain();
+        _controller.StartNew();
+        _controller.SaveCurrent();
+        var secondId = _controller.CurrentId;
+
+        _controller.Delete(secondId);
+
+        Assert.Equal(_root, _controller.Root);
     }
 
     [Fact]

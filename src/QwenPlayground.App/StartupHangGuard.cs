@@ -35,9 +35,14 @@ internal static class StartupHangGuard
         var startedAt = DateTime.Now;
         var lastUiSeen = DateTime.Now;
         var lastDump = DateTime.MinValue;
+        var process = Process.GetCurrentProcess();
+        var lastCpu = process.TotalProcessorTime;
         while (DateTime.Now - startedAt < TimeSpan.FromSeconds(120))
         {
             Thread.Sleep(2000);
+            var cpuNow = process.TotalProcessorTime;
+            var cpuDelta = cpuNow - lastCpu;
+            lastCpu = cpuNow;
             if (Ping(dispatcher, 1000))
             {
                 lastUiSeen = DateTime.Now;
@@ -47,7 +52,17 @@ internal static class StartupHangGuard
             if (silent > TimeSpan.FromSeconds(10) && DateTime.Now - lastDump > TimeSpan.FromSeconds(30))
             {
                 lastDump = DateTime.Now;
-                MarkHang(silent);
+                // Пинг не проходит, НО процесс жрёт CPU — UI-поток работает (длинная
+                // синхронная работа: конструктор окна, 500+ вью сообщений), не висит.
+                // CPU на месте — поток заблокирован (лок/файл/ожидание) — настоящее зависание.
+                if (cpuDelta > TimeSpan.FromSeconds(1.5))
+                {
+                    StartupTrace.Log($"BUSY: диспетчер не отвечает {silent.TotalSeconds:F0}s, но CPU +{cpuDelta.TotalSeconds:F1}s за 2с — длинная синхронная работа, не зависание");
+                }
+                else
+                {
+                    MarkHang(silent, cpuDelta);
+                }
             }
         }
     }
@@ -70,21 +85,23 @@ internal static class StartupHangGuard
     /// <summary>
     /// Маркер зависания: в старт-трейс (тот же файл, что пишет UI-поток — синхронные
     /// моментальные записи не конфликтуют) — HANG + последние 10 строк трейса:
-    /// последний шаг, который UI-поток завершил до того, как встал.
+    /// последний шаг, который UI-поток завершил до того, как встал. Хвост читаем ДО
+    /// записи маркера — иначе маркер увидит сам себя.
     /// </summary>
-    private static void MarkHang(TimeSpan silent)
+    private static void MarkHang(TimeSpan silent, TimeSpan cpuDelta)
     {
         try
         {
-            StartupTrace.Log($"HANG: UI-поток молчит {silent.TotalSeconds:F0}s (до handshake) — последние строки трейса:");
             var file = Path.Combine(CrashLogCore.DefaultLogsDir, $"startup-{DateTime.Now:yyyyMMdd}.log");
+            var tail = new List<string>();
             if (File.Exists(file))
             {
-                var lines = File.ReadAllLines(file);
-                foreach (var line in lines.TakeLast(10))
-                {
-                    StartupTrace.Log("  | " + line);
-                }
+                tail = File.ReadAllLines(file).TakeLast(10).ToList();
+            }
+            StartupTrace.Log($"HANG: диспетчер не отвечает {silent.TotalSeconds:F0}s (до handshake), CPU +{cpuDelta.TotalSeconds:F1}s за 2с — поток заблокирован. Последние строки трейса:");
+            foreach (var line in tail)
+            {
+                StartupTrace.Log("  | " + line);
             }
         }
         catch (Exception exception)

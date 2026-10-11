@@ -48,6 +48,13 @@ public sealed class McpClient : IAsyncDisposable
     private bool _initialized;
     private string? _sessionId;
 
+    // B4: сервер (relay) прислал notifications/tools/list_changed — рефетчим tools/list
+    // fire-and-forget после ближайшего запроса (read-loop читает уведомления, только
+    // когда есть влетающий запрос; флаг + пост-проверка — минимально рискованный путь).
+    // Volatile.Read/Write дают атомарность — ключевое слово volatile не нужно (CS0420).
+    private bool _toolsChangedPending;
+    private int _refreshing;
+
     /// <summary>Tools discovered from this server.</summary>
     public List<McpToolInfo> Tools { get; } = new();
 
@@ -233,7 +240,62 @@ public sealed class McpClient : IAsyncDisposable
                 error["message"]?.GetValue<string>() ?? "Unknown MCP error");
         }
 
-        return response["result"] as JsonObject;
+        var result = response["result"] as JsonObject;
+
+        // B4: во время запроса сервер прислал tools/list_changed — рефетчим (fire-and-forget).
+        MaybeRefreshTools();
+
+        return result;
+    }
+
+    /// <summary>
+    /// B4: если сервер уведомил об изменении списка тулов — рефетчим tools/list и
+    /// перерегистрируем тулы. Fire-and-forget, с защитой от конкурентных рефетчей.
+    /// Если рефетч уже идёт, флаг остаётся — повторим после его завершения.
+    /// </summary>
+    private void MaybeRefreshTools()
+    {
+        if (!_initialized) return;
+        if (!Volatile.Read(ref _toolsChangedPending)) return;
+        if (Interlocked.CompareExchange(ref _refreshing, 0, 1) != 0)
+            return; // уже идёт рефетч — флаг не трогаем, повторим в finally
+        Volatile.Write(ref _toolsChangedPending, false);
+        _ = RefreshToolsAsyncCore();
+    }
+
+    private async Task RefreshToolsAsyncCore()
+    {
+        try
+        {
+            var toolsResult = await SendRequestAsync("tools/list", new JsonObject(), CancellationToken.None);
+            if (toolsResult?["tools"] is JsonArray toolsArr)
+            {
+                Tools.Clear();
+                foreach (var t in toolsArr)
+                {
+                    if (t is null) continue;
+                    Tools.Add(new McpToolInfo
+                    {
+                        Name = t["name"]?.GetValue<string>() ?? "",
+                        Description = t["description"]?.GetValue<string>() ?? "",
+                        InputSchema = t["inputSchema"]?.DeepClone()
+                    });
+                }
+            }
+            DiagnosticsLog.Log($"MCP '{Name}': tools refreshed via list_changed ({Tools.Count} tools)");
+            try { McpService.ReRegisterTools?.Invoke(); }
+            catch (Exception ex) { DiagnosticsLog.Log($"MCP '{Name}': re-register after refresh failed: {ex.Message}"); }
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Log($"MCP '{Name}': tools refresh failed: {ex.Message}");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _refreshing, 0);
+            // Во время рефетча могло прийти ещё одно уведомление — проверяем снова.
+            MaybeRefreshTools();
+        }
     }
 
     private async Task SendNotificationAsync(string method, JsonObject @params, CancellationToken ct)
@@ -500,7 +562,18 @@ public sealed class McpClient : IAsyncDisposable
             if (respId is null)
             {
                 // id нет — нотификация или запрос от сервера, не ответ на наш запрос.
-                LogSkippedLine(line, $"server→client ({obj["method"]?.GetValue<string>() ?? "no method"})");
+                var serverMethod = obj["method"]?.GetValue<string>();
+                if (serverMethod is "notifications/tools/list_changed" or "tools/list_changed")
+                {
+                    // B4: сервер (relay) уведомил, что список тулов изменился. Рефетчим
+                    // tools/list fire-and-forget после завершения текущего запроса.
+                    DiagnosticsLog.Log($"MCP '{Name}': received {serverMethod} — will refresh tools");
+                    _toolsChangedPending = true;
+                }
+                else
+                {
+                    LogSkippedLine(line, $"server→client ({serverMethod ?? "no method"})");
+                }
                 skipped++;
                 continue;
             }

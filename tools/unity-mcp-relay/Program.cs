@@ -192,6 +192,25 @@ class Bridge
         return resp.ValueKind == JsonValueKind.Undefined ? null : resp;
     }
 
+    // B4: опросить bridge за новыми тулами. Сравниваем hash: если bridge ответил
+    // {unchanged:true} — ничего не изменилось; если {hash, tools:[...]} — обновили
+    // _tools/_toolsHash и вернули true (поллер уведомит клиент).
+    public async Task<bool> PollToolsAsync()
+    {
+        if (!Connected) return false;
+        var resp = await CallAsync("get_available_tools", new { @hash = _toolsHash }, TimeSpan.FromSeconds(10));
+        if (resp == null) return false;
+        if (!resp.Value.TryGetProperty("result", out var r)) return false;
+        if (r.TryGetProperty("unchanged", out var u) && u.ValueKind == JsonValueKind.True)
+            return false; // hash совпал — тулы не изменились
+        if (r.TryGetProperty("hash", out var h)) _toolsHash = h.GetString();
+        if (r.TryGetProperty("tools", out var t) && t.ValueKind == JsonValueKind.Array)
+            _tools = t.Clone();
+        int n = _tools?.GetArrayLength() ?? 0;
+        Log.Write($"tools poll: updated to {n} tools (hash={_toolsHash})");
+        return true;
+    }
+
     public void DisposePipe()
     {
         _connected = false;
@@ -209,6 +228,14 @@ static class Program
     static string? _projectPathFilter;
     static Bridge? _bridge;
     static readonly object BridgeLock = new();
+    // B4: stdout делится между main loop (ответы) и ToolsPollLoop (уведомления list_changed)
+    // — все записи под общим локом, иначе строки могут переплестись.
+    static StreamWriter? _stdout;
+    static readonly SemaphoreSlim StdoutLock = new(1, 1);
+    // B4: последний hash тулов, о котором клиенту было «рассказано» (через tools/list или
+    // notification). Poller сравнивает с актуальным hash bridge: при расхождении (включая
+    // reconnect после domain reload с другим набором тулов) шлёт list_changed.
+    static string? _lastNotifiedHash;
 
     static async Task<int> Main(string[] args)
     {
@@ -234,6 +261,11 @@ static class Program
         using var stdin = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false));
         using var stdout = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true, NewLine = "\n" };
         var enc = new UTF8Encoding(false);
+        _stdout = stdout;
+
+        // B4: фоновый поллер тулов bridge (get_available_tools с hash). При изменении
+        // шлёт клиенту notifications/tools/list_changed — клиент сам рефетчит tools/list.
+        _ = Task.Run(ToolsPollLoop);
 
         while (true)
         {
@@ -260,7 +292,7 @@ static class Program
                         await WriteResultAsync(stdout, enc, id, new
                         {
                             protocolVersion = proto,
-                            capabilities = new { tools = new { listChanged = false } },
+                            capabilities = new { tools = new { listChanged = true } },
                             serverInfo = new { name = "unity-mcp-relay", version = "1.0.0" },
                             instructions = "Tools are exposed by the Unity Editor MCP bridge (com.unity.ai.assistant). " +
                                            "The first tool call may take a moment while the bridge connects."
@@ -366,6 +398,12 @@ static class Program
         if (ok)
         {
             lock (BridgeLock) _bridge = bridge;
+            // B4: только при ПЕРВОМ подключении синхронизируем _lastNotifiedHash — клиент
+            // получит этот набор через initialize/tools/list. При reconnect НЕ сбрасываем:
+            // если hash изменился (domain reload с другим набором тулов), poller увидит
+            // расхождение с _lastNotifiedHash и уведомит клиента.
+            if (_lastNotifiedHash == null)
+                _lastNotifiedHash = bridge.ToolsHash;
         }
         else bridge.DisposePipe();
         return ok;
@@ -382,6 +420,39 @@ static class Program
             lock (BridgeLock) _bridge?.DisposePipe();
             if (await TryConnectBridge())
                 Log.Write("reconnected to Unity bridge");
+        }
+    }
+
+    // B4: фоновый поллер тулов bridge. Bridge не пушит изменения (OnToolsChanged только
+    // инвалидирует кэш), но get_available_tools с hash отвечает {unchanged:true} если
+    // ничего не изменилось и {hash, tools:[...]} если изменилось. Опрашиваем каждые 5 с.
+    // Сравниваем актуальный hash с _lastNotifiedHash (последний «сообщённый» клиенту):
+    // при расхождении — уведомление. Это ловит и in-place изменения, и reconnect после
+    // domain reload с другим набором тулов (handshake тихо обновляет hash).
+    static async Task ToolsPollLoop()
+    {
+        while (true)
+        {
+            await Task.Delay(5000);
+            Bridge? b;
+            lock (BridgeLock) b = _bridge;
+            if (b == null || !b.Connected) continue;
+            try
+            {
+                // Обновляем b._tools/_toolsHash, если bridge их изменил.
+                await b.PollToolsAsync();
+                var currentHash = b.ToolsHash;
+                if (currentHash != null && currentHash != _lastNotifiedHash)
+                {
+                    _lastNotifiedHash = currentHash;
+                    Log.Write($"tools hash changed -> {currentHash} ({(b.Tools?.GetArrayLength() ?? 0)} tools) — notifying client");
+                    await WriteNotificationAsync("notifications/tools/list_changed");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"tools poll error: {ex.Message}");
+            }
         }
     }
 
@@ -542,7 +613,9 @@ static class Program
         {
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         });
-        await stdout.WriteLineAsync(line);
+        await StdoutLock.WaitAsync();
+        try { await stdout.WriteLineAsync(line); }
+        finally { StdoutLock.Release(); }
     }
 
     static async Task WriteErrorAsync(StreamWriter stdout, Encoding enc, JsonElement? id, int code, string message)
@@ -552,6 +625,20 @@ static class Program
         {
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         });
-        await stdout.WriteLineAsync(line);
+        await StdoutLock.WaitAsync();
+        try { await stdout.WriteLineAsync(line); }
+        finally { StdoutLock.Release(); }
+    }
+
+    /// <summary>B4: отправить клиенту JSON-RPC notification (без id) — например tools/list_changed.</summary>
+    static async Task WriteNotificationAsync(string method)
+    {
+        var stdout = _stdout;
+        if (stdout == null) return;
+        var msg = new { jsonrpc = "2.0", method };
+        var line = JsonSerializer.Serialize(msg);
+        await StdoutLock.WaitAsync();
+        try { await stdout.WriteLineAsync(line); }
+        finally { StdoutLock.Release(); }
     }
 }

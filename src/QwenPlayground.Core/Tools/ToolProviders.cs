@@ -164,6 +164,13 @@ public sealed class ReflectionToolProvider : IToolProvider
         {
             return new[] { value };
         }
+        if (type == typeof(int[]))
+        {
+            // Модель могла прислать одно значение без скобок (msg_ids: 10 вместо [10]).
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
+                ? new[] { id }
+                : Array.Empty<int>();
+        }
         if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>) &&
             type.GetGenericArguments()[0] == typeof(string))
         {

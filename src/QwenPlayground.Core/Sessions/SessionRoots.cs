@@ -24,4 +24,18 @@ public static class SessionRoots
         }
         return null;
     }
+
+    /// <summary>
+    /// Стартовая рабочая папка НОВОЙ сессии (2026-10-05): текущий глобальный дефолт
+    /// (настройка ProjectRoot) как есть. Пустой/пробельный дефолт — не задано (null).
+    /// Пустой root остаётся только у сессий СТАРЫХ версий чата (в файле поля нет) —
+    /// они разрешаются фоллбеком через <see cref="Resolve"/>; новые сессии получают
+    /// папку проекта явно, чтобы «рабочая папка» в UI и в файле сессии совпадала с тем,
+    /// где инструменты реально работают.
+    /// </summary>
+    public static string? DefaultForNew(string? settingsRoot)
+    {
+        var root = settingsRoot?.Trim();
+        return string.IsNullOrEmpty(root) ? null : root;
+    }
 }

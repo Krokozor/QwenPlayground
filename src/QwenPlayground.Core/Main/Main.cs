@@ -214,8 +214,10 @@ public sealed class Main
         rt.Log.Added += _ => Sessions.TouchCounter(sessionId, rt.Log.NextMessageId);
         // Рабочая папка pinned-сессии (план 2026-10-01): живёт в замыкании рантайма
         // (сессия закреплена — контроллер главного окна её не ведёт). Стартовое значение
-        // — из файла сессии (reopening), у новой (субагент) файла ещё нет → null → дефолт.
-        var pinnedRoot = Sessions.LoadData(sessionId)?.Root;
+        // — из файла сессии (reopening), у новой (субагент) файла ещё нет → дефолт:
+        // папка проекта (2026-10-05, как и новые сессии главного окна).
+        var pinnedRoot = Sessions.LoadData(sessionId)?.Root
+            ?? SessionRoots.DefaultForNew(AppSettings.Get().ProjectRoot);
         string? SetPinnedRoot(string path)
         {
             var error = SessionController.ValidateRoot(path, out var full);
@@ -363,6 +365,7 @@ public sealed class Main
     /// </summary>
     private void WireTurns(ChatRuntime rt, UiHooks hooks, TurnSessionView sessionView)
     {
+        rt.Root = sessionView.Root;
         rt.Turns = new TurnPipeline(
             rt.Log,
             rt.ChatState,

@@ -164,6 +164,22 @@ public sealed class ToolRegistry
         // (субагент: spawn_subagent/rebuild_self из DeniedTools профиля).
         if (context.AllowedTools is { } allowed && !allowed.Contains(name))
         {
+            // Активация полки СЕРЕДИНЕ хода: группа уже активна в сессии (shelves.json),
+            // но снапшот инструментов хода снимался до активации (множество фиксируется
+            // на старте хода — стабильный профиль текущего хода). Конкретное сообщение:
+            // «ждите следующего хода», а не вводящее в заблуждение «профиль запрещает».
+            // Если профиль при этом ещё и whitelist'ит инструменты — подсказка на него.
+            if (context.SessionDir is { } sessionDir
+                && _tools.TryGetValue(name, out var deniedEntry)
+                && deniedEntry.Definition.Group is { } group && group != ToolGroup.Core
+                && new ShelfState(sessionDir).Load().Contains(group))
+            {
+                return new ToolExecutionResult(
+                    $"Error: tool '{name}' is not in this turn's tool set: the set is fixed at turn start, " +
+                    $"but its group '{group}' is active in the session — the tool becomes available from the " +
+                    "next turn. If it stays unavailable, check the chat profile's AllowedTools/DeniedTools.",
+                    null);
+            }
             return new ToolExecutionResult(
                 $"Error: tool '{name}' is not available in this scope (not in the profile's toolset). " +
                 "It is registered in the process, but the current chat profile does not advertise it — do not call it.",

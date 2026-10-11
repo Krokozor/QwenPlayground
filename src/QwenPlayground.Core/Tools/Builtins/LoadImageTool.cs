@@ -6,7 +6,9 @@ namespace QwenPlayground.Core.Tools.Builtins;
 /// <summary>
 /// Грузит изображения из файлов и прикрепляет их к СВОЕМУ tool-ответу: в следующем рендере
 /// модель увидит картинки прямо в ответе инструмента (tool-ответ рендерится внутри user-блока,
-/// поэтому маркеры валидны для сервера). Замыкает круг «посмотрел → remove_attachments → чисто».
+/// поэтому маркеры валидны для сервера). Изображения живут в контексте до удаления:
+/// remove_attachments — рекомендация, а не обязанность (удалять стоит, когда с картинками
+/// реально покончено: преждевременная выгрузка заставляет перегружать их снова).
 ///
 /// Связь «чат ⇔ сообщение ⇔ инструмент» реализована через этап финализации
 /// (<see cref="AgentTool.FinalizeAsync"/>): во время ExecuteAsync инструмент ещё не знает
@@ -16,9 +18,10 @@ namespace QwenPlayground.Core.Tools.Builtins;
 /// </summary>
 [Tool("load_image",
     "Load one or more images from files and attach them to this tool response so you can SEE them " +
-    "in the next render. Pass absolute or workspace-relative file paths. After you are done looking, " +
-    "call remove_attachments to free context. Use for debugging UI, inspecting screenshots, or reviewing " +
-    "known images.")]
+    "in the next render. Pass absolute or workspace-relative file paths. Use for debugging UI, " +
+    "inspecting screenshots, or reviewing known images. The images stay in the context until removed: " +
+    "when you are TRULY done with them, it is RECOMMENDED (not required) to call remove_attachments " +
+    "to free context — do not remove images you still need, a reload costs a round-trip.")]
 public sealed class LoadImageTool : AgentTool
 {
     [ToolParameter("File paths to images (jpg/png). Absolute or workspace-relative.", Required = true)]
@@ -61,7 +64,8 @@ public sealed class LoadImageTool : AgentTool
 
         return Task.FromResult(
             $"Loaded {_staged.Count} image(s). They will appear in this tool response in the next render. " +
-            $"Call remove_attachments when done to free context.");
+            $"They stay in context until removed — call remove_attachments when you are truly done " +
+            $"(recommended, not required).");
     }
 
     public override Task FinalizeAsync(ToolContext context, int messageId, CancellationToken cancellationToken)

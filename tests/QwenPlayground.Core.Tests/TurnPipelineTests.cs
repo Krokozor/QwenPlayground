@@ -55,7 +55,6 @@ public sealed class TurnPipelineTests : IDisposable
             new SessionDraftStore(_root),
             () => 30);
         _sessions = new SessionController(_log, draft, _surfacer, _root);
-        _sessions.EnsureMain();
         _assembler = new SystemPromptAssembler(
             () => _sessions.CurrentId,
             () => _sessions.PromptKey,
@@ -119,11 +118,14 @@ public sealed class TurnPipelineTests : IDisposable
             () => _shutdownCalls++,
             FakeLoop);
         // Тест не зависит от реального workspace: проект-корень — временный каталог (agentic=true).
+        // Ставится ДО EnsureMain: новая сессия захватывает дефолтный root из настроек
+        // при создании (2026-10-05), иначе main-сессия унаследовала бы реальный workspace.
         var settings = AppSettings.Get();
         _projectRootBackup = settings.ProjectRoot;
         _lastSessionIdBackup = settings.LastSessionId;
         settings.ProjectRoot = _root;
         settings.LastSessionId = MainAgent.SessionId;
+        _sessions.EnsureMain();
     }
 
     public void Dispose()
@@ -347,12 +349,12 @@ public sealed class TurnPipelineTests : IDisposable
         Assert.True(request.AllowToolExecution); // main-сессия: профиль разрешает инструменты
         Assert.NotNull(request.ToolDefinitions);
         Assert.NotEmpty(request.ToolDefinitions);
-        // Рабочая папка (план 2026-10-01): live-провайдер сессии + колбэк смены.
-        // У сессии своего root'а нет — провайдер отдаёт null (фоллбек в настройки
-        // делает AgentLoop на итерации), колбэк смены доступен.
+        // Рабочая папка (план 2026-10-01 + 2026-10-05): live-провайдер сессии + колбэк смены.
+        // Новая сессия стартует с папкой проекта по умолчанию: провайдер отдаёт root,
+        // захваченный при создании (в фикстуре — временный проект-каталог).
         Assert.NotNull(request.SessionRoot);
         Assert.NotNull(request.SetSessionRoot);
-        Assert.Null(request.SessionRoot());
+        Assert.Equal(_root, request.SessionRoot());
     }
 
     [Fact]

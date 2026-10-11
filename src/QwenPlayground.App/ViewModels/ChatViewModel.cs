@@ -631,8 +631,11 @@ public partial class ChatViewModel : ObservableObject {
     /// </summary>
     public void SaveCurrent() {
         if (Pinned) {
+            // Root обязаны передать (2026-10-05): без него SavePinned затирает рабочую
+            // папку сессии null (дефолт новых сессий терялся после первого UI-сейва).
             _sessions.SavePinned(_runtime.SessionId(), _runtime.Log,
-                _runtime.SamplerKey, _runtime.PromptKey, _runtime.StateBlockKey);
+                _runtime.SamplerKey, _runtime.PromptKey, _runtime.StateBlockKey,
+                root: _runtime.Root?.Invoke());
         } else {
             SessionList.SaveCurrent();
         }
