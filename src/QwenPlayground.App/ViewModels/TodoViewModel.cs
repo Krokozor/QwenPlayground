@@ -155,8 +155,8 @@ public sealed partial class TodoViewModel : ObservableObject
             return;
         }
         var list = new TodoStore(_sessionDir()).LoadOrCreate();
-        var index = list.Items.IndexOf(item.Model);
-        if (index < 0)
+        var index = Items.IndexOf(item);
+        if (index < 0 || index >= list.Items.Count)
         {
             return;
         }
