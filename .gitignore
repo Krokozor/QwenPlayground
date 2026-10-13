@@ -58,6 +58,10 @@ ffmpeg/
 # User settings (created on first run)
 settings.json
 
+# Launcher config: created on first run with defaults (machine-specific paths
+# must not be committed — a test run once polluted the tracked copy).
+launcher.json
+
 # Media files in root
 /images/
 /UI/
@@ -66,6 +70,15 @@ settings.json
 /FunStuff/
 
 # Misc
+_review_*.txt
+full-test.log
+inspect_unitydll.ps1
+ocr_discord_chat.txt
+tracer_video.mkv
+tv_*.png
+/temp/
+/tmp-strata/
+/woah_frames/
 test_output.txt
 16905121796286.jpg
 QwenPlayground.Launcher.exe.lnk
