@@ -104,6 +104,12 @@ public sealed class SettingsViewModel : ObservableObject {
         set => Set(S.ContextSize, value, (s, v) => s.ContextSize = v);
     }
 
+    /// <summary>Оценка токенов одной картинки для бюджет-гварды (см. AppSettings.ImageTokensMax).</summary>
+    public int ImageTokensMax {
+        get => S.ImageTokensMax;
+        set => Set(S.ImageTokensMax, value, (s, v) => s.ImageTokensMax = v);
+    }
+
     public int MaxIterations {
         get => S.MaxIterations;
         set => Set(S.MaxIterations, value, (s, v) => s.MaxIterations = v);

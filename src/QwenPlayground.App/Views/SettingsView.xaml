@@ -54,6 +54,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="endpoint"
                                ToolTip="Адрес основного LLM-эндпоинта (OpenAI-совместимый). Сюда идут запросы чата и агентного цикла." />
@@ -103,6 +104,11 @@
                     <CheckBox Grid.Row="9" Grid.Column="1" IsChecked="{Binding FocusOnConfirmation}" Margin="0,3"
                               VerticalAlignment="Center"
                               ToolTip="Фокус окна при появлении карточки подтверждения (дефолт вкл)." />
+                    <TextBlock Grid.Row="10" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="картинки: оценка токенов"
+                               ToolTip="Оценка токенов на одну картинку для бюджет-гварды: серверный /tokenize не видит image-токены, приложение добавляет (число маркеров × это значение) к счёту. Впиши свой --image-max-tokens из llama.cpp (типично 256–512, медиана ~400). Занизил — сервер ответит 400: приложение само закомпактит и повторит ход один раз." />
+                    <TextBox Grid.Row="10" Grid.Column="1" Style="{StaticResource TextField}"
+                             local:NumField.Min="1" local:NumField.IsInteger="True"
+                             Text="{Binding ImageTokensMax, UpdateSourceTrigger=PropertyChanged}" />
                 </Grid>
             </Expander>
 
