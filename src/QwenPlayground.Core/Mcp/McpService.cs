@@ -42,18 +42,23 @@ public static class McpService
             if (clients.Count > 0)
             {
                 var tools = Instance.GetAllTools();
-                System.Diagnostics.Debug.WriteLine(
-                    $"[MCP] Connected {clients.Count} server(s), {tools.Count} tool(s): " +
+                DiagnosticsLog.Log($"MCP: connected {clients.Count} server(s), {tools.Count} tool(s): " +
                     string.Join(", ", tools.Select(t => t.NamespacedName)));
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine("[MCP] No servers connected.");
+                // Не исключение, но агент работает без MCP-тулов — видно только в
+                // DiagnosticsLog (Debug.WriteLine в релизе молчит).
+                DiagnosticsLog.Log("MCP: no servers connected — agent runs without MCP tools (auto-reconnect will keep trying)");
             }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[MCP] Init failed: {ex}");
+            // Раньше — только Debug.WriteLine: в релизе провал инициализации был
+            // невидим, и агент молча работал «без части своих способностей».
+            DiagnosticsLog.Log($"MCP: init failed: {ex}");
+            QwenPlayground.Core.MetaInfo.AnnouncementBoard.Push("mcp-init",
+                $"MCP-инициализация упала: {ex.Message} — MCP-тулы недоступны (auto-reconnect будет пробовать).");
         }
         finally
         {

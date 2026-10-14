@@ -61,6 +61,11 @@ public sealed class AgentLoopTests : IDisposable
         /// </summary>
         public bool GateSecondChunk;
 
+        /// <summary>true — стрим «обрывается» без stop-маркера (имитация досрочного закрытия сервером).</summary>
+        public bool AbortStream;
+
+        public bool LastStreamAborted { get; private set; }
+
         public ScriptedCompletionSource(int countTokens, params (string Raw, TokenUsage? Usage)[] responses)
         {
             _countTokens = countTokens;
@@ -87,6 +92,7 @@ public sealed class AgentLoopTests : IDisposable
             }
             var raw = _responses.Dequeue();
             LastUsage = _usages.Dequeue();
+            LastStreamAborted = AbortStream;
             var half = raw.Length / 2;
             yield return raw[..half];
             if (GateSecondChunk)
@@ -183,6 +189,26 @@ public sealed class AgentLoopTests : IDisposable
     // ── Сценарии ─────────────────────────────────────────────────────────────────────
 
     [Fact]
+    public async Task StreamAbort_WithoutStopMarker_MarksGenerationAborted()
+    {
+        // Сервер закрыл стрим без stop-маркера: цикл не должен принимать это за
+        // штатное завершение — Generation.StreamAborted = true (диагностика: крах/
+        // таймаут/перезапуск llama.cpp, частичный ответ).
+        var source = await RunLoopAsync(
+            configureSource: s => s.AbortStream = true,
+            responses: new (string, TokenUsage?)[]
+            {
+                (FinalResponse("думаю", "Частичный ответ."), new TokenUsage(100, 5))
+            });
+
+        Assert.True(source.LastStreamAborted);
+        var assistant = _events.OfType<AssistantMessageEvent>().Single();
+        Assert.True(assistant.Message.Generation!.StreamAborted);
+        // Цикл всё равно доходит до конца (частичный ответ — это ответ, с ним работаем).
+        Assert.IsType<AgentDoneEvent>(_events[^1]);
+    }
+
+    [Fact]
     public async Task ToolLoop_ExecutesTool_Continues_FinishesOnFinalAnswer()
     {
         var source = await RunLoopAsync(responses: new (string, TokenUsage?)[]
@@ -229,6 +255,11 @@ public sealed class AgentLoopTests : IDisposable
         // Клиент создан фабрикой и закрыт циклом (using).
         Assert.Equal(2, source.StreamCalls);
         Assert.Equal(1, source.Disposed);
+
+        // Штатное завершение (stop-маркер был) — обрыва нет.
+        Assert.False(source.LastStreamAborted);
+        Assert.False(assistants[0].Message.Generation!.StreamAborted);
+        Assert.False(assistants[1].Message.Generation!.StreamAborted);
     }
 
     [Fact]

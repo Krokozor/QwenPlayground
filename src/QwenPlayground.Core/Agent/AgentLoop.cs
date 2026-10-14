@@ -186,6 +186,19 @@ public sealed class AgentLoop
             }
             DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: stream done ({raw.Length} chars, {chunkCount} chunks, {streamStart.ElapsedMilliseconds}ms)");
 
+            // Обрыв стрима (EOF без stop-маркера) — НЕ штатное завершение: сервер закрыл
+            // поток досрочно (крах/таймаут/перезапуск llama.cpp). Часть ответа уже в raw
+            // (возможен незакрытый tool-call) — парсим дальше, но помечаем явно: и в
+            // GenerationInfo (персистентно, для диагностики), и в анонсах (модель видит
+            // в следующем state-блоке, что предыдущий ход оборвался).
+            var streamAborted = client.LastStreamAborted;
+            if (streamAborted)
+            {
+                DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: STREAM ABORTED by server — partial answer ({raw.Length} chars) treated as suspect");
+                AnnouncementBoard.Push("stream-abort",
+                    $"Ответ модели в итерации {iteration + 1} оборвался: сервер закрыл стрим без stop-маркера (крах/таймаут/перезапуск llama.cpp). Накоплено {raw.Length} символов — ответ, вероятно, неполный.");
+            }
+
             var message = continued ?? QwenOutputParser.ParseAssistant(raw.ToString());
             // Префилл не входит в ответ модели — снапшот пришиваем явно: блок, который
             // модель видела в начале мысли, тот же сохраняется с сообщением.
@@ -222,7 +235,8 @@ public sealed class AgentLoop
                 Prompt = AppSettings.Get().SaveGenerationPrompts ? prompt : string.Empty,
                 RawOutput = raw.ToString(),
                 PromptTokens = promptTokens,
-                CompletionTokens = client.LastUsage?.CompletionTokens
+                CompletionTokens = client.LastUsage?.CompletionTokens,
+                StreamAborted = streamAborted
             };
             yield return new AssistantMessageEvent(message);
 

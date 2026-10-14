@@ -60,6 +60,12 @@ public sealed class RebuildSelfTool : AgentTool
         }
         RebuildEventLog.App("rebuild_self: requested — safety OK (launcher GUI: 1 instance, watchdog: alive)");
 
+        // СНАПШОТ ДО БИЛДА: коммит всего дерева в refs/snapshots/<ts> (последние 10).
+        // Страховка от «новая версия сломала код» (инцидент: Muse 1.3 в OpenCode
+        // уничтожил переносы строк в MainViewModel.cs через shell-regex — владелец
+        // чинил руками). Не блокирует билд при сбое — лог + отчёт.
+        var snapshotRef = TakePreBuildSnapshot();
+
         // XAML-валидация: Roslyn не гоняет XAML-компилятор, поэтому невалидный XML в .xaml
         // (сырой '<' в атрибуте и т.п.) проявляется как ложный CS0103 'InitializeComponent'.
         // Проверяем XML напрямую — корневая причина с точной строкой/колонкой.
@@ -96,7 +102,8 @@ public sealed class RebuildSelfTool : AgentTool
         // Ворнинги (если были) — в конце отчёта: не блокируют, но должны быть видны.
         var warningsInfo = result.Warnings is null ? string.Empty : $"\n{result.Warnings}";
         return $"Build {result.Id} succeeded. The application will now restart into the new version.\n" +
-               $"Git: {gitInfo}" + (pushInfo is null ? string.Empty : $"\n{pushInfo}") + warningsInfo;
+               $"Git: {gitInfo}\nSnapshot: {snapshotRef}" +
+               (pushInfo is null ? string.Empty : $"\n{pushInfo}") + warningsInfo;
     }
 
     /// <summary>
@@ -180,11 +187,20 @@ public sealed class RebuildSelfTool : AgentTool
         }
         var root = SelfBuildPaths.WorkspaceRoot;
 
-        string pushArgs;
+        string[] pushArgs;
         if (!string.IsNullOrWhiteSpace(settings.PushRepo))
         {
+            var repo = settings.PushRepo.Trim();
+            // PushRepo — модель-управляемая настройка: значение, начинающееся с '-',
+            // git распарсит как ОПЦИЮ (например --upload-pack=...) — инъекция поведения
+            // git через «куда пушить». Отклоняем явно.
+            if (repo.StartsWith('-'))
+            {
+                return $"push: refused — PushRepo starts with '-' (git would parse it as an option): {repo}";
+            }
             // Явное направление (форк): HEAD текущей ветки → main цели.
-            pushArgs = $"push {settings.PushRepo.Trim()} HEAD:main";
+            // ArgumentList (не строка): значения не склеиваются в командную строку.
+            pushArgs = new[] { "push", repo, "HEAD:main" };
         }
         else
         {
@@ -193,7 +209,7 @@ public sealed class RebuildSelfTool : AgentTool
             {
                 return "push: no upstream — skipped (укажите «куда пушить» в настройках или установите upstream)";
             }
-            pushArgs = "push";
+            pushArgs = new[] { "push" };
         }
 
         var (code, output) = RunGit(root, pushArgs, timeoutMs: 60000);
@@ -202,11 +218,92 @@ public sealed class RebuildSelfTool : AgentTool
             : $"push: FAILED (exit {code}) — {output}";
     }
 
+    /// <summary>
+    /// Снапшот рабочего дерева перед ребилдом: коммит ВСЕГО (tracked + untracked, включая
+    /// незакоммиченные правки) в refs/snapshots/&lt;timestamp&gt; — точка возврата, если новая
+    /// версия или её эффекты сломают код. Механика: ВРЕМЕННЫЙ индекс (GIT_INDEX_FILE) —
+    /// индекс/HEAD владельца не трогаем; write-tree + commit-tree (родитель — HEAD) +
+    /// update-ref. GC: держим последние 10 (имена ref'ов сортируются по timestamp-префиксу).
+    /// Возвращает имя ref'а (или причину пропуска/сбоя) — в отчёт и RebuildEventLog.
+    /// </summary>
+    private static string TakePreBuildSnapshot()
+    {
+        var root = SelfBuildPaths.WorkspaceRoot;
+        var (_, inside) = RunGit(root, "rev-parse --is-inside-work-tree");
+        if (inside != "true")
+        {
+            return "skipped (workspace is not a git repo)";
+        }
+        var tempIndex = Path.Combine(Path.GetTempPath(), $"qp-snap-{Guid.NewGuid():N}.idx");
+        try
+        {
+            var env = new Dictionary<string, string> { ["GIT_INDEX_FILE"] = tempIndex };
+            var (addCode, addOut) = RunGit(root, new[] { "add", "-A" }, timeoutMs: 60000, env: env);
+            if (addCode != 0)
+            {
+                return $"FAILED (git add -A exit {addCode}: {addOut})";
+            }
+            var (_, tree) = RunGit(root, new[] { "write-tree" }, env: env);
+            if (string.IsNullOrEmpty(tree))
+            {
+                return "FAILED (git write-tree returned empty)";
+            }
+            var (_, head) = RunGit(root, "rev-parse HEAD");
+            var message = $"pre-rebuild snapshot {DateTime.Now:yyyy-MM-dd HH:mm:ss}";
+            var commitArgs = string.IsNullOrEmpty(head)
+                ? new[] { "commit-tree", tree, "-m", message }
+                : new[] { "commit-tree", tree, "-p", head, "-m", message };
+            var (commitCode, commit) = RunGit(root, commitArgs);
+            if (commitCode != 0 || string.IsNullOrEmpty(commit))
+            {
+                return $"FAILED (git commit-tree exit {commitCode}: {commit})";
+            }
+            var refName = $"refs/snapshots/{DateTime.Now:yyyyMMdd-HHmmssfff}";
+            var (refCode, refOut) = RunGit(root, new[] { "update-ref", refName, commit });
+            if (refCode != 0)
+            {
+                return $"FAILED (git update-ref exit {refCode}: {refOut})";
+            }
+            // GC: держим последние 10 снапшотов (остальное — старые, откат уже маловероятен).
+            var (_, refs) = RunGit(root, new[] { "for-each-ref", "--format=%(refname)", "refs/snapshots/" });
+            var names = refs.Split('\n', StringSplitOptions.RemoveEmptyEntries).OrderBy(n => n).ToList();
+            for (var i = 0; i < names.Count - 10; i++)
+            {
+                RunGit(root, new[] { "update-ref", "-d", names[i] });
+            }
+            RebuildEventLog.App($"rebuild_self: snapshot {refName} → {commit[..Math.Min(8, commit.Length)]}");
+            return refName;
+        }
+        catch (Exception exception)
+        {
+            return $"FAILED ({exception.Message})";
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(tempIndex);
+            }
+            catch
+            {
+                // временный файл в temp — не критично.
+            }
+        }
+    }
+
+    private static (int ExitCode, string Output) RunGit(string workingDir, string[] args, int timeoutMs = 10000,
+        IDictionary<string, string>? env = null)
+        => RunGitCore(workingDir, args, timeoutMs, env);
+
     private static (int ExitCode, string Output) RunGit(string workingDir, string args, int timeoutMs = 10000)
+        => RunGitCore(workingDir, args.Split(' ', StringSplitOptions.RemoveEmptyEntries), timeoutMs, null);
+
+    private static (int ExitCode, string Output) RunGitCore(string workingDir, string[] args, int timeoutMs,
+        IDictionary<string, string>? env)
     {
         try
         {
-            var startInfo = new System.Diagnostics.ProcessStartInfo("git", args)
+            var startInfo = new System.Diagnostics.ProcessStartInfo("git")
             {
                 WorkingDirectory = workingDir,
                 RedirectStandardOutput = true,
@@ -214,6 +311,20 @@ public sealed class RebuildSelfTool : AgentTool
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            if (env is not null)
+            {
+                foreach (var (key, value) in env)
+                {
+                    startInfo.Environment[key] = value;
+                }
+            }
+            // ArgumentList (не строка Arguments): значения не склеиваются в командную
+            // строку — инъекция аргументов через модель-управляемые значения невозможна
+            // (в дополнение к проверке «не начинается с -» в MaybePush).
+            foreach (var arg in args)
+            {
+                startInfo.ArgumentList.Add(arg);
+            }
             using var process = System.Diagnostics.Process.Start(startInfo);
             if (process is null) return (-1, "");
             // git пишет результат в stderr (push: "To https://…") — читаем оба потока.

@@ -78,6 +78,7 @@ llama-server -m path/to/model.gguf --mmproj path/to/mmproj.gguf --ctx-size 32768
    - **ContextSize** — должен совпадать с `--ctx-size` llama.cpp (по умолчанию 32768)
    - **MaxTokens** — максимальная длина ответа (по умолчанию 2048)
    - **ReasoningEffort** — усилие размышления (XHigh/Medium/Low)
+   - **ImageTokensMax** — оценка токенов на изображение для бюджет-гварды (по умолчанию 512)
    - **Temperature/TopP/TopK/MinP/RepeatPenalty** — параметры семплирования
 
 ## Параметры модели
@@ -159,6 +160,9 @@ QwenPlayground может использовать вторую модель ("�
 - Увеличьте `--ctx-size` в llama.cpp
 - Убедитесь, что `ContextSize` в QwenPlayground <= `n_ctx` в llama.cpp
 - Включите компакцию (она автоматическая, но проверьте `CompactKeepRatio`)
+- Если 400 приходит из-за изображений (оценка `ImageTokensMax` занизена) — приложение
+  автоматически делает принудительную компакцию и повторяет ход один раз;
+  поднимите `ImageTokensMax` под ваш `--image-max-tokens`
 
 ### "Нет media_marker"
 

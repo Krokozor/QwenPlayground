@@ -15,6 +15,7 @@ public sealed class PromptPipelineTests
     private sealed class FakeSource : ICompletionSource
     {
         public TokenUsage? LastUsage => null;
+        public bool LastStreamAborted => false;
         public int CountCalls { get; private set; }
 
         /// <summary>null имитирует «сервер не дал число».</summary>

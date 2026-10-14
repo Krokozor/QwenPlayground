@@ -2,7 +2,7 @@
 
 Карта для долгосрочной разработки: из чего состоит проект, как связаны модули, кто чем
 владеет и какие инварианты держат дом. Правила поведения агента — в `main-agent.md`,
-история решений — в `refactoring.md`. Этот документ — про устройство дома.
+история решений — в `refactoring.md` (локальный файл, не в git). Этот документ — про устройство дома.
 
 ## Общая картина
 
@@ -15,9 +15,9 @@ WPF-приложение (MVVM-лайт) вокруг локальной llama.c
   сборка промпта (`SystemPromptAssembler`), агентный цикл (`AgentLoop`),
   шаблон/парсер Qwen, инструменты, память, компакция, настройки, самосборка.
   Тестируется (Core.Tests).
-- **`src/QwenPlayground.App`** — WPF-оболочка-адаптер: MainViewModel (пузыри, команды,
-  тонкие виды настроек, UI-таймеры), окна, UI-инструменты. Тестируются чистые
-  части (App.Tests).
+- **`src/QwenPlayground.App`** — WPF-оболочка-адаптер: MainViewModel (оболочка: тонкие
+  виды настроек, UI-таймеры) + ChatViewModel (пузыри, команды — LEGO-рефактор), окна,
+  UI-инструменты. Тестируются чистые части (App.Tests).
 
 Направление зависимостей строго App → Core; обратных утечек нет (реакции UI на
 доменные события — через события/хуки: `UiHooks`, `ShelfState.Deactivated`,
@@ -78,10 +78,10 @@ flush памяти, меню полок, shutdown): Core не знает про 
 
 Договор конструктора: **ничего не стартует** (`Lifecycle.StartAll()` — за адаптером,
 после регистрации UI-сервисов) и **не грузит сессии** (за адаптером — вид должен быть
-готов). MainViewModel создаёт `Main` в конструкторе, подписывается на события
-(`Log.Changed`, `Sessions.SessionChanged`, `ShelfState.Deactivated`), регистрирует
-UI-таймеры (draft/heartbeat — DispatcherTimer качают Core-контроллеры) и UI-сервисы
-жизненного цикла, затем `StartAll()`.
+готов). MainViewModel создаёт `Main` в конструкторе; подписки на события
+(`Log.Changed`, `Sessions.SessionChanged`, `ShelfState.Deactivated`) — в ChatViewModel
+(пузыри/команды переехали туда), UI-таймеры (draft/heartbeat — DispatcherTimer качают
+Core-контроллеры) и UI-сервисы жизненного цикла регистрируются, затем `StartAll()`.
 
 ## Жизненный цикл приложения
 
@@ -94,7 +94,8 @@ UI-таймеры (draft/heartbeat — DispatcherTimer качают Core-кон�
 ## Источники завершений
 
 `ICompletionSource` (Core/Inference) — контракт над llama.cpp-клиентом: Stream/Complete/
-CountTokens + LastUsage. Потребители (PromptPipeline, ServiceCompletionClient, AgentLoop)
+CountTokens + LastUsage + LastStreamAborted (EOF без `stop:true` — обрыв стрима, а не
+штатное завершение: AgentLoop логирует, помечает GenerationInfo, анонс на доске). Потребители (PromptPipeline, ServiceCompletionClient, AgentLoop)
 принимают фабрику `Func<string, ICompletionSource>` и создают источник под живой эндпоинт.
 Это шов мульти-бэкенда и тестовых заглушек (см. PromptPipelineTests); оркестратор сможет
 гонять дочерних агентов на других моделях без изменения цикла.
@@ -107,7 +108,7 @@ CountTokens + LastUsage. Потребители (PromptPipeline, ServiceCompleti
 | Разговор (`ChatLog`) | `Main` | TurnPipeline, ContextMaintenance, VM (откат/очистка) — только через методы лога |
 | ID сообщений (счётчик) | ChatLog | лог сам; персистится в SessionData.NextMessageId |
 | FSM чата (`ChatStateMachine`) | `Main` | TurnPipeline (Generating), maintenance (Compacting) |
-| Вид сообщений (`Messages`) | MainViewModel | VM; структурные изменения лога → RebuildMessageViews |
+| Вид сообщений (`Messages`) | ChatViewModel | VM; структурные изменения лога → RebuildMessageViews |
 | Настройки (`SettingsStore<AppSettings>`) | синглтон на процесс | тонкие свойства VM пишут напрямую |
 | Сессии (sessions/, ключи профилей) | `SessionController` (Core/Sessions) | SessionController; бэкапы — ContextBackupStore |
 | Серверные факты (`ServerProps`) | `Main` | PromptPipeline (n_ctx, media_marker, LastPromptTokens) |
@@ -119,18 +120,22 @@ CountTokens + LastUsage. Потребители (PromptPipeline, ServiceCompleti
 SendAsync (VM: ввод, вложения, user-пузырь) / heartbeat / wake / resume
   └─ Main.Turns.RunTurnAsync(continue, onEvent)   [TurnPipeline, Core]
        ├─ EnsureBudget (ContextMaintenance): /tokenize следующего промпта
+        │    (+ оценка картинок: маркеры × ImageTokensMax — сервер не видит image-токены)
        │    vs окно − резерв → не влезает или запрошено ⇒ компакция
        │    (сбой → статус + SaveCurrent, ход не стартует)
        └─ [FSM Idle→Generating]
             └─ AgentLoop.RunAsync(request)   ← IAsyncEnumerable<AgentEvent>
                  рендер промпта: история + InjectedIdentity (identity+layers+trajectory)
-                 + tool-определения + state-блок (Build + OnRendered) + мультимодальность
+                 + блок «Твоя сессия» (id/роль/папка; абсолютный путь после set_session_root)
+                  + tool-определения + state-блок (Build + OnRendered) + мультимодальность
                  стрим токенов → onEvent → VM DispatchEvent → MessageViewModel
                  (AppendStreamChunk, троттлинг ~50 мс)
                  tool_call → ToolRegistry.ExecuteDetailedAsync (+FinalizeAsync)
                  budget-guard между итерациями → EnsureBudget → [Compacting]
+                  400 «не влезает» → ContextOverflowException → принудительная компакция
+                  + ровно 1 retry (только если модель ещё не ответила)
             [FSM Generating→Idle] — до флага генерации (иначе кнопки не оживут)
-       итог TurnOutcome {Canceled/Error/BudgetFailed/Agentic} → VM решает, куда
+       итог TurnOutcome (флаги Canceled/BudgetFailed/Busy/Error + статистика хода) → VM решает, куда
        показать ошибку (пузырь или статус); отмена → CommitCanceledPartial
        рестарт в новую сборку (SelfBuildService.ConsumeRestartRequest) — в пайплайне
        SaveCurrent() — персистенция после хода
@@ -144,8 +149,11 @@ SendAsync (VM: ввод, вложения, user-пузырь) / heartbeat / wake
 
 Бэкап сессии (без него не сжимаем) → ветка: суммаризация ранней части через submit_result;
 main: слоистый конвейер L1/L2/L3 (MemoryLayerPipeline) → извлечение фактов в memories/
-(best-effort). FSM: авто-вызов приходит в Generating и возвращается туда; ручной из Idle —
-Idle→Compacting→Idle; запрос во время Generating ставится флагом и исполняется гардом.
+(best-effort). Структурные вызовы (StructuredCompletion): prefill в think-блок
+(подталкивание к tool-call) + free-text fallback (текст после закрытого think-блока —
+низкие кванты не вызывают submit_result). FSM: авто-вызов приходит в Generating и
+возвращается туда; ручной из Idle — Idle→Compacting→Idle; запрос во время Generating
+ставится флагом и исполняется гардом.
 
 ## Инструменты
 
@@ -183,10 +191,14 @@ Idle→Compacting→Idle; запрос во время Generating ставитс
 
 ## Самосборка (rebuild_self)
 
-`SelfBuildService`: dotnet build/test → копия в run/<id>/ → current.txt pointer → рестарт
-через handshake. Внешним разработчикам (opencode и т.п.) собирать в bin/ — безопасно:
-работающий экземпляр живёт из run/. Journal (run/journal.json) — источник «последней
-сборки» для state-блока и заголовка.
+`SelfBuildService`: снапшот всего дерева в `refs/snapshots/<ts>` (временный индекс,
+последние 10 — точка возврата, если новая версия сломает код) → pre-check (XAML-XML +
+Roslyn-диагностика) → dotnet build прямо в run/<id>/ (ID: `yyyyMMdd-HHmmss` + 8 hex —
+коллизия в одну секунду невозможна) → тест-гейт → current.txt pointer (обновляет
+лаунчер) → рестарт через handshake. git-вызовы — ArgumentList (инъекция аргументов
+невозможна; PushRepo с ведущим `-` отклоняется). Внешним разработчикам (opencode и т.п.)
+собирать в bin/ — безопасно: работающий экземпляр живёт из run/. Journal (run/journal.json)
+— источник «последней сборки» для state-блока и заголовка.
 
 ## Настройки
 
@@ -203,18 +215,21 @@ Idle→Compacting→Idle; запрос во время Generating ставитс
 ## Цели взаимодействия (типы чата)
 
 Общение с моделью — всегда ради **цели**, и цель первична по отношению к «чату»
-(урок NekoBot: ChatType). Сегодня в проекте шесть целей; три из них ещё не названы:
+(урок NekoBot: ChatType). Все цели названы:
 
 | Цель | Где живёт | Промпты |
 |---|---|---|
-| main-агент | сессия main, полный цикл (identity+слои+память+tools) | InjectedIdentity + state-блок |
+| main-агент | сессия main, полный цикл (identity+слои+память+tools) | InjectedIdentity + блок «Твоя сессия» + state-блок |
 | обычный чат | любая не-main сессия (`SessionData.Purpose="chat"`) | без инъекции |
-| резюме ветки | ContextMaintenance | каталог: SummarizationSystem/User |
 | слои L1/L2/L3 | MemoryLayerPipeline | каталог: Merge*, Segment* |
-| извлечение фактов | ContextMaintenance | каталог: MemoryExtraction + **MemoryExtractionSystem** |
+| извлечение фактов | ContextMaintenance | каталог: MemoryExtraction* |
+| субагент | профиль `subagent` в ChatProfiles | идентичность + контракт отчёта + DeniedTools |
 
-Все сервисные промпты — в `PromptCatalog` (config/prompts.json), правятся во вкладке
-«Суммаризация»; ни одной константы промпта в коде быть не должно. `SessionData.Purpose`
+(Цель «резюме ветки» удалена 2026-09-02: раннюю часть чата суммаризирует слоистый
+конвейер, отдельного каталога суммаризации нет.)
+
+Все сервисные промпты — в `PromptCatalog` (config/prompts.json, создаётся в рантайме),
+правятся во вкладке «Настройки»; ни одной константы промпта в коде быть не должно. `SessionData.Purpose`
 делает файлы сессий самоописываемыми. Профиль субагента (`subagent`) — первый
 «цель-профиль» в проде: промпт + контракт результата + tools-флаг + чёрный список
 тулов; `spawn_subagent` появился 2026-09-22 (см. раздел «Субагенты» ниже).
@@ -231,14 +246,15 @@ SummarizationViewModel превратится в универсальное ст
 «ровно прежнее поведение» через глобальные настройки. Сессия назначает каждый кусок
 СВОИМ ключом (SessionData.SamplerKey/PromptKey/StateBlockKey), null = default. UI:
 шестерёнка у панели сессий → диалог назначения кусков; редактирование самих профилей —
-во вкладке «Суммаризация». main-агент ведётся идентичностью — промпт/state-куски на него
+во вкладке «Настройки» (SettingsViewModel → Profiles). main-агент ведётся идентичностью — промпт/state-куски на него
 не действуют (мысль владельца: возможно, отдельный ТИП профиля для main — будущее).
 Урок NekoBot учтён дважды: профиль = данные, а не класс; статика = источник правды.
 
 ## Субагенты (сделано 2026-09-22) и будущее: параллельные ходы
 
 **Субагенты — синхронный спавн сделан** (решение владельца 2026-09-22; промпт по
-паттерну opencode, 2026-09-23). Тул `spawn_subagent` (`Core/Tools/Builtins/`): отдельный
+паттерну opencode, 2026-09-23). MCP-наблюдаемость (2026-10-13): ошибки init/протокола —
+в DiagnosticsLog + AnnouncementBoard (раньше только Debug.WriteLine — невидимо в Release). Тул `spawn_subagent` (`Core/Tools/Builtins/`): отдельный
 агент с собственным контекстом и инструментами (профиль «subagent» в ChatProfiles:
 идентичность + правила + контракт отчёта + `DeniedTools`: без спавна/самосборки —
 без рекурсии) синхронно выполняет задачу, отчёт — как ответ тула. Пока субагент
@@ -253,7 +269,8 @@ main=0, окна=1-2 (1 — не-main сессии главного окна, 2 
 `GenerationOptions.IdSlot`). При пиннинге сервер НЕ ходит в RAM prompt cache
 (`update_cache=false` для явного слота, b10353) — пиннутый слот живёт в GPU
 (`--no-cache-idle-slots`) и защищается **KV-якорем**: `SubagentSpawner` сохраняет
-KV вызывающего в `sessions/<id>-kv.bin` (плоское имя, ~320 КБ/токен) перед ходом
+KV вызывающего в `sessions/<id>-kv.bin` (плоское имя, ~320 КБ/токен — грубая f16-оценка,
+реальный размер зависит от модели) перед ходом
 субагента и восстанавливает после (`KvCacheController`: /slots + save/restore/erase,
 нужен `--slot-save-path`). Настройка `KvCacheEnabled` + авто-проверка места на диске;
 деградация мягкая (нет места → без якоря, примечание в ответе тула).

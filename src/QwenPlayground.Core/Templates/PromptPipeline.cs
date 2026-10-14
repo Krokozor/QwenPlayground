@@ -1,4 +1,5 @@
 using QwenPlayground.Core.Chat;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.MetaInfo;
 using QwenPlayground.Core.Settings;
@@ -116,13 +117,18 @@ public sealed class PromptPipeline
     /// </summary>
     public async Task<string> RenderNextAsync(CancellationToken cancellationToken)
     {
+        var multimodal = await _multimodal(cancellationToken);
+        return await RenderNextAsync(multimodal, cancellationToken);
+    }
+
+    private async Task<string> RenderNextAsync(MultimodalContext? multimodal, CancellationToken cancellationToken)
+    {
         var messages = BuildRenderMessages();
         if (messages.Count == 0)
         {
             return string.Empty;
         }
         var stateBlock = _stateBlock(messages);
-        var multimodal = await _multimodal(cancellationToken);
         return QwenChatTemplate.Render(messages, AdvertisedTools,
             addGenerationPrompt: true, reasoningEffort: AppSettings.Get().ReasoningEffort,
             stateBlock: stateBlock,
@@ -134,11 +140,18 @@ public sealed class PromptPipeline
     /// Точные токены следующего промпта по версии СЕРВЕРА (/tokenize, /api/extra/tokencount):
     /// единственный источник правды для бюджета. Без числа — исключение: генерация не начнётся
     /// вслепую. Успешный счёт кэшируется как «последний фактический».
+    ///
+    /// Картинки: /tokenize считает ТОЛЬКО текст — медиа-маркер как текст, а сервер при евале
+    /// заменяет каждый маркер на N image-токенов (N = флаг --image-max-tokens сервера, API его
+    /// не экспозирует — проверено). Добавляем оценку: (маркеры в промпте) × ImageTokensMax
+    /// (консервативно). Страховка от занизившей оценки — 400 от сервера → принудительная
+    /// компакция + 1 retry (TurnPipeline, ContextOverflowException).
     /// </summary>
     public async Task<int> CountNextTokensAsync(CancellationToken cancellationToken)
     {
         await _serverProps.FetchAsync(AppSettings.Get().Endpoint, cancellationToken);
-        var prompt = await RenderNextAsync(cancellationToken);
+        var multimodal = await _multimodal(cancellationToken);
+        var prompt = await RenderNextAsync(multimodal, cancellationToken);
         if (prompt.Length == 0)
         {
             return 0;
@@ -151,7 +164,31 @@ public sealed class PromptPipeline
                 "Сервер не вернул точное количество токенов (/tokenize, /api/extra/tokencount). " +
                 "Генерация остановлена: точный размер промпта неизвестен.");
         }
+        // Кэш — сырой серверный счёт (image-оценка наша, не «факт сервера»).
         _serverProps.SetLastPromptTokens(exact);
+        var marker = multimodal?.MediaMarker;
+        if (marker is { Length: > 0 })
+        {
+            var images = CountOccurrences(prompt, marker);
+            if (images > 0)
+            {
+                var perImage = AppSettings.Get().ImageTokensMax;
+                exact += images * perImage;
+                DiagnosticsLog.Log($"PromptPipeline: next prompt +{images * perImage} image tokens estimated ({images} × {perImage})");
+            }
+        }
         return exact;
+    }
+
+    private static int CountOccurrences(string text, string token)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(token, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += token.Length;
+        }
+        return count;
     }
 }

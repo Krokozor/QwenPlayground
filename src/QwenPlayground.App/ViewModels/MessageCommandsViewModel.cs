@@ -208,7 +208,10 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
     private bool CanContinue() =>
         !_isGenerating() && Messages.Count > 0 && Messages[^1].Role == "assistant";
 
-    [RelayCommand(CanExecute = nameof(CanInteract))]
+    // Вложения НЕ блокируются во время хода: они готовятся для СЛЕДУЮЩЕГО сообщения
+    // (ручной отправке или очереди) и не трогают текущий ход. Блокировка (CanInteract)
+    // мешала основному сценарию очереди — приложить картинку, пока я работаю.
+    [RelayCommand]
     private void AttachFiles() {
         var dialog = new Microsoft.Win32.OpenFileDialog {
             Multiselect = true,
@@ -236,7 +239,7 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
         attachment.BeginLoadPreview();
     }
 
-    [RelayCommand(CanExecute = nameof(CanInteract))]
+    [RelayCommand]
     private void RemoveAttachment(PendingAttachment? attachment) {
         if (attachment is not null) {
             PendingAttachments.Remove(attachment);
@@ -244,7 +247,7 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
     }
 
     /// <summary>Вставить картинку из буфера обмена во вложения (без текста).</summary>
-    [RelayCommand(CanExecute = nameof(CanInteract))]
+    [RelayCommand]
     private void PasteImage() {
         if (!System.Windows.Clipboard.ContainsImage()) {
             _status("в буфере обмена нет картинки");

@@ -32,6 +32,9 @@ public sealed class LlmCompletionClient : ICompletionSource
 
     public TokenUsage? LastUsage { get; private set; }
 
+    /// <inheritdoc cref="ICompletionSource.LastStreamAborted"/>
+    public bool LastStreamAborted { get; private set; }
+
     public LlmCompletionClient(string baseAddress, HttpMessageHandler? handler = null)
     {
         _baseAddress = baseAddress.TrimEnd('/');
@@ -59,7 +62,7 @@ public sealed class LlmCompletionClient : ICompletionSource
         using var content = BuildContent(prompt, options, stream: false);
         // Нативный /completion (legacy): ответ — {content, tokens_evaluated, tokens_predicted, ...}.
         using var response = await _http.PostAsync(Url("completion"), content, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -82,6 +85,7 @@ public sealed class LlmCompletionClient : ICompletionSource
         var chunkCount = 0;
         var totalChars = 0;
         LastUsage = null;
+        LastStreamAborted = false;
         // Нативный /completion (legacy) стримит в SSE-стиле: каждая строка «data: {...}»,
         // чанки разделены пустой строкой. Поля чанка: content, tokens_evaluated,
         // tokens_predicted, stop (true на последнем). Формат подтверждён живым пробом
@@ -91,11 +95,12 @@ public sealed class LlmCompletionClient : ICompletionSource
             Content = BuildContent(prompt, options, stream: true, multimodalData)
         };
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
 
+        var sawStop = false;
         while (await reader.ReadLineAsync(cancellationToken) is { } line)
         {
             if (!line.StartsWith("data:", StringComparison.Ordinal))
@@ -138,13 +143,41 @@ public sealed class LlmCompletionClient : ICompletionSource
                 }
                 if (root.TryGetProperty("stop", out var stop) && stop.ValueKind == JsonValueKind.True)
                 {
+                    sawStop = true;
                     DiagnosticsLog.Log($"LLM: POST /completion (stream) done ({sw.ElapsedMilliseconds}ms, {totalChars} chars, {chunkCount} chunks, tokens={LastUsage?.PromptTokens}/{LastUsage?.CompletionTokens})");
                     yield break;
                 }
             }
         }
-        DiagnosticsLog.Log($"LLM: POST /completion (stream) done (no stop marker, {sw.ElapsedMilliseconds}ms, {totalChars} chars, {chunkCount} chunks)");
+        // EOF без stop:true — сервер закрыл поток досрочно (крах/таймаут/перезапуск).
+        // Для вызывающего это раньше выглядело как штатное завершение: частичный ответ
+        // (вплоть до незакрытого tool-call) уходил в обработку как обычный результат.
+        LastStreamAborted = !sawStop;
+        DiagnosticsLog.Log($"LLM: POST /completion (stream) ABORTED — no stop marker ({sw.ElapsedMilliseconds}ms, {totalChars} chars, {chunkCount} chunks)");
     }
+
+    /// <summary>
+    /// 400 с сигнатурой переполнения контекста → <see cref="ContextOverflowException"/>
+    /// (оркестратор хода: принудительная компакция + 1 retry). Остальные 400 — обычный
+    /// EnsureSuccessStatusCode (HttpRequestException наружу).
+    /// </summary>
+    private async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (ContextOverflowException.IsContextOverflowBody(body))
+            {
+                DiagnosticsLog.Log($"LLM: 400 context overflow: {TruncateForLog(body)}");
+                throw new ContextOverflowException(TruncateForLog(body));
+            }
+            DiagnosticsLog.Log($"LLM: 400 (not context overflow — propagating): {TruncateForLog(body)}");
+        }
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static string TruncateForLog(string text) =>
+        text.Length <= 300 ? text : text[..300] + "…";
 
     public async Task<int?> CountTokensAsync(string text, CancellationToken cancellationToken = default)
     {

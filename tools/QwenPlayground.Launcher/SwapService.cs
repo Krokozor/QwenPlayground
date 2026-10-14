@@ -511,7 +511,11 @@ public static class SwapService
         }
     }
 
-    /// <summary>GC версий: оставляем текущую и две последних по имени (id = yyyyMMdd-HHmmss).</summary>
+    /// <summary>
+    /// GC версий: оставляем текущую и две последних по имени.
+    /// Форматы id: старый yyyyMMdd-HHmmss и новый yyyyMMdd-HHmmss-[0-9a-f]{8}
+    /// (suffix из GUID — защита от коллизии двух сборок в одну секунду).
+    /// </summary>
     private static void GarbageCollectVersions(string currentId)
     {
         const int keep = 3;
@@ -519,7 +523,7 @@ public static class SwapService
         {
             var versions = Directory.EnumerateDirectories(Root)
                 .Select(d => Path.GetFileName(d))
-                .Where(name => System.Text.RegularExpressions.Regex.IsMatch(name, @"^\d{8}-\d{6}$"))
+                .Where(name => System.Text.RegularExpressions.Regex.IsMatch(name, @"^\d{8}-\d{6}(-[0-9a-f]{8})?$"))
                 .OrderByDescending(name => name)
                 .ToList();
             // Оставляем текущую версию и (keep-1) последних: после отката на старую

@@ -107,6 +107,18 @@ public sealed class ContextMaintenance
     /// <summary>Ручная компакция из UI.</summary>
     public async Task CompactFromUiAsync() => await RunAsync(fromAgentLoop: false, nextPromptTokens: null);
 
+    /// <summary>
+    /// Принудительная компакция: сервер сказал 400 «промпт не влезает» (ContextOverflowException)
+    /// — оценка бюджета (image-токены по ImageTokensMax) оказалась занизленной. Сжимаем
+    /// без решения «нужно ли» (правда — у сервера) и повторяем ход. FSM не трогаем
+    /// (от fromAgentLoop: true) — ход остаётся в Generating, как и при авто-компакции гварды.
+    /// </summary>
+    public Task ForceCompactAsync(CancellationToken cancellationToken)
+    {
+        DiagnosticsLog.Log("compaction: FORCED (server 400 context overflow)");
+        return RunAsync(fromAgentLoop: true, nextPromptTokens: null);
+    }
+
     private async Task RunAsync(bool fromAgentLoop, int? nextPromptTokens)
     {
         DiagnosticsLog.Log($"compaction: begin (fromAgentLoop={fromAgentLoop}, messages={_conversation.Count})");

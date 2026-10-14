@@ -195,7 +195,7 @@ public sealed class TurnPipeline
             }
         }
         _chatState.StateChanged += OnStateChanged;
-        TurnOutcome outcome;
+        TurnOutcome outcome = default!;
         try
         {
             var sessionDir = _session.Directory();
@@ -209,7 +209,7 @@ public sealed class TurnPipeline
             var prompt = profiles.ResolvePrompt(_session.PromptKey());
             var stateEnabled = isMain || profiles.ResolveStateBlock(_session.StateBlockKey()).Enabled;
             var toolsAllowed = isMain || prompt.Tools;
-            await foreach (var agentEvent in _runLoop(new AgentLoopRequest {
+            AgentLoopRequest BuildRequest() => new() {
                 Conversation = _log,
                 // Скоуп рантайма: цикл читает профиль настроек и маршрут интерактива
                 // из него (pinned-рантайм — собственный скоуп, не main).
@@ -254,35 +254,69 @@ public sealed class TurnPipeline
                 // после его конца. Провайдер сам снимает вооружение и очищает ввод.
                 QueuedMessageProvider = _queuedMessage,
                 CancellationToken = turnToken
-            }))
+            };
+
+            // Повторный прогон при переполнении контекста: сервер — единственный, кто знает
+            // реальный размер image-токенов (оценка ImageTokensMax может быть занизена).
+            // 400 → принудительная компакция → 1 retry. Лимит жёсткий: повтор только если
+            // модель ещё не ответила (iterations == 0) и retry ещё не был — иначе зацикливание.
+            var overflowRetried = false;
+            while (true)
             {
-                // Счётчики до sink'а: статистика хода не зависит от вида.
-                switch (agentEvent)
+                try
                 {
-                    case AssistantMessageEvent assistant:
-                        iterations++;
-                        if (assistant.Message.Generation is { } generation)
+                    await foreach (var agentEvent in _runLoop(BuildRequest()))
+                    {
+                        // Счётчики до sink'а: статистика хода не зависит от вида.
+                        switch (agentEvent)
                         {
-                            promptTokens += generation.PromptTokens ?? 0;
-                            completionTokens += generation.CompletionTokens ?? 0;
+                            case AssistantMessageEvent assistant:
+                                iterations++;
+                                if (assistant.Message.Generation is { } generation)
+                                {
+                                    promptTokens += generation.PromptTokens ?? 0;
+                                    completionTokens += generation.CompletionTokens ?? 0;
+                                }
+                                break;
+                            case ToolCallStartedEvent:
+                                toolCalls++;
+                                break;
                         }
-                        break;
-                    case ToolCallStartedEvent:
-                        toolCalls++;
-                        break;
+                        onEvent(agentEvent);
+                    }
+                    outcome = FinishOutcome();
+                    break;
                 }
-                onEvent(agentEvent);
+                catch (OperationCanceledException)
+                {
+                    outcome = FinishOutcome(canceled: true);
+                    break;
+                }
+                catch (ContextOverflowException overflow) when (iterations == 0 && !overflowRetried)
+                {
+                    overflowRetried = true;
+                    _onStatus("Переполнение контекста (400 от сервера) — принудительная компакция, повтор хода...");
+                    AppEventLog.Log($"turn: context-overflow 400 — forced compaction + retry: {overflow.Message.ReplaceLineEndings(" ")}");
+                    try
+                    {
+                        await _maintenance.ForceCompactAsync(turnToken);
+                    }
+                    catch (Exception compactException)
+                    {
+                        outcome = FinishOutcome(error: new InvalidOperationException(
+                            $"Переполнение контекста: принудительная компакция не удалась — {compactException.Message}",
+                            compactException));
+                        break;
+                    }
+                    // Компакция прошла — повторяем ход (продолжаем цикл).
+                }
+                catch (Exception exception)
+                {
+                    // Куда показать ошибку (пузырь или статус) — решает вид: получает исключение в итоге.
+                    outcome = FinishOutcome(error: exception);
+                    break;
+                }
             }
-            outcome = FinishOutcome();
-        }
-        catch (OperationCanceledException)
-        {
-            outcome = FinishOutcome(canceled: true);
-        }
-        catch (Exception exception)
-        {
-            // Куда показать ошибку (пузырь или статус) — решает вид: получает исключение в итоге.
-            outcome = FinishOutcome(error: exception);
         }
         finally
         {
@@ -296,10 +330,10 @@ public sealed class TurnPipeline
         return outcome;
 
         // Частичные статистики при отмене/ошибке — это и есть данные для постмортема.
-        TurnOutcome FinishOutcome(bool canceled = false, Exception? error = null) => new()
+        TurnOutcome FinishOutcome(bool canceled = false, Exception? error = null, Exception? inner = null) => new()
         {
             Canceled = canceled,
-            Error = error,
+            Error = inner is null ? error : new AggregateException(error!, inner),
             Iterations = iterations,
             ToolCalls = toolCalls,
             PromptTokens = promptTokens,

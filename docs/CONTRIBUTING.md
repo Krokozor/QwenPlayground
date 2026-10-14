@@ -19,12 +19,18 @@ src/
 │   ├── Roslyn/              # Roslyn-инструменты (CSharp*Tool, RoslynService)
 │   ├── Runtime/             # Профили чата (ChatProfiles, SamplerProfile, и др.)
 │   ├── SelfBuild/           # Самосборка (SelfBuildService, RebuildSelfTool, SelfBuildPaths)
+│   ├── Tools/               # Инструменты (Builtins/: ShellTool, ReadFile, и др.)
+│   ├── Mcp/                 # MCP-клиент (McpService, McpClient)
+│   ├── Subagents/           # Субагенты (SubagentSpawner)
+│   ├── Main/                # Композиционный корень (Main, ChatRuntime)
 │   ├── Serialization/       # Атомарная запись (AtomicFile), JSON (PythonStyleJson)
-│   ├── Sessions/            # Сессии (SessionStore, MessageMetaStore, ContextBackupStore)
+│   ├── Sessions/            # Сессии (SessionController, SessionStore, MessageMetaStore, ContextBackupStore)
 │   ├── Settings/            # Настройки (AppSettings, SettingsStore<T>, GenerationOptionsExtensions)
-│   └── Templates/           # Шаблон Qwen (QwenChatTemplate, QwenOutputParser, и др.)
+│   ├── Templates/           # Шаблон Qwen (QwenChatTemplate, QwenOutputParser, и др.)
+│   └── Tokenizers/          # Декодирование токенов (QwenVocabDecoder)
 └── QwenPlayground.App/      # WPF-приложение
     ├── Browser/             # Встроенный браузер (BrowserService, BrowserTools)
+    ├── Desktop/             # Инструменты рабочего стола (DesktopService, DesktopTools)
     ├── Tools/               # UI-инструменты (ScreenshotTool, AppWindowTool, и др.)
     ├── ViewModels/          # ViewModel'и (MainViewModel, MemoryViewModel, и др.)
     ├── Views/               # XAML-виды (ChatView, SettingsView, и др.)
@@ -37,7 +43,8 @@ tools/
 
 tests/
 ├── QwenPlayground.Core.Tests/   # Тесты ядра
-└── QwenPlayground.App.Tests/    # Тесты приложения
+├── QwenPlayground.App.Tests/    # Тесты приложения
+└── QwenPlayground.Launcher.Tests/ # Тесты лаунчера
 ```
 
 ## Правила кода
@@ -65,10 +72,10 @@ tests/
    [Tool("my_tool", "Описание инструмента")]
    public sealed class MyTool : AgentTool
    {
-       [ToolParameter("param1", "Описание параметра")]
-       public string Param1 { get; set; }
+       [ToolParameter("Описание параметра", Required = true)]
+       public string Param1 { get; set; } = string.Empty;
        
-       [ToolParameter("param2", "Описание параметра", Required = false)]
+       [ToolParameter("Описание параметра")]
        public int? Param2 { get; set; }
        
        public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken ct)
@@ -78,10 +85,11 @@ tests/
        }
    }
    ```
+   Имя параметра — имя свойства; другое имя — `[ToolParameter("Описание", Name = "custom_name")]`.
 
 2. Инструмент будет автоматически зарегистрирован через рефлексию `[Tool]`.
 
-3. Если инструмент нужен только в определённом контексте — добавьте `[ToolGroup(ToolGroup.CSharp)]` или `[ToolGroup(ToolGroup.Browser)]`.
+3. Если инструмент нужен только в определённом контексте — укажите полку третьим аргументом `[Tool]`: `[Tool("my_tool", "Описание", ToolGroup.CSharp)]`. Полки: `Core` (по умолчанию, всегда в промпте), `Browser`, `CSharp`, `Desktop`, `Mcp`, `Intuition`.
 
 4. Напишите тесты в `tests/QwenPlayground.Core.Tests/` или `tests/QwenPlayground.App.Tests/`.
 
@@ -93,15 +101,11 @@ tests/
    public int MyNewSetting { get; set; } = 42;
    ```
 
-2. Если нужно в UI — добавьте observable-свойство в `MainViewModel`:
+2. Если нужно в UI — добавьте «тонкий вид» в `SettingsViewModel` (источник правды — синглтон `AppSettings`; свойство — тонкий вид: чтение напрямую, запись = мутация + INPC + отложенный Save; `RefreshAll()` подхватит новое свойство рефлексией):
    ```csharp
-   [ObservableProperty]
-   private int myNewSetting = AppSettings.Get().MyNewSetting;
-   
-   partial void OnMyNewSettingChanged(int value)
-   {
-       AppSettings.Get().MyNewSetting = value;
-       ScheduleSettingsSave();
+   public int MyNewSetting {
+       get => S.MyNewSetting;
+       set => Set(S.MyNewSetting, value, (s, v) => s.MyNewSetting = v);
    }
    ```
 
@@ -115,14 +119,17 @@ tests/
    ```csharp
    public sealed class MyService : IAppService
    {
+       public string Name => "MyService";
        public void Start() { /* ... */ }
        public void Shutdown() { /* ... */ }
    }
    ```
 
-2. Зарегистрируйте в `App.xaml.cs`:
+2. Зарегистрируйте в конструкторе `MainViewModel` (через `Main.Lifecycle`; для лямбд есть `DelegateAppService` — отдельный класс не нужен):
    ```csharp
-   _lifecycle.Register(new MyService());
+   _main.Lifecycle.Register(new MyService());
+   // или без класса:
+   _main.Lifecycle.Register(new DelegateAppService("my service", start: () => { }, shutdown: () => { }));
    ```
 
 3. Остановка LIFO: сервисы останавливаются в обратном порядке регистрации.
@@ -134,6 +141,7 @@ tests/
 ```bash
 dotnet test tests/QwenPlayground.Core.Tests -c Release
 dotnet test tests/QwenPlayground.App.Tests -c Release
+dotnet test tests/QwenPlayground.Launcher.Tests -c Release
 ```
 
 ### Правила
@@ -145,29 +153,27 @@ dotnet test tests/QwenPlayground.App.Tests -c Release
 
 ### Структура тестов
 
+Тесты — плоские файлы в корне тестового проекта (без подпапок), названы по тестируемому классу:
+
 ```
 tests/
-├── QwenPlayground.Core.Tests/
-│   ├── Agent/           # Тесты агентного цикла
-│   ├── Chat/            # Тесты моделей чата
-│   ├── Memory/          # Тесты памяти
-│   ├── Templates/       # Тесты шаблона Qwen
-│   └── ...
-└── QwenPlayground.App.Tests/
-    ├── ViewModels/      # Тесты ViewModel'ей
-    └── ...
+├── QwenPlayground.Core.Tests/      # AgentLoopTests.cs, ChatLogTests.cs, MemoryStoreTests.cs,
+│                                   # QwenChatTemplateTests.cs, ContextMaintenanceTests.cs, ...
+└── QwenPlayground.App.Tests/       # MessageViewModelStreamingTests.cs, TurnPanelTests.cs, ...
 ```
 
 ## Самосборка
 
 `rebuild_self` — это инструмент, который:
-1. Запускает `dotnet build` (с Roslyn-гейтом)
-2. Запускает тесты
-3. Копирует сборку в `run/<id>/`
-4. Обновляет `run/current.txt`
-5. Рестартует приложение через лаунчер
+1. Проверяет страховку: GUI-лаунчер запущен (ровно один инстанс) и watchdog жив — без этого ребилд НЕ выполняется (гарантия рестарта — внешний лаунчер: handshake + rollback на старую версию)
+2. Снимает снапшот дерева в git (см. «Важно» ниже)
+3. Запускает pre-check (валидация XAML-XML + Roslyn-диагностика C#)
+4. Запускает полный `dotnet build` (сборка идёт прямо в `run/<id>/`)
+5. Запускает тест-гейт (`dotnet test`, при падении один flaky-ретрай)
+6. Рестартует приложение через лаунчер (лаунчер обновляет `run/current.txt`)
 
 **Важно:**
+- Перед каждым ребилдом дерево снимается в git-снапшот (`refs/snapshots/<ts>`, хранятся последние 10) — точка возврата при неудачной сборке
 - Каталог `run/` не трогать руками
 - Если сборка падает — агент видит ошибки и может их исправить
 - По умолчанию не пушит в git (только если включено `PushOnRebuild`)
@@ -178,7 +184,7 @@ tests/
 - `docs/CONCEPTS.md` — ключевые концепции
 - `docs/LLM-SETUP.md` — настройка LLM-сервера
 - `ARCHITECTURE.md` — подробная архитектура
-- `refactoring.md` — рабочий журнал проекта
+- `refactoring.md` — рабочий журнал проекта (локальный файл, не в git)
 
 ## Лицензия
 

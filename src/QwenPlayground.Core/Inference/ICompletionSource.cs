@@ -15,6 +15,14 @@ public interface ICompletionSource : IDisposable
     /// <summary>Usage последнего ответа; null — сервер не отдал.</summary>
     TokenUsage? LastUsage { get; }
 
+    /// <summary>
+    /// true, если последний стрим закончился БЕЗ маркера stop:true (сервер закрыл поток
+    /// досрочно — крах/таймаут/перезапуск): накопленный текст, вероятно, неполный
+    /// (возможен незакрытый tool-call). Сбрасывается в начале каждого StreamAsync.
+    /// Отмена (OperationCanceledException) сюда не относится — она уходит исключением.
+    /// </summary>
+    bool LastStreamAborted { get; }
+
     /// <summary>Полный ответ (/completion legacy-формат): текст + usage.</summary>
     Task<CompletionResult> CompleteAsync(string prompt, GenerationOptions options, CancellationToken cancellationToken = default);
 

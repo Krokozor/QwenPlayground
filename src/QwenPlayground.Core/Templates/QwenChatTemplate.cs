@@ -87,7 +87,8 @@ public static class QwenChatTemplate
         ReasoningEffort reasoningEffort = ReasoningEffort.XHigh,
         StateBlock? stateBlock = null,
         string? mediaMarker = null,
-        Func<int, IReadOnlyList<string>>? artifactsProvider = null){
+        Func<int, IReadOnlyList<string>>? artifactsProvider = null,
+        string? prefill = null){
         //технически нам ничего не мешает передавать 0 сообщений, просто ассистенту будет одиноко
         if (messages.Count == 0)
             throw new ArgumentException("No messages provided.", nameof(messages));        
@@ -232,6 +233,12 @@ public static class QwenChatTemplate
             if (stateBlock is not null)
             {
                 builder.Append(stateBlock.ToString()).Append('\n');
+            }
+            // Prefill (сервисные вызовы): модель «уже начала» мысль с нужным намерением —
+            // страховка для низких квантов, которые могут забыть вызвать инструмент.
+            if (!string.IsNullOrWhiteSpace(prefill))
+            {
+                builder.Append(prefill).Append('\n');
             }
         }
 

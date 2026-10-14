@@ -13,14 +13,24 @@ public sealed class ShellTool : AgentTool
     public int TimeoutSeconds { get; set; } = 60;
 
     // Подсказка для подтверждения пользователя (TryConfirm), НЕ граница безопасности:
-    // агент имеет полный доступ к shell, список не блокирует ничего критичного.
-    private static readonly string[] DangerousPatterns =
-        ["del ", "rmdir", "rm -", "format ", "shutdown", "taskkill", "remove-item"];
+    // агент имеет полный доступ к shell, список не блокирует ничего критичного
+    // (и YoloMode авто-одобряет).
+    //
+    // Regex с границами СЛОВ (а не подстрока): «del » ловил «model»/«delete», «format » —
+    // «formatted». Честно: коммит e3a2cf2 (2026-09-04) ЗАЯВИЛ word-boundary fix, которого
+    // в diff не было (аудит 2026-10-13) — сам фикс сделан только сейчас.
+    //
+    // Состав — под cmd.exe (shell этого тула): del/erase (удаление файлов), rd/rmdir
+    // (удаление каталогов), format (форматирование), shutdown, taskkill, diskpart,
+    // remove-item (PowerShell). «rm» исключён сознательно: в cmd.exe его нет, а
+    // «git rm» — частая безобидная команда (ложное срабатывание).
+    private static readonly System.Text.RegularExpressions.Regex DangerousCommand = new(
+        @"\b(del|erase|rd|rmdir|format|shutdown|taskkill|diskpart|remove-item)\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
-        var lower = Command.ToLowerInvariant();
-        if (DangerousPatterns.Any(lower.Contains))
+        if (DangerousCommand.IsMatch(Command))
         {
             var pendingConfirm = context.Scope.TryConfirm(
                 $"Агент хочет выполнить потенциально опасную команду:\n{Command}", cancellationToken);

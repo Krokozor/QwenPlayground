@@ -136,6 +136,7 @@ public sealed class AgentRuntimeTests
     private sealed class OneChunkSource : ICompletionSource
     {
         public TokenUsage? LastUsage => null;
+        public bool LastStreamAborted => false;
 
         public Task<CompletionResult> CompleteAsync(string prompt, GenerationOptions options, CancellationToken cancellationToken = default) =>
             Task.FromResult(new CompletionResult("ok", null));

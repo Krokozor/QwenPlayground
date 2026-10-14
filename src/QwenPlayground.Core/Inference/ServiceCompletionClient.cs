@@ -1,4 +1,5 @@
 using System.Text;
+using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Templates;
 
@@ -55,6 +56,15 @@ public sealed class ServiceCompletionClient
             {
                 raw.Append(chunk);
                 onChunk?.Invoke(chunk);
+            }
+            // Обрыв (EOF без stop-маркера) в сервисном вызове — результат, вероятно,
+            // неполный: для структурных вызовов submit_result может не дойти → ExtractResult
+            // даст null, и вызывающий решит, считать ли это провалом (компакция) или
+            // «данных нет» (извлечение памяти). Логируем явно — раньше обрыв выглядел
+            // как штатное завершение.
+            if (client.LastStreamAborted)
+            {
+                DiagnosticsLog.Log($"ServiceCompletionClient: stream ABORTED by server ({raw.Length} chars accumulated) — result likely incomplete");
             }
         }
         var output = raw.ToString();

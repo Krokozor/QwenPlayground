@@ -30,6 +30,21 @@ public sealed class StructuredCompletionTests
     }
 
     [Fact]
+    public void Render_AppendsPrefillInsideThinkBlock()
+    {
+        // Prefill — страховка для низких квантов: модель «уже начала» мысль с намерением
+        // вызвать submit_result (баг-репорт: суммаризация не всегда проходит, модель
+        // забывает про инструмент).
+        var prompt = StructuredCompletion.Render("сделай резюме");
+
+        Assert.EndsWith("I am working out the result. Then I will call the submit_result tool with the complete result.\n", prompt);
+        // Prefill — ПОСЛЕ открытия think-блока (внутри мысли модели).
+        var thinkStart = prompt.LastIndexOf(QwenSpecialTokens.ThinkStart, StringComparison.Ordinal);
+        var prefillIndex = prompt.LastIndexOf("I am working out the result", StringComparison.Ordinal);
+        Assert.True(thinkStart >= 0 && prefillIndex > thinkStart);
+    }
+
+    [Fact]
     public void ExtractResult_ReturnsToolParameter()
     {
         var raw =
@@ -41,9 +56,20 @@ public sealed class StructuredCompletionTests
     }
 
     [Fact]
-    public void ExtractResult_ReturnsNull_WhenNoToolCall()
+    public void ExtractResult_FallsBackToFreeText_WhenNoToolCall()
     {
+        // Низкий квант не вызвал инструмент, но записал результат текстом после
+        // закрытого think-блока — принимаем (раньше это было null → прерванная компакция).
         var raw = QwenSpecialTokens.ThinkStart + "\nx\n" + QwenSpecialTokens.ThinkEnd + "\nответ просто текстом";
+
+        Assert.Equal("ответ просто текстом", StructuredCompletion.ExtractResult(raw));
+    }
+
+    [Fact]
+    public void ExtractResult_ReturnsNull_WhenThinkNotClosed()
+    {
+        // Незакрытый think = обрыв генерации, не ответ: фолбэк не применяется.
+        var raw = QwenSpecialTokens.ThinkStart + "\nдумаю, но не закончил";
 
         Assert.Null(StructuredCompletion.ExtractResult(raw));
     }

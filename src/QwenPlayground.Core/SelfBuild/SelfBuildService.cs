@@ -13,15 +13,16 @@ public static class SelfBuildService
 {
     public static async Task<BuildResult> BuildNextAsync(CancellationToken cancellationToken)
     {
-        var id = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        // Сuffix из GUID (8 hex = 32 бита): две сборки в одну секунду раньше получали
+        // один id, а существующий каталог рекурсивно УДАЛЯЛСЯ — вторая сборка могла
+        // стирать каталог первой (и активную версию, если она была свежей). С уникальным
+        // suffix коллизия исключена, удаление чужого каталога не нужно.
+        // Формат id: yyyyMMdd-HHmmss-[0-9a-f]{8} (launcher GC-regex знает оба формата).
+        var id = $"{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..8]}";
 
         // Pointer-layout: версия собирается в свой неизменяемый каталог run/<id>.
         // Активацией занимается Launcher (current.txt) — мы каталоги не трогаем.
         var versionDir = SelfBuildPaths.VersionDir(id);
-        if (Directory.Exists(versionDir))
-        {
-            Directory.Delete(versionDir, recursive: true);
-        }
         Directory.CreateDirectory(versionDir);
 
         var buildLogPath = Path.Combine(versionDir, "build.log");
@@ -168,9 +169,14 @@ public static class SelfBuildService
         };
 
         using var process = new Process { StartInfo = startInfo };
-        var output = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) output.AppendLine(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) output.AppendLine(e.Data); };
+        // Два буфера: OutputDataReceived и ErrorDataReceived приходят с РАЗНЫХ потоков
+        // (BeginOutputReadLine/BeginErrorReadLine) — общий StringBuilder без синхронизации
+        // был data race (потерянные/перепутанные строки в build.log). Порядок между
+        // stdout/stderr всё равно не гарантирован — merge в конце тривиальный.
+        var stdout = new StringBuilder();
+        var stderr = new StringBuilder();
+        process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
+        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderr.AppendLine(e.Data); };
 
         process.Start();
         process.BeginOutputReadLine();
@@ -192,7 +198,7 @@ public static class SelfBuildService
             TryKillProcessTree(process);
             throw;
         }
-        return (process.ExitCode, output.ToString());
+        return (process.ExitCode, stdout.ToString() + stderr.ToString());
     }
 
     /// <summary>Процесс мог выйти между исключением и Kill — не мешаем пробросу уборкой.</summary>
