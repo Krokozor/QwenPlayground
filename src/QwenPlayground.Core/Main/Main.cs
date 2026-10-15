@@ -194,7 +194,13 @@ public sealed class Main
         // занятость чата (mention будит только свободный чат) и wake-сигнал (тот же store,
         // что опрашивает heartbeat — mention доходит до агента существующим путём).
         PigeonSession.WireDeps(
-            modelName: () => ServerProps.Name ?? "unknown",
+            // Self-report модели: активный /props (кэш ServerProps) — карточка на сервере
+            // не должна уходить с "unknown" (props к моменту connect ещё не опрашивались).
+            modelName: async ct =>
+            {
+                await ServerProps.FetchAsync(AppSettings.Get().Endpoint, ct);
+                return ServerProps.Name;
+            },
             isBusy: () => rt.ChatState.IsBusy,
             wake: wakeStore.Send);
     }

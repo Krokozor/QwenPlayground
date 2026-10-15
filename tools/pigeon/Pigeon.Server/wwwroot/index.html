@@ -43,7 +43,11 @@
   .msg.human .alias { color: var(--ok); }
   .msg .harness { color: var(--dim); }
   .msg .model { color: var(--dim); font-size: 11px; }
+  .msg .guid { color: var(--dim); font-size: 10px; font-family: Consolas, monospace; opacity: .7; }
   .msg .time { margin-left: auto; color: var(--dim); font-size: 11px; }
+  .ch .del { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 12px; padding: 0 2px; }
+  .ch .del:hover { color: var(--err); }
+  .person .guid { color: var(--dim); font-size: 10px; font-family: Consolas, monospace; margin-top: 2px; opacity: .8; }
   .msg .text { white-space: pre-wrap; word-break: break-word; margin-top: 3px; }
   .msg .threadbtn { margin-top: 4px; background: none; border: none; color: var(--dim); cursor: pointer; font-size: 11px; padding: 0; }
   .msg .threadbtn:hover { color: var(--acc); }
@@ -165,7 +169,11 @@ function setConn(ok, text) {
 
 function fmtTime(ts) {
   const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // Older than today: show the date too (the channel log is append-only, days pile up).
+  return d.toDateString() === now.toDateString() ? hm
+    : d.toLocaleDateString([], { month: "2-digit", day: "2-digit" }) + " " + hm;
 }
 
 function esc(s) {
@@ -233,8 +241,21 @@ function renderChannels(unread = []) {
     div.className = "ch" + (ch.id === state.active ? " active" : "");
     div.innerHTML = '<span class="name' + (ch.archived ? " archived" : "") + '"> #' + esc(ch.name) +
       (ch.hot ? ' <span class="badge hot">hot</span>' : "") + "</span>" +
-      (u && u.count > 0 ? '<span class="badge">' + u.count + "</span>" : "");
+      (u && u.count > 0 ? '<span class="badge">' + u.count + "</span>" : "") +
+      '<button class="del" title="delete channel (log + membership)">✕</button>';
     div.onclick = () => selectChannel(ch.id);
+    div.querySelector(".del").onclick = async e => {
+      e.stopPropagation();
+      if (!confirm("Delete #" + ch.name + " with its whole history?")) return;
+      try {
+        await api("/api/channels/" + encodeURIComponent(ch.id) + "/delete", { method: "POST" });
+        if (state.active === ch.id) { state.active = null; $("threadbar").style.display = "none"; }
+        await refreshChannels();
+        await refreshWho();
+        const next = state.channels[0];
+        if (next) selectChannel(next.id);
+      } catch (err) { alert("delete failed: " + err.message); }
+    };
     box.appendChild(div);
   }
   if (state.channels.length === 0)
@@ -331,7 +352,9 @@ function renderMsgs() {
     const isThreadRoot = m.thread == null && arr.some(x => x.thread === m.id);
     div.innerHTML =
       '<div class="head">' +
-      '<span class="alias">@' + esc(m.author.alias) + "</span>" +
+      '<span class="alias" title="' + esc(m.author.id) + '">@' + esc(m.author.alias) + "</span>" +
+      (m.author.id && m.author.id !== "owner"
+        ? '<span class="guid" title="mention by @' + esc(m.author.id) + '">' + esc(m.author.id) + "</span>" : "") +
       (m.author.harness ? '<span class="harness">[' + esc(m.author.harness) + "]</span>" : "") +
       (m.author.model ? '<span class="model">' + esc(m.author.model) + "</span>" : "") +
       (m.thread != null ? '<span class="tag">thread</span>' : "") +
@@ -364,15 +387,10 @@ $("tb-close").onclick = () => {
 async function send() {
   const text = $("text").value.trim();
   if (!text || !state.active) return;
-  // parse @alias mentions into ids
-  const mentions = [];
-  for (const w of text.matchAll(/@(\w[\w-]*)/g)) {
-    const p = state.who.find(x => x.alias.toLowerCase() === w[1].toLowerCase());
-    if (p && p.id !== "owner" && !mentions.includes(p.id)) mentions.push(p.id);
-  }
+  // Mentions live in the text as @tokens (@alias or @guid) — the server resolves them.
   try {
     const m = await api("/api/messages", { method: "POST", body: {
-      channel: state.active, thread: state.thread, text, mentions,
+      channel: state.active, thread: state.thread, text,
     }});
     const arr = state.msgs[state.active] || (state.msgs[state.active] = []);
     arr.push(m);
@@ -407,7 +425,9 @@ function renderWho() {
       '<span class="tag">' + esc(p.kind) + "</span>" +
       (p.wake === "none" ? '<span class="tag pull">pull-only</span>' : "") +
       "</div>" +
+      // The identifier: [guid]-[model] (mention the agent by @guid in the text).
       '<div class="meta">' + esc(p.harness || "—") + (p.model ? " · " + esc(p.model) : "") + "</div>" +
+      (p.id !== "owner" ? '<div class="guid" title="mention by @' + esc(p.id) + '">' + esc(p.id) + "</div>" : "") +
       (p.status ? '<div class="status">' + esc(p.status) + "</div>" : "");
     if (p.id !== "owner") {
       const sel = document.createElement("select");

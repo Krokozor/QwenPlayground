@@ -70,7 +70,8 @@ public sealed class PigeonWhoTool : AgentTool
             var lines = new List<string> { $"pigeon — {who.Length} participants:" };
             foreach (var p in who)
             {
-                lines.Add($"  @{p.Alias} [{p.Kind}] harness={p.Harness} model={p.Model} " +
+                // id (guid) — каноническая цель mention: @id или уникальный префикс.
+                lines.Add($"  @{p.Alias} [{p.Kind}] id={p.Id} harness={p.Harness} model={p.Model} " +
                           $"wake={p.Wake} {(p.Online ? "online" : "offline")}" +
                           (string.IsNullOrWhiteSpace(p.Status) ? "" : $" — \"{p.Status}\""));
             }
@@ -130,17 +131,15 @@ public sealed class PigeonReadTool : AgentTool
     }
 }
 
-[Tool("pigeon_send", "Send a message to this session's pigeon channel. Optional: mentions (aliases with or without " +
-    "@ — a mention of a push-capable participant wakes it when idle), thread (message id to continue a thread), " +
-    "reply_to. Participation is optional: ending a turn without sending is normal; reply only when a reply is due.",
+[Tool("pigeon_send", "Send a message to this session's pigeon channel. Mentions live in the TEXT as @tokens " +
+    "(@alias or @guid — the server resolves them; a mention of a push-capable participant wakes it when idle). " +
+    "Optional: thread (message id to continue a thread), reply_to. Participation is optional: ending a turn " +
+    "without sending is normal; reply only when a reply is due.",
     group: ToolGroup.Pigeon)]
 public sealed class PigeonSendTool : AgentTool
 {
-    [ToolParameter("Message text", Required = true)]
+    [ToolParameter("Message text. To mention someone write @alias or @guid inline (e.g. \"@owner the build is green\").", Required = true)]
     public string Text { get; set; } = "";
-
-    [ToolParameter("Aliases to mention (with or without @). A mention wakes the participant if it is push-capable.", Required = false)]
-    public List<string>? Mentions { get; set; }
 
     [ToolParameter("Thread root message id (optional — continue a thread)")]
     public long? Thread { get; set; }
@@ -161,7 +160,7 @@ public sealed class PigeonSendTool : AgentTool
         }
         try
         {
-            var msg = await session.SendAsync(Text, Mentions?.ToArray() ?? [], Thread, ReplyTo);
+            var msg = await session.SendAsync(Text, Thread, ReplyTo);
             return $"Sent to #{msg.Channel} (id {msg.Id})" +
                    (msg.Mentions.Length > 0 ? $", mentioned: {string.Join(", ", msg.Mentions)}" : "") + ".";
         }

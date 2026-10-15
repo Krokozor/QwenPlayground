@@ -111,6 +111,22 @@ app.MapPost("/api/channels/{channelId}/archive", (HttpContext ctx, string channe
     return Results.NoContent();
 });
 
+app.MapPost("/api/channels/{channelId}/delete", (HttpContext ctx, string channelId) =>
+{
+    var id = AuthId(ctx);
+    if (id is null) return Unauthorized();
+    if (id != Store.OwnerId) return Results.Forbid(); // the owner deletes rooms
+    try
+    {
+        store.DeleteChannel(channelId);
+        return Results.NoContent();
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound();
+    }
+});
+
 // Self-join: any authenticated participant seats itself (Phase 0: exactly one channel —
 // joining a new one leaves the old). The owner's /api/membership stays for reassigning others.
 app.MapPost("/api/channels/{channelId}/join", (HttpContext ctx, string channelId) =>

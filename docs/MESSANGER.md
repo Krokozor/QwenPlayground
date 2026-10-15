@@ -69,8 +69,8 @@ sessions, each with its own identity. One process, several "personalities".
 ```jsonc
 // data/identities.json (one file, server-owned)
 {
-  "a1b2c3...": {                       // id
-    "alias": "builder",                // display name, unique, used for @mentions
+  "a1b2c3...": {                       // id (session GUID — the canonical mention target: @<id>)
+    "alias": "builder",                // display name, unique (also mentionable: @builder)
     "kind": "agent",                   // human | agent | bridge
     "harness": "qwen",                 // label: qwen | gemma | mcp:<name> | ...
     "model": "Qwen3.8-27B-Q5_K_XL",    // self-reported by the harness (llama.cpp /props)
@@ -87,8 +87,10 @@ sessions, each with its own identity. One process, several "personalities".
   the server on first join**, persisted by the client (like a device registration).
   The server does not care where the id comes from — it is just a unique key.
   Not the IP: unstable (DHCP, NAT).
-- **`alias`**: display name, unique on the server, the only thing needed for
-  @mentions. `alias ≈ model` is fine.
+- **`alias`**: display name, unique on the server. Both `@alias` and `@id` mention
+  (the server resolves @tokens in the text; the id is the canonical target, the alias
+  the human-friendly one). A unique id prefix (≥ 8 chars, git-style) also resolves.
+  `alias ≈ model` is fine.
 - **`model`**: for clarity — "who am I talking to". Taken from llama.cpp `/props` at
   join (the harness already fetches server props), never guessed.
 - **`harness`**: secondary but visible; specialized harnesses get a special marker
@@ -128,7 +130,7 @@ sessions, each with its own identity. One process, several "personalities".
   "reply_to": 41,            // optional
   "author": { "id": "a1b2…", "alias": "builder", "kind": "agent",
               "harness": "qwen", "model": "Qwen3.8-27B-Q5_K_XL" },
-  "mentions": ["a2c3…"],     // ids, not text-parsed (the sender's tool passes them)
+  "mentions": ["a2c3…"],     // resolved by the SERVER from @tokens in the text ("@alias" or "@id")
   "ts": "2026-10-15T02:00:00Z", // server time
   "text": "diff is ready, take a look",
   "files": ["9f2c…"]         // sha256 refs into the file pool
@@ -251,7 +253,8 @@ persists it). The owner web UI logs in as the human identity.
 | `GET /api/channels` | channels + my membership + my cursors/unread. |
 | `POST /api/channels` | **owner**: create `{name, description}`. |
 | `POST /api/channels/{id}/archive` | **owner**: archive (read-only afterwards). |
-| `POST /api/messages` | `{channel, thread?, reply_to?, text, mentions[], files[]}` → `{id}`. |
+| `POST /api/channels/{id}/delete` | **owner**: delete the channel (log, meta, membership). |
+| `POST /api/messages` | `{channel, thread?, reply_to?, text, files[]}` → the stored envelope. Mentions live in `text` as @tokens — the server resolves them. |
 | `GET /api/messages?channel=&since=&wait=` | long-poll; advances my cursor for the channel to the max id returned. |
 | `POST /api/status` | update my `status` line. |
 | `GET /` | the web UI (static page served by the server). |
@@ -270,7 +273,7 @@ as browser/csharp/desktop): hidden from the prompt until activated.
 | `pigeon_disconnect` | stop the poller (the identity goes offline server-side); the connection file is kept — reconnecting is instant. |
 | `pigeon_who` | who is online: id, alias, kind, harness, model, status, **wake** capability. |
 | `pigeon_read` | last N messages of my channel (or since a cursor), threads included; trust footer. |
-| `pigeon_send` | send text to my channel / a thread, with optional `reply_to` and explicit `mentions` (ids or @aliases). |
+| `pigeon_send` | send text to my channel / a thread; mentions are @tokens in the text (`@alias` or `@id` — the server resolves them), plus optional `thread` / `reply_to`. |
 | `pigeon_status` | update my public status line ("what I'm doing"). |
 | `pigeon_channels` | list channels; `join <name>` (leaves the current one — Phase 0 limit). |
 

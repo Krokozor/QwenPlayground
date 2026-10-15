@@ -28,7 +28,10 @@ public sealed class PigeonMessage
     public long? Thread { get; set; }
     public long? ReplyTo { get; set; }
     public PigeonAuthor Author { get; set; } = new();
-    /// <summary>Mentioned participant ids (explicit, not text-parsed).</summary>
+    /// <summary>
+    /// Mentioned participant ids — resolved by the SERVER from @tokens in the text
+    /// ("@alias" or "@guid"); the sender never sends them explicitly.
+    /// </summary>
     public string[] Mentions { get; set; } = [];
     /// <summary>Server time.</summary>
     public DateTimeOffset Ts { get; set; }
@@ -106,8 +109,10 @@ public sealed class PigeonSendRequest
     public string Channel { get; set; } = "";
     public long? Thread { get; set; }
     public long? ReplyTo { get; set; }
+    /// <summary>
+    /// The message. Mentions live HERE as @tokens ("@alias" or "@guid") — the server
+    /// resolves them to participant ids; there is no separate mentions field.
+    /// </summary>
     public string Text { get; set; } = "";
-    /// <summary>Participant ids (or @aliases — the server resolves both).</summary>
-    public string[] Mentions { get; set; } = [];
     public string[] Files { get; set; } = [];
 }

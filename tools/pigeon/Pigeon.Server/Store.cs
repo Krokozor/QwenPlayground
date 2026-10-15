@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Pigeon.Client;
 
 namespace Pigeon.Server;
@@ -346,6 +347,33 @@ public sealed class Store
         }
     }
 
+    /// <summary>
+    /// Delete a channel (owner-only, checked by the caller): message log + meta files,
+    /// membership cleared from all identity cards.
+    /// </summary>
+    public void DeleteChannel(string channelId)
+    {
+        lock (_gate)
+        {
+            if (!_channels.ContainsKey(channelId))
+                throw new KeyNotFoundException(channelId);
+            foreach (var rec in _identities.Values)
+            {
+                rec.Channels = rec.Channels
+                    .Where(c => !string.Equals(c, channelId, StringComparison.Ordinal))
+                    .ToArray();
+            }
+            _channels.Remove(channelId);
+            foreach (var file in new[] { ".jsonl", ".meta.json" })
+            {
+                var path = Path.Combine(_channelsDir, channelId + file);
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            SaveIdentities();
+        }
+    }
+
     /// <summary>Reassign a participant to a channel (leaves the old one — Phase 0 limit).</summary>
     public void Reassign(string identityId, string channelId)
     {
@@ -414,7 +442,7 @@ public sealed class Store
                     Harness = author.Harness,
                     Model = author.Model,
                 },
-                Mentions = req.Mentions.Select(ResolveMention).Where(m => m is not null).Select(m => m!).ToArray(),
+                Mentions = ParseMentions(req.Text),
                 Ts = DateTimeOffset.UtcNow,
                 Text = req.Text,
                 Files = req.Files,
@@ -432,15 +460,49 @@ public sealed class Store
         }
     }
 
-    /// <summary>Mentions arrive as ids or @aliases; resolve to ids, drop unknowns.</summary>
-    private string? ResolveMention(string m)
+    /// <summary>
+    /// @-токены в тексте сообщения (решение владельца, 2026-10-15): отправляющий пишет
+    /// "@alias" или "@guid" прямо в тексте, сервер резолвит в id участника. Отдельного
+    /// поля mentions в запросе нет — текст есть контракт.
+    /// </summary>
+    private static readonly Regex MentionPattern = new("@([A-Za-z0-9][A-Za-z0-9_-]*)", RegexOptions.Compiled);
+
+    /// <summary>Resolve all @tokens in the text to participant ids; unknowns are dropped.</summary>
+    private string[] ParseMentions(string text)
     {
-        var key = m.StartsWith('@') ? m[1..] : m;
-        var byId = _identities.ContainsKey(key);
-        if (byId)
+        var result = new List<string>();
+        foreach (Match m in MentionPattern.Matches(text))
+        {
+            var id = ResolveMention(m.Groups[1].Value);
+            if (id is not null && !result.Contains(id))
+                result.Add(id);
+        }
+        return result.ToArray();
+    }
+
+    /// <summary>
+    /// Resolve one mention token: exact participant id, then alias, then a UNIQUE id
+    /// prefix (git-style: @5a7ae119 → 5a7ae119c1554c798b5fa34d50d6646c — guids are 32 hex
+    /// chars, 8 is collision-safe).
+    /// </summary>
+    private string? ResolveMention(string key)
+    {
+        if (_identities.ContainsKey(key))
             return key;
-        return _identities.FirstOrDefault(p =>
-                   string.Equals(p.Value.Alias, key, StringComparison.Ordinal)).Key;
+        var byAlias = _identities.FirstOrDefault(p =>
+            string.Equals(p.Value.Alias, key, StringComparison.Ordinal));
+        if (byAlias.Key is not null)
+            return byAlias.Key;
+        if (key.Length >= 8)
+        {
+            var matches = _identities
+                .Where(p => p.Key.StartsWith(key, StringComparison.OrdinalIgnoreCase))
+                .Select(p => p.Key)
+                .ToList();
+            if (matches.Count == 1)
+                return matches[0];
+        }
+        return null;
     }
 
     /// <summary>

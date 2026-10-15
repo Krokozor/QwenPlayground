@@ -114,6 +114,10 @@ public sealed class PigeonClient : IDisposable
     public Task ArchiveChannelAsync(string channelId, CancellationToken ct = default)
         => PostJsonAsync<JsonElement>(Req(HttpMethod.Post, $"/api/channels/{Uri.EscapeDataString(channelId)}/archive"), null);
 
+    /// <summary>Delete a channel (owner only): log, meta and membership are removed.</summary>
+    public Task DeleteChannelAsync(string channelId, CancellationToken ct = default)
+        => PostJsonAsync<JsonElement>(Req(HttpMethod.Post, $"/api/channels/{Uri.EscapeDataString(channelId)}/delete"), null);
+
     /// <summary>Reassign a participant to a channel (leaves the old one — Phase 0 limit).</summary>
     public Task ReassignAsync(string identityId, string channelId, CancellationToken ct = default)
         => PostJsonAsync<JsonElement>(Req(HttpMethod.Post, "/api/membership"), new { identity = identityId, channel = channelId });

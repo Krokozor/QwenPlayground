@@ -38,8 +38,10 @@ public sealed class ServerProps
     public int? NContext => _nContext;
 
     /// <summary>
-    /// Имя модели с сервера (llama.cpp /props → "name"). Self-report для pigeon-идентичности
-    /// (docs/MESSANGER.md §4: «с кем имею дело»): не угадываем, а спрашиваем у сервера.
+    /// Имя модели с сервера (llama.cpp /props → "model_alias" | "name" | имя файла из
+    /// "model_path" — версии llama.cpp по-разному называют одно и то же). Self-report для
+    /// pigeon-идентичности (docs/MESSANGER.md §4: «с кем имею дело»): не угадываем,
+    /// а спрашиваем у сервера.
     /// </summary>
     public string? Name => _name;
 
@@ -97,9 +99,28 @@ public sealed class ServerProps
             {
                 _mediaMarker = marker.GetString();
             }
-            if (root.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+            // Имя модели: версии llama.cpp по-разному — "model_alias" (новее), "name",
+            // или только путь (model_path → имя файла).
+            string? modelName = null;
+            if (root.TryGetProperty("model_alias", out var alias) && alias.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(alias.GetString()))
             {
-                _name = name.GetString();
+                modelName = alias.GetString();
+            }
+            else if (root.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String &&
+                     !string.IsNullOrWhiteSpace(name.GetString()))
+            {
+                modelName = name.GetString();
+            }
+            else if (root.TryGetProperty("model_path", out var path) && path.ValueKind == JsonValueKind.String)
+            {
+                var fileName = Path.GetFileName(path.GetString() ?? "");
+                if (fileName.Length > 0)
+                    modelName = fileName;
+            }
+            if (modelName is not null)
+            {
+                _name = modelName;
             }
             // llama.cpp /props: n_ctx лежит на верхнем уровне или в default_generation_settings.
             if (root.TryGetProperty("n_ctx", out var nTop) && nTop.ValueKind == JsonValueKind.Number)

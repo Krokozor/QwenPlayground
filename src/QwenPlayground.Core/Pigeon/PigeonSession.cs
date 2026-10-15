@@ -25,15 +25,16 @@ public sealed class PigeonSession : IStateAnnouncer
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Зависимости, прошиваемые приложением (UI-поток, Main): имя модели (self-report),
-    /// занятость чата (wake только когда свободен), wake-сигнал (путь heartbeat/wake/).
+    /// Зависимости, прошиваемые приложением (UI-поток, Main): имя модели (self-report из
+    /// /props — асинхронный fetch, чтобы карточка не была "unknown"), занятость чата
+    /// (wake только когда свободен), wake-сигнал (путь heartbeat/wake/).
     /// null — pigeon не проведён (тесты): connect вернёт ошибку.
     /// </summary>
-    public static Func<string?>? ModelNameProvider { get; private set; }
+    public static Func<CancellationToken, Task<string?>>? ModelNameProvider { get; private set; }
     public static Func<bool>? IsBusyProvider { get; private set; }
     public static Action<string>? WakeProvider { get; private set; }
 
-    public static void WireDeps(Func<string?> modelName, Func<bool> isBusy, Action<string> wake)
+    public static void WireDeps(Func<CancellationToken, Task<string?>> modelName, Func<bool> isBusy, Action<string> wake)
     {
         ModelNameProvider = modelName;
         IsBusyProvider = isBusy;
@@ -83,17 +84,17 @@ public sealed class PigeonSession : IStateAnnouncer
     private string? _channel;
     private string? _channelDescription;
     private int _newCount;
-    private (string Alias, string Text)? _latest;
-    private (string Alias, string Channel, string Text)? _pendingMention;
+    private (string Alias, string Text, DateTimeOffset Ts)? _latest;
+    private (string Alias, string Channel, string Text, DateTimeOffset Ts)? _pendingMention;
 
     /// <summary>Сколько новых сообщений с момента последнего pigeon_read (state-строка).</summary>
     public int NewCount => _newCount;
 
-    /// <summary>Последнее сообщение (автор + текст) — для state-строки.</summary>
-    public (string Alias, string Text)? Latest => _latest;
+    /// <summary>Последнее сообщение (автор + текст + время) — для state-строки.</summary>
+    public (string Alias, string Text, DateTimeOffset Ts)? Latest => _latest;
 
-    /// <summary>Непрочитанный mention (автор, канал, текст) — будит чат, пока не обработан.</summary>
-    public (string Alias, string Channel, string Text)? PendingMention => _pendingMention;
+    /// <summary>Непрочитанный mention (автор, канал, текст, время) — будит чат, пока не обработан.</summary>
+    public (string Alias, string Channel, string Text, DateTimeOffset Ts)? PendingMention => _pendingMention;
 
     /// <summary>Текущий канал (из membership на сервере; null — меня ещё не посадили).</summary>
     public string? Channel => _channel;
@@ -139,7 +140,9 @@ public sealed class PigeonSession : IStateAnnouncer
         }
         try
         {
-            var model = ModelNameProvider() ?? "unknown";
+            // Self-report модели: активный /props (кэшируется в ServerProps) — иначе карточка
+            // на сервере ушла бы с "unknown" (props ещё не опрашивались на момент connect).
+            var model = await ModelNameProvider(CancellationToken.None) ?? "unknown";
             var join = new PigeonJoinRequest
             {
                 Id = session.AgentId,
@@ -310,10 +313,10 @@ public sealed class PigeonSession : IStateAnnouncer
     private void HandleIncoming(PigeonMessage m)
     {
         _newCount++;
-        _latest = (m.Author.Alias, m.Text);
+        _latest = (m.Author.Alias, m.Text, m.Ts);
         if (m.Mentions.Contains(AgentId, StringComparer.Ordinal))
         {
-            _pendingMention = (m.Author.Alias, m.Channel, m.Text);
+            _pendingMention = (m.Author.Alias, m.Channel, m.Text, m.Ts);
         }
     }
 
@@ -369,7 +372,11 @@ public sealed class PigeonSession : IStateAnnouncer
         return messages;
     }
 
-    public async Task<PigeonMessage> SendAsync(string text, string[] mentions, long? thread, long? replyTo)
+    /// <summary>
+    /// Отправить сообщение. Упоминания — @-токены прямо в тексте ("@alias" или "@guid"):
+    /// сервер резолвит их в id участников (отдельного параметра нет, 2026-10-15).
+    /// </summary>
+    public async Task<PigeonMessage> SendAsync(string text, long? thread, long? replyTo)
     {
         var client = ClientOrThrow();
         if (_channel is null)
@@ -380,7 +387,6 @@ public sealed class PigeonSession : IStateAnnouncer
         {
             Channel = _channel,
             Text = text,
-            Mentions = mentions,
             Thread = thread,
             ReplyTo = replyTo,
         });
@@ -440,8 +446,9 @@ public sealed class PigeonSession : IStateAnnouncer
             var line = $"#{_channel}" + (_channelDescription is { Length: > 0 } d ? $" — \"{d}\"" : "");
             if (_newCount > 0)
             {
+                // Время локальное (сервер хранит UTC): владелец и агент смотрят на одни часы.
                 line += _latest is { } latest
-                    ? $"; {_newCount} new (latest @{latest.Alias}: \"{Truncate(latest.Text)}\")"
+                    ? $"; {_newCount} new (latest @{latest.Alias} {latest.Ts.ToLocalTime():HH:mm}: \"{Truncate(latest.Text)}\")"
                     : $"; {_newCount} new";
             }
             if (LastError is { Length: > 0 } err && _newCount == 0)
@@ -451,7 +458,7 @@ public sealed class PigeonSession : IStateAnnouncer
             messages.Add(line);
             if (_pendingMention is { } mention)
             {
-                messages.Add($"mention: @{mention.Alias} in #{mention.Channel}: \"{Truncate(mention.Text)}\"");
+                messages.Add($"mention {mention.Ts.ToLocalTime():HH:mm}: @{mention.Alias} in #{mention.Channel}: \"{Truncate(mention.Text)}\"");
             }
         }
         return [new StateAnnounce { Label = "pigeon", Messages = messages, Source = this }];
