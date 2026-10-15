@@ -190,19 +190,20 @@ public sealed class Main
             startTurn: hooks.HeartbeatStartTurn,
             flushMemory: hooks.FlushMemory,
             watchdogGuard: WatchdogLauncher.EnsureAlive);
-        // Pigeon (docs/MESSANGER.md): зависимости клея — имя модели (self-report из /props),
-        // занятость чата (mention будит только свободный чат) и wake-сигнал (тот же store,
-        // что опрашивает heartbeat — mention доходит до агента существующим путём).
+        // Pigeon (docs/MESSANGER.md): процессные зависимости клея — self-report модели
+        // (активный /props, кэш ServerProps: карточка не уходит с "unknown").
+        // PER-SESSION зависимости (busy + wake) — в RegisterSession ниже и в
+        // CreatePinnedRuntime: mention будит heartbeat СОБСТВЕННОГО окна сессии,
+        // не main (решение владельца, 2026-10-16).
         PigeonSession.WireDeps(
-            // Self-report модели: активный /props (кэш ServerProps) — карточка на сервере
-            // не должна уходить с "unknown" (props к моменту connect ещё не опрашивались).
-            modelName: async ct =>
+            async ct =>
             {
                 await ServerProps.FetchAsync(AppSettings.Get().Endpoint, ct);
                 return ServerProps.Name;
-            },
-            isBusy: () => rt.ChatState.IsBusy,
-            wake: wakeStore.Send);
+            });
+        // Main-сессия динамическая (селектор) — перерегистрируем при каждом переключении.
+        Sessions.SessionChanged += () => RegisterSession(rt, wakeStore);
+        RegisterSession(rt, wakeStore);
     }
 
     /// <summary>
@@ -269,7 +270,29 @@ public sealed class Main
             () => slotId,
             () => pinnedRoot,
             SetPinnedRoot));
+        // Pigeon: свои busy + wake (mention будит ЭТО окно, не main). Pinned-окно без
+        // собственного heartbeat'а — wake идёт прямо в RunHeartbeatTurnAsync окна
+        // (хук HeartbeatStartTurn), без ожидания тика и без signal-файла.
+        PigeonSession.Register(
+            Sessions.DirectoryFor(sessionId),
+            () => rt.ChatState.IsBusy,
+            hooks.HeartbeatStartTurn);
         return rt;
+    }
+
+    /// <summary>
+    /// Pigeon per-session зависимости (решение владельца, 2026-10-16: mention будит
+    /// СОБСТВЕННОЕ окно сессии, не main): каталог сессии рантайма → (busy её ChatState,
+    /// wake — в WakeSignalStore ЕЁ окна). Main-рантайм: каталог динамический (селектор
+    /// переключает сессии) — RegisterSession вызывается на старте и при каждом
+    /// переключении (Sessions.SessionChanged).
+    /// </summary>
+    private void RegisterSession(ChatRuntime rt, WakeSignalStore wakeStore)
+    {
+        PigeonSession.Register(
+            Sessions.DirectoryFor(rt.SessionId),
+            () => rt.ChatState.IsBusy,
+            wakeStore.Send);
     }
 
     /// <summary>

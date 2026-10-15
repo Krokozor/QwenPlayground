@@ -25,21 +25,30 @@ public sealed class PigeonSession : IStateAnnouncer
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Зависимости, прошиваемые приложением (UI-поток, Main): имя модели (self-report из
-    /// /props — асинхронный fetch, чтобы карточка не была "unknown"), занятость чата
-    /// (wake только когда свободен), wake-сигнал (путь heartbeat/wake/).
-    /// null — pigeon не проведён (тесты): connect вернёт ошибку.
+    /// Процессные зависимости (Main.cs): self-report модели (активный /props, чтобы
+    /// карточка не была "unknown"). null — pigeon не проведён (тесты): connect вернёт ошибку.
     /// </summary>
     public static Func<CancellationToken, Task<string?>>? ModelNameProvider { get; private set; }
-    public static Func<bool>? IsBusyProvider { get; private set; }
-    public static Action<string>? WakeProvider { get; private set; }
 
-    public static void WireDeps(Func<CancellationToken, Task<string?>> modelName, Func<bool> isBusy, Action<string> wake)
+    public static void WireDeps(Func<CancellationToken, Task<string?>> modelName)
     {
         ModelNameProvider = modelName;
-        IsBusyProvider = isBusy;
-        WakeProvider = wake;
     }
+
+    /// <summary>
+    /// PER-SESSION зависимости (решение владельца, 2026-10-16: «нахуя ты пытаешься
+    /// пробуждать main»): mention будит heartbeat СОБСТВЕННОГО окна сессии.
+    /// Каталог сессии → (занятость ЕЁ чата, wake-сигнал в ЕЁ WakeSignalStore).
+    /// </summary>
+    private sealed record SessionDeps(Func<bool> IsBusy, Action<string> Wake);
+    private static readonly Dictionary<string, SessionDeps> SessionDepsByDir =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public static void Register(string sessionDir, Func<bool> isBusy, Action<string> wake) =>
+        SessionDepsByDir[Path.GetFullPath(sessionDir)] = new SessionDeps(isBusy, wake);
+
+    private static SessionDeps? DepsFor(string dir) =>
+        SessionDepsByDir.TryGetValue(Path.GetFullPath(dir), out var d) ? d : null;
 
     /// <summary>Живое подключение каталога сессии или null (не подключено).</summary>
     public static PigeonSession? For(string? sessionDir) =>
@@ -302,7 +311,7 @@ public sealed class PigeonSession : IStateAnnouncer
                     _cursor = Math.Max(_cursor, m.Id);
                     HandleIncoming(m);
                 }
-                TryWakeIfIdle(client);
+                TryWakeIfIdle();
             }
             catch (OperationCanceledException)
             {
@@ -334,23 +343,24 @@ public sealed class PigeonSession : IStateAnnouncer
     }
 
     /// <summary>
-    /// Mention этой сессии + свободный чат → wake-сигнал (путь heartbeat: следующий тик,
-    /// ≤20 с). Mention НЕ сбрасываем до pigeon_read (агент прочитал — значит обработал);
-    /// но повторно будить по тому же mention не будем — после отправки сигнала помечаем
-    /// его «будил» (внутренний флаг через null'ирование после wake).
+    /// Mention этой сессии + свободный ЕЁ чат → wake-сигнал в heartbeat ЕЁ же окна
+    /// (решение владельца, 2026-10-16: mention будит собственную сессию, не main).
+    /// Чат занят — mention дождётся (виден в state-строке); повторно будить по одному
+    /// и тому же mention не будем (null'ируем после отправки сигнала).
     /// </summary>
-    private void TryWakeIfIdle(PigeonClient client)
+    private void TryWakeIfIdle()
     {
         if (_pendingMention is not { } mention)
         {
             return;
         }
-        if (IsBusyProvider is null || IsBusyProvider())
+        var deps = DepsFor(SessionDir);
+        if (deps is null || deps.IsBusy())
         {
-            return; // чат занят — mention дождётся (виден в state-строке)
+            return; // не зарегистрировано или чат этой сессии занят — mention дождётся
         }
         _pendingMention = null; // разбужен — не будим повторно по тому же сообщению
-        WakeProvider?.Invoke(
+        deps.Wake(
             $"[pigeon] You were mentioned in #{mention.Channel} by @{mention.Alias}: \"{mention.Text}\". " +
             "Read the channel with pigeon_read and reply with pigeon_send if a reply is due — " +
             "ending the turn without replying is also fine (participation is optional).");
