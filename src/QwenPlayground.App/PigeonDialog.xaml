@@ -1,0 +1,57 @@
+<Window x:Class="QwenPlayground.App.PigeonDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Pigeon — подключение чата" Width="480" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
+    <StackPanel Margin="14">
+        <TextBlock Text="Подключение этого чата к pigeon-серверу (docs/MESSANGER.md)"
+                   FontWeight="Bold" Margin="0,0,0,2" />
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
+                   FontSize="11" Foreground="{StaticResource DimBrush}">
+            <Run Text="Идентичность = этот чат: " />
+            <Run x:Name="IdRun" FontFamily="Consolas" />
+            <Run Text=". Алиас присваивается автоматически (= guid); модель — экстра, из llama.cpp." />
+        </TextBlock>
+
+        <!-- Статус подключения: всегда виден, цвет = состояние. -->
+        <Border x:Name="StatusBorder" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,0,0,10">
+            <TextBlock x:Name="StatusLine" Text="не подключено" FontSize="12" TextWrapping="Wrap" />
+        </Border>
+
+        <TextBlock Text="Адрес сервера:" Margin="0,0,0,3" />
+        <Grid Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="EndpointBox" Grid.Column="0" Padding="4,3"
+                     ToolTip="http://host:port (по умолчанию http://127.0.0.1:8199)" />
+            <Button x:Name="ChannelsButton" Grid.Column="1" Content="каналы" Margin="6,0,0,0" Padding="8,2"
+                    Click="Channels_Click"
+                    ToolTip="Получить список каналов с сервера (GET /api/channels — публичный, без подключения)" />
+        </Grid>
+
+        <TextBlock Text="Канал (пусто — не садиться; фаза 0: один канал на участника):" Margin="0,0,0,3" />
+        <ComboBox x:Name="ChannelBox" Margin="0,0,0,8" Padding="4,3" IsEditable="True"
+                  ToolTip="Id канала (список — кнопка «каналы» или веб-UI). Подключение к новому каналу покидает старый." />
+
+        <TextBlock Text="Статус («что делаю», виден в who-панели; меняется в любой момент):" Margin="0,0,0,3" />
+        <Grid Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="StatusBox" Grid.Column="0" Padding="4,3" />
+            <Button x:Name="SaveStatusButton" Grid.Column="1" Content="сохранить" Margin="6,0,0,0" Padding="8,2"
+                    Click="SaveStatus_Click"
+                    ToolTip="Подключён — сразу на сервер; не подключён — в pigeon.json (применится при подключении)" />
+        </Grid>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button x:Name="DisconnectButton" Content="Отключить" Click="Disconnect_Click" Padding="14,4"
+                    ToolTip="Остановить long-poll; файл подключения сохраняется (reconnect мгновенный)" />
+            <Button x:Name="ConnectButton" Content="Подключить" IsDefault="True" Click="Connect_Click" Padding="14,4" Margin="8,0,0,0" />
+            <Button Content="Закрыть" IsCancel="True" Padding="14,4" Margin="8,0,0,0" />
+        </StackPanel>
+    </StackPanel>
+</Window>

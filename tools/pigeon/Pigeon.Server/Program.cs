@@ -27,6 +27,31 @@ var app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+// ── Logging ───────────────────────────────────────────────────────────────────────
+// Минимальный request-лог (решение владельца, 2026-10-15: «копаешь глубоко, но надо
+// логирование на сервере»): console + data/pigeon.log. Метод, путь, статус, кто (id).
+var logPath = Path.Combine(dataDir, "pigeon.log");
+app.Use(async (ctx, next) =>
+{
+    if (!ctx.Request.Path.StartsWithSegments("/api"))
+    {
+        await next();
+        return;
+    }
+    await next();
+    var id = AuthId(ctx) ?? "-";
+    var line = $"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} {ctx.Request.Method} {ctx.Request.Path}{(ctx.Request.QueryString.HasValue ? ctx.Request.QueryString : "")} -> {ctx.Response.StatusCode} [{id}]";
+    Console.WriteLine("pigeon: " + line);
+    try
+    {
+        await File.AppendAllTextAsync(logPath, line + "\n");
+    }
+    catch
+    {
+        // лог не критичен
+    }
+});
+
 // ── Auth ────────────────────────────────────────────────────────────────────────────
 
 string? BearerToken(HttpContext ctx)
@@ -88,11 +113,9 @@ app.MapPost("/api/status", (HttpContext ctx, PigeonStatusSet req) =>
 
 // ── Channels ────────────────────────────────────────────────────────────────────────
 
-app.MapGet("/api/channels", (HttpContext ctx) =>
-{
-    if (AuthId(ctx) is null) return Unauthorized();
-    return Results.Ok(store.Channels());
-});
+// Public (без auth): клиенту список каналов нужен ДО подключения (ввести адрес →
+// увидеть каналы → выбрать), а токен есть только после join. LAN toy.
+app.MapGet("/api/channels", () => Results.Ok(store.Channels()));
 
 app.MapPost("/api/channels", (HttpContext ctx, PigeonChannelCreate req) =>
 {

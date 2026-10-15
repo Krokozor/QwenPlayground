@@ -9,6 +9,7 @@ using QwenPlayground.Core.Compaction;
 using QwenPlayground.Core.Heartbeat;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Main;
+using QwenPlayground.Core.Pigeon;
 using QwenPlayground.Core.Subagents;
 using QwenPlayground.Core.Crash;
 using QwenPlayground.Core.Runtime;
@@ -269,7 +270,7 @@ public partial class ChatViewModel : ObservableObject {
         TurnView = new(_runtime, _background, Messages, SessionDir, status => StatusText = status);
         MessageCommands = new(Messages, PendingAttachments, _runtime.Log,
             CanInteract, () => IsGenerating, continueLast => TurnView.GenerateAsync(continueLast),
-            SaveCurrent, RefreshPromptPreview, status => StatusText = status);
+            SaveCurrent, RefreshPromptPreview, status => StatusText = status, SessionDir);
 
         _runtime.Log.Changed += OnLogChanged;
         _sessions.SessionChanged += OnSessionChanged;
@@ -626,6 +627,29 @@ public partial class ChatViewModel : ObservableObject {
         keys.OrderBy(k => k == ChatProfileSet.DefaultKey ? 0 : 1).ThenBy(k => k, StringComparer.Ordinal).ToList();
 
     /// <summary>
+    /// 🕊 в тулбаре: диалог подключения ТЕКУЩЕГО чата к pigeon-серверу (docs/MESSANGER.md).
+    /// Доступен для любой сессии (включая закреплённые окна) — подключение per-session
+    /// (pigeon.json), действия те же, что у тулов pigeon_connect/pigeon_disconnect.
+    /// </summary>
+    [RelayCommand]
+    private void OpenPigeon() {
+        var dialog = new PigeonDialog(_sessions.DirectoryFor(_sessions.CurrentId))
+        { Owner = System.Windows.Application.Current.MainWindow };
+        dialog.ShowDialog();
+        RefreshPigeonBadge(); // connect/disconnect внутри диалога — бейдж в тулбаре актуализируем
+    }
+
+    private bool _pigeonConnected;
+    /// <summary>Бейдж на кнопке 🕊: подключён ли pigeon ТЕКУЩЕЙ сессии (зелёная точка).</summary>
+    public bool PigeonConnected {
+        get => _pigeonConnected;
+        private set { _pigeonConnected = value; OnPropertyChanged(nameof(PigeonConnected)); }
+    }
+
+    private void RefreshPigeonBadge() => PigeonConnected =
+        PigeonSession.For(_sessions.DirectoryFor(_sessions.CurrentId)) is { Connected: true };
+
+    /// <summary>
     /// Сохранить разговор — после каждого изменения чата: главное окно — текущую сессию
     /// (chat.json, список обновляет SessionList); закреплённое — свою (SavePinned).
     /// </summary>
@@ -653,6 +677,7 @@ public partial class ChatViewModel : ObservableObject {
         RefreshPromptPreview();
         Shelves.Refresh();
         Todo.OnSessionChanged();
+        RefreshPigeonBadge(); // подключение per-session — бейдж 🕊 за текущей сессией
     }
 
     /// <summary>Внешнее уведомление биндинга ReasoningEffortIndex (настройки сменил тулом агент).</summary>

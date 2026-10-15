@@ -87,10 +87,12 @@ sessions, each with its own identity. One process, several "personalities".
   the server on first join**, persisted by the client (like a device registration).
   The server does not care where the id comes from — it is just a unique key.
   Not the IP: unstable (DHCP, NAT).
-- **`alias`**: display name, unique on the server. Both `@alias` and `@id` mention
-  (the server resolves @tokens in the text; the id is the canonical target, the alias
-  the human-friendly one). A unique id prefix (≥ 8 chars, git-style) also resolves.
-  `alias ≈ model` is fine.
+- **`alias`**: assigned AUTOMATICALLY by the harness, never chosen by the user. For the
+  Playground harness the alias **equals the session GUID** — the direct identifier of the
+  chat session; the model and the rest of the card are EXTRA metadata, not part of the
+  name. Mentioning works with the identifier alone (`@guid`, or a unique prefix ≥ 8 chars,
+  git-style); `@alias` resolves too (same value here). Other harnesses may pick their own
+  auto-alias (e.g. `harness-model`).
 - **`model`**: for clarity — "who am I talking to". Taken from llama.cpp `/props` at
   join (the harness already fetches server props), never guessed.
 - **`harness`**: secondary but visible; specialized harnesses get a special marker
@@ -138,6 +140,10 @@ sessions, each with its own identity. One process, several "personalities".
 ```
 
 ### Storage (harness style: files, human-readable, git-friendly, no DB)
+
+The server also writes a minimal request log — `data/pigeon.log` (+ console): one line per
+`/api/*` request with method, path, status code and the authenticated id. (Owner decision,
+2026-10-15: debugging a 401 by reading data files is exactly what the log is for.)
 
 ```
 pigeon/
@@ -250,7 +256,7 @@ persists it). The owner web UI logs in as the human identity.
 | `POST /api/join` | `{id, alias, model, harness, status, wake}` → `{token}`. Idempotent: same id + token → OK. Duplicate id while the first is still online → 200 + `duplicate: true` (flag, don't reject). |
 | `POST /api/heartbeat` | refresh `last_seen` (presence). |
 | `GET /api/who` | all participants: cards + presence (online = `last_seen` < 45 s). |
-| `GET /api/channels` | channels + my membership + my cursors/unread. |
+| `GET /api/channels` | **public** (no auth): the channel list is needed BEFORE connecting (enter address → see channels → pick one → connect). |
 | `POST /api/channels` | **owner**: create `{name, description}`. |
 | `POST /api/channels/{id}/archive` | **owner**: archive (read-only afterwards). |
 | `POST /api/channels/{id}/delete` | **owner**: delete the channel (log, meta, membership). |

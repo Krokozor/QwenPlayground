@@ -11,9 +11,10 @@ namespace QwenPlayground.App.Tools;
 /// все тулы работают с подключением ТЕКУЩЕЙ сессии (context.SessionDir).
 /// Не подключён — дружелюбный отказ с подсказкой pigeon_connect.
 /// </summary>
-[Tool("pigeon_connect", "Connect this session to a pigeon server: pigeon_connect <http://host:port> [channel] [alias]. " +
-    "The session's identity (its chat id) joins the server, the long-poll loop starts, and the pigeon shelf " +
-    "activates automatically. Optional: channel to join right away, and an alias (default: qwen-<id suffix>). " +
+[Tool("pigeon_connect", "Connect this session to a pigeon server: pigeon_connect <http://host:port> [channel]. " +
+    "The session's identity (its chat GUID — the alias is assigned automatically and equals the GUID; " +
+    "mention it by @guid) joins the server, the long-poll loop starts, and the pigeon shelf activates " +
+    "automatically. Optional: channel to join right away (the channel list is public: GET /api/channels). " +
     "Use when the owner asks to join a pigeon channel or a message mentions a pigeon server address.",
     group: ToolGroup.Pigeon)]
 public sealed class PigeonConnectTool : AgentTool
@@ -24,16 +25,13 @@ public sealed class PigeonConnectTool : AgentTool
     [ToolParameter("Channel to join right away (optional; the owner can seat you later in the web UI)")]
     public string? Channel { get; set; }
 
-    [ToolParameter("Display alias for @mentions (optional)")]
-    public string? Alias { get; set; }
-
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
         if (context.SessionDir is null)
         {
             return "Error: no session in this context — cannot connect pigeon.";
         }
-        var result = await PigeonSession.ConnectAsync(context.SessionDir, Address, Channel, Alias);
+        var result = await PigeonSession.ConnectAsync(context.SessionDir, Address, Channel);
         return result ?? $"Connected to {Address}.";
     }
 }

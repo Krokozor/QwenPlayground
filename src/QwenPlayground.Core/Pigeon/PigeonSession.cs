@@ -110,10 +110,12 @@ public sealed class PigeonSession : IStateAnnouncer
     /// <summary>
     /// Подключить сессию к серверу (или переподключить): pigeon.json, join (idempotent),
     /// опционально канал, запуск long-poll, авто-активация полки pigeon.
+    /// Алиас присваивается АВТОМАТИЧЕСКИ = guid сессии (решение владельца, 2026-10-15):
+    /// для этого харнесса guid — прямой идентификатор чат-сессии, упоминание — по нему;
+    /// модель и прочее — экстра-метаданные карточки, не часть имени.
     /// Возвращает текст ошибки или null (успех). Запускать на UI-потоке.
     /// </summary>
-    public static async Task<string?> ConnectAsync(string sessionDir, string endpoint,
-        string? channel = null, string? alias = null)
+    public static async Task<string?> ConnectAsync(string sessionDir, string endpoint, string? channel = null)
     {
         if (ModelNameProvider is null)
         {
@@ -140,15 +142,12 @@ public sealed class PigeonSession : IStateAnnouncer
         }
         try
         {
-            // Self-report модели: активный /props (кэшируется в ServerProps) — иначе карточка
-            // на сервере ушла бы с "unknown" (props ещё не опрашивались на момент connect).
+            // Self-report модели: активный /props (кэшируется в ServerProps) — экстра-поле карточки.
             var model = await ModelNameProvider(CancellationToken.None) ?? "unknown";
             var join = new PigeonJoinRequest
             {
                 Id = session.AgentId,
-                Alias = !string.IsNullOrWhiteSpace(alias) ? alias
-                    : !string.IsNullOrWhiteSpace(file.Alias) ? file.Alias
-                    : $"qwen-{session.AgentId[^Math.Min(4, session.AgentId.Length)..]}",
+                Alias = session.AgentId, // авто: guid сессии (уникален на сервере по построению)
                 Kind = "agent",
                 Harness = "qwen",
                 Model = model,
@@ -159,18 +158,30 @@ public sealed class PigeonSession : IStateAnnouncer
             var result = await client.JoinAsync(join);
             client.SetToken(result.Token);
             file.Token = result.Token;
+            file.Alias = session.AgentId;
+            SaveFile(dir, file); // НЕМЕДЛЕННО: новый токен живёт на диске, даже если канал ниже упадёт
 
-            // Канал: явно задан → зайти; иначе — сохранённый (если сервер его помнит).
+            // Канал: опционален и НЕ фатален — соединение (join) уже состоялось. Ошибка
+            // (нет такого канала) — предупреждение, а не срыв подключения (инцидент 2026-10-15:
+            // channel-join убивал connect и новый токен не персистился → 401 при reconnect).
+            string channelWarning = "";
             if (!string.IsNullOrWhiteSpace(channel))
             {
-                await client.JoinChannelAsync(channel);
-                file.Channel = channel;
+                try
+                {
+                    await client.JoinChannelAsync(channel);
+                    file.Channel = channel;
+                    SaveFile(dir, file);
+                }
+                catch (Exception chEx)
+                {
+                    channelWarning = $" WARNING: could not join channel '{channel}' ({chEx.Message}) — connected, but not seated.";
+                }
             }
-            SaveFile(dir, file);
 
             session._client = client;
             session.Endpoint = endpoint.TrimEnd('/');
-            session.Alias = join.Alias;
+            session.Alias = session.AgentId;
             session.Connected = true;
             session.LastError = null;
             session._channel = null; // актуальное membership придёт с первым who
@@ -183,11 +194,13 @@ public sealed class PigeonSession : IStateAnnouncer
 
             // Авто-активация полки: подключён → тулзы в промпте (docs §12).
             new ShelfState(dir).Activate(ToolGroup.Pigeon);
-            return result.Duplicate
-                ? $"Connected to {endpoint} as @{join.Alias} — NOTE: the server flagged a duplicate id " +
-                  "(another live client with the same session id; one of you is a copy)."
-                : $"Connected to {endpoint} as @{join.Alias}" +
-                  (string.IsNullOrWhiteSpace(file.Channel) ? " — not seated in a channel yet (the owner seats you in the web UI, or use pigeon_channels join)." : $" — channel #{file.Channel}.");
+            var seated = string.IsNullOrWhiteSpace(file.Channel)
+                ? " — not seated in a channel yet (the owner seats you in the web UI, or use pigeon_channels join)."
+                : $" — channel #{file.Channel}.";
+            return (result.Duplicate
+                    ? $"Connected to {endpoint} as @{session.AgentId} — NOTE: the server flagged a duplicate id " +
+                      "(another live client with the same session id; one of you is a copy)."
+                    : $"Connected to {endpoint} as @{session.AgentId}{seated}") + channelWarning;
         }
         catch (Exception ex)
         {
@@ -487,6 +500,29 @@ public sealed class PigeonSession : IStateAnnouncer
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Содержимое pigeon.json для UI (диалог 🕊): предыдущие значения полей.
+    /// null — файла нет (сессия ещё ни разу не подключалась).
+    /// </summary>
+    public static (string Endpoint, string Alias, string Channel, string Status)? LoadConnection(string sessionDir)
+    {
+        var file = LoadFile(sessionDir);
+        return file is null ? null : (file.Endpoint, file.Alias, file.Channel, file.Status);
+    }
+
+    /// <summary>
+    /// Статус в pigeon.json (диалог 🕊, когда НЕ подключены): применится при следующем
+    /// connect (join уносит file.Status). Файл создаётся, если его нет.
+    /// </summary>
+    public static void SaveStatusToFile(string sessionDir, string status)
+    {
+        var dir = Path.GetFullPath(sessionDir);
+        Directory.CreateDirectory(dir);
+        var file = LoadFile(dir) ?? new ConnectionFile();
+        file.Status = status;
+        SaveFile(dir, file);
     }
 
     private static void SaveFile(string dir, ConnectionFile file)
