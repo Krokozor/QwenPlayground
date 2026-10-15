@@ -12,5 +12,7 @@
     <Project Path="tools/QwenPlayground.Harness/QwenPlayground.Harness.csproj" />
     <Project Path="tools/QwenPlayground.Launcher/QwenPlayground.Launcher.csproj" />
     <Project Path="tools/QwenPlayground.Watchdog/QwenPlayground.Watchdog.csproj" />
+    <Project Path="tools/pigeon/Pigeon.Client/Pigeon.Client.csproj" />
+    <Project Path="tools/pigeon/Pigeon.Server/Pigeon.Server.csproj" />
   </Folder>
 </Solution>

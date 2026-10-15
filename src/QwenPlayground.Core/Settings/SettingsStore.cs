@@ -45,6 +45,13 @@ public sealed class AppSettings
     public bool MemoryEnabled { get; set; } = true;
 
     public string Endpoint { get; set; } = "http://127.0.0.1:5001";
+
+    /// <summary>
+    /// Адрес pigeon-сервера (docs/MESSANGER.md). Пусто — pigeon не используется.
+    /// При старте: если задан и у текущей сессии есть pigeon.json — авто-подключение.
+    /// Само подключение делает тул pigeon_connect (адрес передаётся туда же).
+    /// </summary>
+    public string PigeonEndpoint { get; set; } = "";
     public int MaxTokens { get; set; } = 2048;
     public int ContextSize { get; set; } = 32768;
     public string ProjectRoot { get; set; } = Path.Combine(SelfBuildPaths.WorkspaceRoot, "Sandbox");

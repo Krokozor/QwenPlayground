@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Pigeon.Server</RootNamespace>
+    <AssemblyName>pigeon</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Pigeon.Client\Pigeon.Client.csproj" />
+  </ItemGroup>
+
+  <!-- The server is a standalone artifact: copy the web UI into the build output explicitly
+       (Static Web Assets from the source wwwroot only work in the Development environment).
+       Update, not Include — the Web SDK already lists wwwroot as Content. -->
+  <ItemGroup>
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

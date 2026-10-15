@@ -7,6 +7,7 @@ using QwenPlayground.Core.Heartbeat;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.MetaInfo;
+using QwenPlayground.Core.Pigeon;
 using QwenPlayground.Core.Runtime;
 using QwenPlayground.Core.Sessions;
 using QwenPlayground.Core.Settings;
@@ -179,8 +180,9 @@ public sealed class Main
         // ── Main-специфичное ─────────────────────────────────────────────────────────
         // Heartbeat: опрос wake/ и расписания. Период опроса фиксированный (20 с),
         // частота реальных пробуждений — HeartbeatIntervalMinutes; сигналы не ждут расписания.
+        var wakeStore = new WakeSignalStore();
         Heartbeat = new HeartbeatController(
-            new WakeSignalStore(),
+            wakeStore,
             isBusy: () => rt.ChatState.IsBusy,
             heartbeatEnabled: () => AppSettings.Get().HeartbeatEnabled,
             heartbeatIntervalMinutes: () => AppSettings.Get().HeartbeatIntervalMinutes,
@@ -188,6 +190,13 @@ public sealed class Main
             startTurn: hooks.HeartbeatStartTurn,
             flushMemory: hooks.FlushMemory,
             watchdogGuard: WatchdogLauncher.EnsureAlive);
+        // Pigeon (docs/MESSANGER.md): зависимости клея — имя модели (self-report из /props),
+        // занятость чата (mention будит только свободный чат) и wake-сигнал (тот же store,
+        // что опрашивает heartbeat — mention доходит до агента существующим путём).
+        PigeonSession.WireDeps(
+            modelName: () => ServerProps.Name ?? "unknown",
+            isBusy: () => rt.ChatState.IsBusy,
+            wake: wakeStore.Send);
     }
 
     /// <summary>
@@ -308,7 +317,7 @@ public sealed class Main
             ServerProps,
             () => rt.Log,
             () => rt.MemorySurfacer.GetSurfacedForStateBlock(),
-            [rt.MemorySurfacer, new BoardAnnouncer()],
+            [rt.MemorySurfacer, new PigeonStateAnnouncer(w.SessionDirectory), new BoardAnnouncer()],
             () => PairsStore.Pending,
             () => rt.Todo.Peek());
         rt.Pipeline = new PromptPipeline(

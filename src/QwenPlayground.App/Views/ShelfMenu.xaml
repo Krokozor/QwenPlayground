@@ -61,5 +61,16 @@
                 </StackPanel>
             </MenuItem.Header>
         </MenuItem>
+        <MenuItem IsCheckable="True" IsChecked="{Binding PigeonShelf.IsOn, Mode=OneWay}"
+                  Command="{Binding ToggleShelfCommand}" CommandParameter="Pigeon"
+                  ToolTip="{Binding PigeonShelf.Description}">
+            <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Pigeon" />
+                    <TextBlock Text="{Binding PigeonShelf.StatusText}" Margin="8,0,0,0" FontSize="11"
+                               Foreground="{Binding PigeonShelf.StatusBrush}" />
+                </StackPanel>
+            </MenuItem.Header>
+        </MenuItem>
     </StackPanel>
 </UserControl>

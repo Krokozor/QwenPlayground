@@ -217,7 +217,11 @@ public sealed class TurnPipeline
                 OnFactSaved = item => _memorySurfacer.SurfaceOwnWrite(item.Id, item.Content),
                 ContinueLastAssistant = continued is not null,
                 AllowToolExecution = toolsAllowed,
-                ToolDefinitions = toolsAllowed ? _promptAssembler.ToolsFor(prompt.AllowedTools, prompt.DeniedTools) : Array.Empty<ToolDefinition>(),
+                // Список инструментов — провайдер (свежий на итерацию): activate_shelf СЕРЕДИНЕ
+                // хода даёт новую полку со следующей итерации (2026-10-15, луп субагента:
+                // тул «появляется со следующего хода», а у субагента хода-то больше нет).
+                ToolDefinitionsProvider = toolsAllowed ? () => _promptAssembler.ToolsFor(prompt.AllowedTools, prompt.DeniedTools) : null,
+                ToolDefinitions = toolsAllowed ? null : Array.Empty<ToolDefinition>(),
                 Generation = settings.ToGenerationOptions(sampler),
                 MaxIterations = settings.ResolveMaxIterations(sampler),
                 // Nag самопроверки живёт ВНУТРИ state-блока — без блока nag'ать некуда.

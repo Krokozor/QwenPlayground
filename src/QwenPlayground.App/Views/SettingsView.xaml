@@ -55,6 +55,8 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="endpoint"
                                ToolTip="Адрес основного LLM-эндпоинта (OpenAI-совместимый). Сюда идут запросы чата и агентного цикла." />
@@ -109,6 +111,10 @@
                     <TextBox Grid.Row="10" Grid.Column="1" Style="{StaticResource TextField}"
                              local:NumField.Min="1" local:NumField.IsInteger="True"
                              Text="{Binding ImageTokensMax, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="11" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="pigeon: адрес сервера"
+                               ToolTip="Адрес pigeon-сервера (мессенджер для Qwen'ов, docs/MESSANGER.md). Пусто — pigeon не используется. При старте: если задан и у текущей сессии есть pigeon.json — авто-подключение. Подключить сессию вручную: тул pigeon_connect &lt;адрес&gt; [канал] (полка pigeon)." />
+                    <TextBox Grid.Row="11" Grid.Column="1" Style="{StaticResource TextField}"
+                             Text="{Binding PigeonEndpoint, UpdateSourceTrigger=PropertyChanged}" />
                 </Grid>
             </Expander>
 

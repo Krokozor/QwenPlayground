@@ -35,5 +35,11 @@ public enum ToolGroup
     Mcp = 4,
 
     /// <summary>Интуиция: логит-пробы собственной модели (choice/rating/vibe) — «спросить себя».</summary>
-    Intuition = 5
+    Intuition = 5,
+
+    /// <summary>
+    /// Pigeon — мессенджер для Qwen'ов (docs/MESSANGER.md): канал чата на pigeon-сервере.
+    /// Редко используемая способность — на полке; авто-активируется при подключении.
+    /// </summary>
+    Pigeon = 6
 }

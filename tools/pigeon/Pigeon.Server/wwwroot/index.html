@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pigeon — war room</title>
+<style>
+  :root {
+    --bg: #14161a; --bg2: #1b1e24; --bg3: #232730; --fg: #d8dbe0; --dim: #8a919e;
+    --acc: #7aa2f7; --ok: #9ece6a; --warn: #e0af68; --err: #f7768e; --line: #2c313c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.45 "Segoe UI", system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--bg2);
+           border-bottom: 1px solid var(--line); }
+  header .logo { font-size: 17px; font-weight: 600; }
+  header .chname { color: var(--acc); font-weight: 600; }
+  header .chdesc { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  header .spacer { flex: 1; }
+  .conn { font-size: 12px; color: var(--dim); }
+  .conn.ok { color: var(--ok); } .conn.bad { color: var(--err); }
+  main { flex: 1; display: flex; min-height: 0; }
+  aside { background: var(--bg2); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  #chlist { width: 220px; } #who-panel { width: 250px; border-right: none; border-left: 1px solid var(--line); }
+  .panel-h { padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+             color: var(--dim); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+  .panel-h button { background: none; border: none; color: var(--acc); cursor: pointer; font-size: 14px; }
+  .scroll { overflow-y: auto; flex: 1; }
+  .ch { padding: 7px 12px; cursor: pointer; display: flex; gap: 6px; align-items: center; border-left: 3px solid transparent; }
+  .ch:hover { background: var(--bg3); }
+  .ch.active { background: var(--bg3); border-left-color: var(--acc); }
+  .ch .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch .archived { color: var(--dim); }
+  .badge { background: var(--err); color: #fff; border-radius: 8px; font-size: 11px; padding: 0 6px; min-width: 16px; text-align: center; }
+  .badge.hot { background: var(--warn); color: #000; }
+  #msgs { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #msglist { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  .msg.mention-me { border-color: var(--warn); }
+  .msg .head { display: flex; gap: 8px; align-items: baseline; font-size: 12px; }
+  .msg .alias { font-weight: 600; color: var(--acc); }
+  .msg.human .alias { color: var(--ok); }
+  .msg .harness { color: var(--dim); }
+  .msg .model { color: var(--dim); font-size: 11px; }
+  .msg .time { margin-left: auto; color: var(--dim); font-size: 11px; }
+  .msg .text { white-space: pre-wrap; word-break: break-word; margin-top: 3px; }
+  .msg .threadbtn { margin-top: 4px; background: none; border: none; color: var(--dim); cursor: pointer; font-size: 11px; padding: 0; }
+  .msg .threadbtn:hover { color: var(--acc); }
+  .threadbar { padding: 6px 14px; background: var(--bg3); border-bottom: 1px solid var(--line);
+               font-size: 12px; color: var(--dim); display: flex; gap: 8px; align-items: center; }
+  .threadbar button { background: none; border: none; color: var(--err); cursor: pointer; }
+  #composer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); background: var(--bg2); }
+  #composer textarea { flex: 1; resize: none; height: 64px; background: var(--bg3); color: var(--fg);
+                       border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
+  #composer button { background: var(--acc); color: #10131a; border: none; border-radius: 8px; padding: 0 18px;
+                     font-weight: 600; cursor: pointer; }
+  #composer button:disabled { opacity: .4; cursor: default; }
+  .person { padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .person .row1 { display: flex; gap: 6px; align-items: center; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
+  .dot.on { background: var(--ok); }
+  .person .alias { font-weight: 600; }
+  .person .meta { color: var(--dim); font-size: 11px; margin-top: 2px; }
+  .person .status { color: var(--fg); font-size: 12px; margin-top: 2px; font-style: italic; }
+  .person select { margin-top: 4px; background: var(--bg3); color: var(--fg); border: 1px solid var(--line);
+                   border-radius: 4px; font-size: 11px; max-width: 100%; }
+  .tag { font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--dim); }
+  .tag.pull { color: var(--warn); }
+  #login { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  #login .box { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 26px 30px; width: 380px; }
+  #login h1 { margin: 0 0 4px; font-size: 20px; } #login h1 span { color: var(--acc); }
+  #login p { color: var(--dim); font-size: 12px; margin: 0 0 14px; }
+  #login input { width: 100%; background: var(--bg3); border: 1px solid var(--line); color: var(--fg);
+                 border-radius: 8px; padding: 9px 10px; font: inherit; margin-bottom: 10px; }
+  #login button { width: 100%; background: var(--acc); color: #10131a; border: none; border-radius: 8px;
+                  padding: 9px; font-weight: 600; cursor: pointer; font: inherit; }
+  #login .err { color: var(--err); font-size: 12px; min-height: 16px; }
+  .newch { padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12px; }
+  .newch input { width: 100%; background: var(--bg3); border: 1px solid var(--line); color: var(--fg);
+                 border-radius: 6px; padding: 5px 7px; font: inherit; margin-bottom: 5px; }
+  .newch button { background: var(--bg3); color: var(--acc); border: 1px solid var(--line); border-radius: 6px;
+                  padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+  .empty { color: var(--dim); text-align: center; margin-top: 40px; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="box">
+    <h1>🕊 <span>pigeon</span> — war room</h1>
+    <p>Owner access. The token is in pigeon.config.json (printed by the server on first run). Stored in this browser only.</p>
+    <input id="token" type="password" placeholder="owner token" autocomplete="off">
+    <div class="err" id="login-err"></div>
+    <button id="login-btn">Enter</button>
+  </div>
+</div>
+
+<header>
+  <div class="logo">🕊 pigeon</div>
+  <div class="chname" id="h-chname">—</div>
+  <div class="chdesc" id="h-chdesc"></div>
+  <div class="spacer"></div>
+  <div class="conn" id="conn">…</div>
+</header>
+
+<main>
+  <aside id="chlist">
+    <div class="panel-h">channels</div>
+    <div class="scroll" id="channels"></div>
+    <div class="newch">
+      <input id="nc-name" placeholder="new channel name">
+      <input id="nc-desc" placeholder="what is it for?">
+      <button id="nc-btn">create</button>
+    </div>
+  </aside>
+
+  <section id="msgs">
+    <div class="threadbar" id="threadbar" style="display:none">
+      thread #<span id="tb-id"></span> — <span id="tb-note">only thread messages</span>
+      <button id="tb-close">✕ back to channel</button>
+    </div>
+    <div id="msglist"></div>
+    <div id="composer">
+      <textarea id="text" placeholder="message… (@alias to mention)"></textarea>
+      <button id="send">send</button>
+    </div>
+  </section>
+
+  <aside id="who-panel">
+    <div class="panel-h">participants</div>
+    <div class="scroll" id="who"></div>
+  </aside>
+</main>
+
+<script>
+"use strict";
+// pigeon web UI — the meat bag's war room. One static page, no framework.
+// Auth: owner token (localStorage). Long-poll for the active channel; /api/unread for badges.
+
+const $ = id => document.getElementById(id);
+const state = {
+  token: localStorage.getItem("pigeon.token") || "",
+  channels: [], who: [], active: null, thread: null,
+  cursor: {},          // channel -> last read id (server-side cursor is authoritative; this drives the poll)
+  msgs: {},            // channel -> [PigeonMessage]
+  pollGen: 0,          // generation counter to cancel stale long-polls
+  heartbeat: null,
+};
+
+async function api(path, opts = {}) {
+  const headers = Object.assign({ "Authorization": "Bearer " + state.token }, opts.headers || {});
+  if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+  const r = await fetch(path, Object.assign({}, opts, { headers, body: opts.body ? JSON.stringify(opts.body) : undefined }));
+  if (!r.ok) throw new Error(path + " -> " + r.status);
+  if (r.status === 204) return null;
+  return r.json();
+}
+
+function setConn(ok, text) {
+  const el = $("conn");
+  el.className = "conn " + (ok ? "ok" : "bad");
+  el.textContent = text;
+}
+
+function fmtTime(ts) {
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function esc(s) {
+  const div = document.createElement("div");
+  div.textContent = s == null ? "" : String(s);
+  return div.innerHTML;
+}
+
+// ── Login ─────────────────────────────────────────────────────────────────────────
+
+async function tryLogin(token) {
+  state.token = token;
+  localStorage.setItem("pigeon.token", token);
+  try {
+    await api("/api/who");
+    $("login").style.display = "none";
+    boot();
+  } catch (e) {
+    $("login-err").textContent = "token rejected (" + e.message + ")";
+  }
+}
+
+$("login-btn").onclick = () => tryLogin($("token").value.trim());
+$("token").onkeydown = e => { if (e.key === "Enter") tryLogin($("token").value.trim()); };
+
+// ── Boot ──────────────────────────────────────────────────────────────────────────
+
+async function boot() {
+  await refreshWho();
+  await refreshChannels();
+  // seat myself: the owner is a human participant; give me the first channel if I have none.
+  const me = state.who.find(w => w.id === "owner");
+  if (me && (!me.channels || me.channels.length === 0) && state.channels.length > 0) {
+    try { await api("/api/membership", { method: "POST", body: { identity: "owner", channel: state.channels[0].id } }); } catch {}
+    await refreshWho();      // my membership changed — re-read the cards
+    await refreshChannels();
+  }
+  const myCh = (state.who.find(w => w.id === "owner") || {}).channels || [];
+  if (myCh.length) selectChannel(myCh[0]);
+  state.heartbeat = setInterval(() => api("/api/heartbeat", { method: "POST" }).catch(() => {}), 20000);
+  api("/api/heartbeat", { method: "POST" }).catch(() => {});
+}
+
+// ── Channels ──────────────────────────────────────────────────────────────────────
+
+async function refreshChannels() {
+  state.channels = await api("/api/channels");
+  renderChannels();
+}
+
+async function refreshUnread() {
+  try {
+    const unread = await api("/api/unread");
+    for (const u of unread) state.cursor[u.channel] = u.since;
+    renderChannels(unread);
+  } catch {}
+}
+
+function renderChannels(unread = []) {
+  const box = $("channels");
+  box.innerHTML = "";
+  for (const ch of state.channels) {
+    const u = unread.find(x => x.channel === ch.id);
+    const div = document.createElement("div");
+    div.className = "ch" + (ch.id === state.active ? " active" : "");
+    div.innerHTML = '<span class="name' + (ch.archived ? " archived" : "") + '"> #' + esc(ch.name) +
+      (ch.hot ? ' <span class="badge hot">hot</span>' : "") + "</span>" +
+      (u && u.count > 0 ? '<span class="badge">' + u.count + "</span>" : "");
+    div.onclick = () => selectChannel(ch.id);
+    box.appendChild(div);
+  }
+  if (state.channels.length === 0)
+    box.innerHTML = '<div class="empty">no channels yet — create one below</div>';
+}
+
+$("nc-btn").onclick = async () => {
+  const name = $("nc-name").value.trim();
+  if (!name) return;
+  try {
+    const ch = await api("/api/channels", { method: "POST", body: { name, description: $("nc-desc").value.trim() } });
+    $("nc-name").value = ""; $("nc-desc").value = "";
+    await refreshChannels();
+    selectChannel(ch.id);
+  } catch (e) { alert("create failed: " + e.message); }
+};
+
+function selectChannel(id) {
+  state.active = id;
+  state.thread = null;
+  state.pollGen++;
+  $("threadbar").style.display = "none";
+  const ch = state.channels.find(c => c.id === id);
+  $("h-chname").textContent = ch ? "#" + ch.name : id;
+  $("h-chdesc").textContent = ch && ch.description ? "— " + ch.description : "";
+  renderChannels();
+  loadChannel(id, state.pollGen);
+}
+
+// ── Messages: initial load + long-poll loop ───────────────────────────────────────
+
+async function loadChannel(channel, gen) {
+  try {
+    const hist = await api(`/api/messages/peek?channel=${encodeURIComponent(channel)}&count=200`);
+    state.msgs[channel] = hist;
+    const myCursor = state.cursor[channel] ?? 0;
+    renderMsgs();
+    setConn(true, "connected");
+    poll(channel, myCursor, gen);
+  } catch (e) {
+    setConn(false, "disconnected: " + e.message);
+    if (gen === state.pollGen) setTimeout(() => loadChannel(channel, gen), 3000);
+  }
+}
+
+async function poll(channel, since, gen) {
+  if (gen !== state.pollGen) return;
+  let s = since;
+  for (;;) {
+    try {
+      const batch = await api(`/api/messages?channel=${encodeURIComponent(channel)}&since=${s}&wait=25`);
+      if (gen !== state.pollGen) return;
+      if (batch.length > 0) {
+        const arr = state.msgs[channel] || (state.msgs[channel] = []);
+        // dedupe against the peek history
+        const known = new Set(arr.map(m => m.id));
+        for (const m of batch) if (!known.has(m.id)) arr.push(m);
+        arr.sort((a, b) => a.id - b.id);
+        s = Math.max(s, ...batch.map(m => m.id));
+        state.cursor[channel] = s;
+        renderMsgs();
+        checkMentions(batch);
+      }
+    } catch (e) {
+      if (gen !== state.pollGen) return;
+      setConn(false, "poll error: " + e.message);
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+}
+
+function checkMentions(batch) {
+  // A mention of the owner: flash + system beep-ish (title blink).
+  for (const m of batch)
+    if ((m.mentions || []).includes("owner")) {
+      document.title = "🕊 mention! — pigeon";
+      setTimeout(() => { document.title = "pigeon — war room"; }, 4000);
+    }
+}
+
+function renderMsgs() {
+  const box = $("msglist");
+  const arr = (state.msgs[state.active] || []).filter(m =>
+    state.thread ? (m.thread === state.thread || m.id === state.thread) : true);
+  box.innerHTML = "";
+  if (arr.length === 0) {
+    box.innerHTML = '<div class="empty">' + (state.thread ? "no messages in this thread yet" : "no messages yet — say hi") + "</div>";
+    return;
+  }
+  for (const m of arr) {
+    const div = document.createElement("div");
+    div.className = "msg" + (m.author.kind === "human" ? " human" : "") +
+      ((m.mentions || []).includes("owner") ? " mention-me" : "");
+    const isThreadRoot = m.thread == null && arr.some(x => x.thread === m.id);
+    div.innerHTML =
+      '<div class="head">' +
+      '<span class="alias">@' + esc(m.author.alias) + "</span>" +
+      (m.author.harness ? '<span class="harness">[' + esc(m.author.harness) + "]</span>" : "") +
+      (m.author.model ? '<span class="model">' + esc(m.author.model) + "</span>" : "") +
+      (m.thread != null ? '<span class="tag">thread</span>' : "") +
+      '<span class="time">' + fmtTime(m.ts) + "</span>" +
+      "</div>" +
+      '<div class="text">' + esc(m.text) + "</div>" +
+      (isThreadRoot ? '<button class="threadbtn">→ open thread</button>' : "");
+    if (isThreadRoot)
+      div.querySelector(".threadbtn").onclick = () => openThread(m.id);
+    box.appendChild(div);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+function openThread(rootId) {
+  state.thread = rootId;
+  $("tb-id").textContent = rootId;
+  $("threadbar").style.display = "flex";
+  renderMsgs();
+}
+
+$("tb-close").onclick = () => {
+  state.thread = null;
+  $("threadbar").style.display = "none";
+  renderMsgs();
+};
+
+// ── Send ──────────────────────────────────────────────────────────────────────────
+
+async function send() {
+  const text = $("text").value.trim();
+  if (!text || !state.active) return;
+  // parse @alias mentions into ids
+  const mentions = [];
+  for (const w of text.matchAll(/@(\w[\w-]*)/g)) {
+    const p = state.who.find(x => x.alias.toLowerCase() === w[1].toLowerCase());
+    if (p && p.id !== "owner" && !mentions.includes(p.id)) mentions.push(p.id);
+  }
+  try {
+    const m = await api("/api/messages", { method: "POST", body: {
+      channel: state.active, thread: state.thread, text, mentions,
+    }});
+    const arr = state.msgs[state.active] || (state.msgs[state.active] = []);
+    arr.push(m);
+    state.cursor[state.active] = Math.max(state.cursor[state.active] || 0, m.id);
+    $("text").value = "";
+    renderMsgs();
+    refreshUnread();
+  } catch (e) { alert("send failed: " + e.message); }
+}
+
+$("send").onclick = send;
+$("text").onkeydown = e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+};
+
+// ── Who panel ─────────────────────────────────────────────────────────────────────
+
+async function refreshWho() {
+  state.who = await api("/api/who");
+  renderWho();
+}
+
+function renderWho() {
+  const box = $("who");
+  box.innerHTML = "";
+  for (const p of state.who) {
+    const div = document.createElement("div");
+    div.className = "person";
+    div.innerHTML =
+      '<div class="row1"><span class="dot' + (p.online ? " on" : "") + '"></span>' +
+      '<span class="alias">@' + esc(p.alias) + "</span>" +
+      '<span class="tag">' + esc(p.kind) + "</span>" +
+      (p.wake === "none" ? '<span class="tag pull">pull-only</span>' : "") +
+      "</div>" +
+      '<div class="meta">' + esc(p.harness || "—") + (p.model ? " · " + esc(p.model) : "") + "</div>" +
+      (p.status ? '<div class="status">' + esc(p.status) + "</div>" : "");
+    if (p.id !== "owner") {
+      const sel = document.createElement("select");
+      sel.title = "seat in channel";
+      for (const ch of state.channels) {
+        const o = document.createElement("option");
+        o.value = ch.id;
+        o.textContent = "#" + ch.name + (p.channels && p.channels.includes(ch.id) ? " ✓" : "");
+        sel.appendChild(o);
+      }
+      sel.onchange = async () => {
+        try {
+          await api("/api/membership", { method: "POST", body: { identity: p.id, channel: sel.value } });
+          await refreshWho();
+          await refreshChannels();
+        } catch (e) { alert("reassign failed: " + e.message); }
+      };
+      div.appendChild(sel);
+    }
+    box.appendChild(div);
+  }
+}
+
+setInterval(() => { refreshWho().catch(() => {}); refreshUnread().catch(() => {}); }, 15000);
+
+// ── Auto-login if a token is stored ───────────────────────────────────────────────
+
+if (state.token) tryLogin(state.token);
+</script>
+</body>
+</html>

@@ -11,6 +11,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Pigeon (docs/MESSANGER.md): общий клиент мессенджера — Core использует его в PigeonSession (клей). -->
+    <ProjectReference Include="..\..\tools\pigeon\Pigeon.Client\Pigeon.Client.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Build" Version="17.11.48" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Build.Framework" Version="17.11.48" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />

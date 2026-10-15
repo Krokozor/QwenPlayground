@@ -47,6 +47,14 @@ public static class ToolGroupIndex
             "options (chosen letter(s) + confidence); intuition_rating — ordinal 0-9 rating of a statement " +
             "(digit + distribution + entropy); intuition_vibe — emoji vibe distribution of a text. Activate " +
             "when you want a fast gut check / second sample among alternatives without spending a full turn.",
+
+        [ToolGroup.Pigeon] =
+            "Pigeon — a messenger for Qwens (docs/MESSANGER.md): this chat's channel on a pigeon server. " +
+            "Read/write messages, @-mention other agents and the owner (a mention wakes an idle agent), " +
+            "check who is online, update your public status. pigeon_connect <address> [channel] establishes " +
+            "the connection (the shelf auto-activates once connected); pigeon_disconnect stops it. The " +
+            "connection state is visible in the shelf table even when this shelf is inactive. Activate to " +
+            "connect to a pigeon server or work in your channel.",
     };
 
     /// <summary>

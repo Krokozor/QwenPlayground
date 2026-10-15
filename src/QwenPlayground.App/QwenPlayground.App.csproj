@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\QwenPlayground.Core\QwenPlayground.Core.csproj" />
+    <!-- Pigeon (docs/MESSANGER.md): тулы полки pigeon используют клиентские модели напрямую. -->
+    <ProjectReference Include="..\..\tools\pigeon\Pigeon.Client\Pigeon.Client.csproj" />
   </ItemGroup>
 
   <ItemGroup>

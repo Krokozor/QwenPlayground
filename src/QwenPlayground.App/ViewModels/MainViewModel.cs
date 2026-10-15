@@ -160,6 +160,21 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         window.Closed += (_, _) => _subagentWindow = null;
     }
 
+    /// <summary>
+    /// Pigeon: авто-подключение при старте (endpoint из настроек + pigeon.json сессии).
+    /// Ошибка не роняет старт — лог в RebuildEventLog.App, пользователь подключится тулом.
+    /// </summary>
+    private async Task AutoConnectPigeonAsync(string dir, string endpoint) {
+        try {
+            var error = await QwenPlayground.Core.Pigeon.PigeonSession.ConnectAsync(dir, endpoint);
+            RebuildEventLog.App(error is null
+                ? "pigeon: auto-connect ok"
+                : $"pigeon: auto-connect failed: {error}");
+        } catch (Exception ex) {
+            RebuildEventLog.App($"pigeon: auto-connect error: {ex.Message}");
+        }
+    }
+
     public MainViewModel() {
         StartupTrace.Log("MainViewModel ctor: begin");
         // Композиционный корень (Core/Main): граф сервисов собирается там (единственное
@@ -186,6 +201,18 @@ public partial class MainViewModel : ObservableObject, IChatHost {
             Settings.ScheduleSave, () => SelectedTabIndex = SettingsTabIndex,
             _main.KvCache, _main.Subagents);
         Chat.Initialize();
+        // Pigeon (docs/MESSANGER.md): авто-подключение при старте — endpoint настроен и у
+        // текущей сессии есть файл подключения (pigeon.json). Fire-and-forget на UI-контексте:
+        // long-poll-цикл должен жить на UI-потоке (инвариант агентного кода).
+        var pigeonEndpoint = AppSettings.Get().PigeonEndpoint;
+        if (!string.IsNullOrWhiteSpace(pigeonEndpoint))
+        {
+            var pigeonDir = _main.Sessions.DirectoryFor(_main.Sessions.CurrentId);
+            if (File.Exists(Path.Combine(pigeonDir, "pigeon.json")))
+            {
+                _ = AutoConnectPigeonAsync(pigeonDir, pigeonEndpoint);
+            }
+        }
         TurnsPanel = new TurnPanel(_main.Background.Turns);
 
         // Субагенты (spawn_subagent): исполнитель спавна живёт в UI (окно + ход),

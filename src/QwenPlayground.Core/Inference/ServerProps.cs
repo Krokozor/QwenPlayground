@@ -27,6 +27,7 @@ public sealed class ServerProps
 
     private string? _mediaMarker;
     private int? _nContext;
+    private string? _name;
     private DateTime _fetchedAtUtc;
     private bool _fetched;
 
@@ -35,6 +36,12 @@ public sealed class ServerProps
 
     /// <summary>Реальный n_ctx сервера (null — неизвестен).</summary>
     public int? NContext => _nContext;
+
+    /// <summary>
+    /// Имя модели с сервера (llama.cpp /props → "name"). Self-report для pigeon-идентичности
+    /// (docs/MESSANGER.md §4: «с кем имею дело»): не угадываем, а спрашиваем у сервера.
+    /// </summary>
+    public string? Name => _name;
 
     /// <summary>Последний фактический подсчёт промпта сервером; 0 = ещё не отвечал.</summary>
     public int LastPromptTokens { get; private set; }
@@ -89,6 +96,10 @@ public sealed class ServerProps
                 marker.ValueKind == JsonValueKind.String)
             {
                 _mediaMarker = marker.GetString();
+            }
+            if (root.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+            {
+                _name = name.GetString();
             }
             // llama.cpp /props: n_ctx лежит на верхнем уровне или в default_generation_settings.
             if (root.TryGetProperty("n_ctx", out var nTop) && nTop.ValueKind == JsonValueKind.Number)

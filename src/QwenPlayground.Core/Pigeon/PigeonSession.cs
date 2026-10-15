@@ -1,0 +1,492 @@
+using System.Collections.Concurrent;
+using System.Text.Json;
+using Pigeon.Client;
+using QwenPlayground.Core.Chat;
+using QwenPlayground.Core.MetaInfo;
+using QwenPlayground.Core.Tools;
+
+namespace QwenPlayground.Core.Pigeon;
+
+/// <summary>
+/// Пигвин-клей харнесса (docs/MESSANGER.md §12–13): резидентный клиент pigeon-сервера
+/// на сессию. Идентичность = чат: id агента — имя каталога сессии (GUID; main → "main"),
+/// модель — self-report из /props, состояние подключения — &lt;sessionDir&gt;/pigeon.json
+/// (endpoint, token, alias, channel, status).
+///
+/// Цикл long-poll живёт на UI-потоке (async, не блокирует): mention этой сессии будит чат
+/// через существующий wake-путь (только когда чат свободен), новые сообщения копятся в
+/// счётчике «new» и видны в state-блоке (IStateAnnouncer, метка "pigeon"). pigeon_read
+/// сбрасывает счётчик — агент «увидел».
+/// </summary>
+public sealed class PigeonSession : IStateAnnouncer
+{
+    /// <summary>Реестр живых подключений: каталог сессии → сессия.</summary>
+    private static readonly ConcurrentDictionary<string, PigeonSession> BySessionDir =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Зависимости, прошиваемые приложением (UI-поток, Main): имя модели (self-report),
+    /// занятость чата (wake только когда свободен), wake-сигнал (путь heartbeat/wake/).
+    /// null — pigeon не проведён (тесты): connect вернёт ошибку.
+    /// </summary>
+    public static Func<string?>? ModelNameProvider { get; private set; }
+    public static Func<bool>? IsBusyProvider { get; private set; }
+    public static Action<string>? WakeProvider { get; private set; }
+
+    public static void WireDeps(Func<string?> modelName, Func<bool> isBusy, Action<string> wake)
+    {
+        ModelNameProvider = modelName;
+        IsBusyProvider = isBusy;
+        WakeProvider = wake;
+    }
+
+    /// <summary>Живое подключение каталога сессии или null (не подключено).</summary>
+    public static PigeonSession? For(string? sessionDir) =>
+        sessionDir is null ? null : BySessionDir.TryGetValue(Path.GetFullPath(sessionDir), out var s) ? s : null;
+
+    /// <summary>
+    /// Содержимое pigeon.json — состояние подключения сессии (персистентно: reconnect
+    /// после рестарта мгновенный, токен не переиздаётся).
+    /// </summary>
+    private sealed class ConnectionFile
+    {
+        public string Endpoint { get; set; } = "";
+        public string Token { get; set; } = "";
+        public string Alias { get; set; } = "";
+        public string Channel { get; set; } = "";
+        public string Status { get; set; } = "";
+    }
+
+    private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
+
+    public string SessionDir { get; }
+
+    /// <summary>Id агента на сервере: имя каталога сессии (GUID; main → "main").</summary>
+    public string AgentId { get; }
+
+    public string? Endpoint { get; private set; }
+    public string Alias { get; private set; } = "";
+    public bool Connected { get; private set; }
+    public string? LastError { get; private set; }
+
+    public string FilePath => Path.Combine(SessionDir, "pigeon.json");
+
+    // ── Живое состояние (UI-поток) ──────────────────────────────────────────────────
+
+    private PigeonClient? _client;
+    private CancellationTokenSource? _cts;
+    private Task? _pollLoop;
+    private long _cursor;
+    private DateTime _lastHeartbeat = DateTime.MinValue;
+    private DateTime _lastWho = DateTime.MinValue;
+    private PigeonIdentity[] _who = [];
+    private string? _channel;
+    private string? _channelDescription;
+    private int _newCount;
+    private (string Alias, string Text)? _latest;
+    private (string Alias, string Channel, string Text)? _pendingMention;
+
+    /// <summary>Сколько новых сообщений с момента последнего pigeon_read (state-строка).</summary>
+    public int NewCount => _newCount;
+
+    /// <summary>Последнее сообщение (автор + текст) — для state-строки.</summary>
+    public (string Alias, string Text)? Latest => _latest;
+
+    /// <summary>Непрочитанный mention (автор, канал, текст) — будит чат, пока не обработан.</summary>
+    public (string Alias, string Channel, string Text)? PendingMention => _pendingMention;
+
+    /// <summary>Текущий канал (из membership на сервере; null — меня ещё не посадили).</summary>
+    public string? Channel => _channel;
+
+    private PigeonSession(string sessionDir)
+    {
+        SessionDir = sessionDir;
+        AgentId = Path.GetFileName(sessionDir.TrimEnd(Path.DirectorySeparatorChar));
+    }
+
+    // ── Connect / disconnect ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Подключить сессию к серверу (или переподключить): pigeon.json, join (idempotent),
+    /// опционально канал, запуск long-poll, авто-активация полки pigeon.
+    /// Возвращает текст ошибки или null (успех). Запускать на UI-потоке.
+    /// </summary>
+    public static async Task<string?> ConnectAsync(string sessionDir, string endpoint,
+        string? channel = null, string? alias = null)
+    {
+        if (ModelNameProvider is null)
+        {
+            return "pigeon is not wired in this process (WireDeps) — cannot connect.";
+        }
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            return "address is required: pigeon_connect <http://host:port> [channel]";
+        }
+        var dir = Path.GetFullPath(sessionDir);
+        Directory.CreateDirectory(dir);
+        var session = BySessionDir.GetOrAdd(dir, static d => new PigeonSession(d));
+        if (session.Connected && session.Endpoint == endpoint.TrimEnd('/'))
+        {
+            return $"Already connected to {endpoint}.";
+        }
+
+        var file = LoadFile(dir) ?? new ConnectionFile { Endpoint = endpoint };
+        file.Endpoint = endpoint;
+        var client = new PigeonClient(endpoint);
+        if (file.Token.Length > 0)
+        {
+            client.SetToken(file.Token);
+        }
+        try
+        {
+            var model = ModelNameProvider() ?? "unknown";
+            var join = new PigeonJoinRequest
+            {
+                Id = session.AgentId,
+                Alias = !string.IsNullOrWhiteSpace(alias) ? alias
+                    : !string.IsNullOrWhiteSpace(file.Alias) ? file.Alias
+                    : $"qwen-{session.AgentId[^Math.Min(4, session.AgentId.Length)..]}",
+                Kind = "agent",
+                Harness = "qwen",
+                Model = model,
+                Status = file.Status,
+                Wake = "mention",
+                Token = file.Token.Length > 0 ? file.Token : null,
+            };
+            var result = await client.JoinAsync(join);
+            client.SetToken(result.Token);
+            file.Token = result.Token;
+
+            // Канал: явно задан → зайти; иначе — сохранённый (если сервер его помнит).
+            if (!string.IsNullOrWhiteSpace(channel))
+            {
+                await client.JoinChannelAsync(channel);
+                file.Channel = channel;
+            }
+            SaveFile(dir, file);
+
+            session._client = client;
+            session.Endpoint = endpoint.TrimEnd('/');
+            session.Alias = join.Alias;
+            session.Connected = true;
+            session.LastError = null;
+            session._channel = null; // актуальное membership придёт с первым who
+            session._channelDescription = null;
+            session._newCount = 0;
+            session._latest = null;
+            session._pendingMention = null;
+            session._cursor = 0;
+            session.StartLoop();
+
+            // Авто-активация полки: подключён → тулзы в промпте (docs §12).
+            new ShelfState(dir).Activate(ToolGroup.Pigeon);
+            return result.Duplicate
+                ? $"Connected to {endpoint} as @{join.Alias} — NOTE: the server flagged a duplicate id " +
+                  "(another live client with the same session id; one of you is a copy)."
+                : $"Connected to {endpoint} as @{join.Alias}" +
+                  (string.IsNullOrWhiteSpace(file.Channel) ? " — not seated in a channel yet (the owner seats you in the web UI, or use pigeon_channels join)." : $" — channel #{file.Channel}.");
+        }
+        catch (Exception ex)
+        {
+            client.Dispose();
+            return $"connect failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Отключить: остановить циклы; pigeon.json сохранить (reconnect мгновенный).
+    /// На сервере идентичность уйдёт в оффлайн сама (нет heartbeat'ов).
+    /// </summary>
+    public string Disconnect()
+    {
+        if (!Connected && _client is null)
+        {
+            return "Not connected.";
+        }
+        StopLoops();
+        _client?.Dispose();
+        _client = null;
+        Connected = false;
+        _channel = null;
+        _pendingMention = null;
+        return $"Disconnected from {Endpoint}. The connection file is kept — pigeon_connect reconnects instantly.";
+    }
+
+    // ── Циклы (UI-поток) ────────────────────────────────────────────────────────────
+
+    private void StartLoop()
+    {
+        StopLoops();
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+        // Без Task.Run: async-машина остаётся на UI-контексте (инвариант: агентный код на UI-потоке).
+        _pollLoop = PollLoopAsync(ct);
+    }
+
+    private void StopLoops()
+    {
+        try
+        {
+            _cts?.Cancel();
+            _cts?.Dispose();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        _cts = null;
+        _pollLoop = null;
+    }
+
+    private async Task PollLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            var client = _client;
+            if (client is null)
+            {
+                break;
+            }
+            try
+            {
+                // Presence: heartbeat каждые 20 с (онлайн = last_seen < 45 с).
+                if ((DateTime.UtcNow - _lastHeartbeat).TotalSeconds >= 20)
+                {
+                    await client.HeartbeatAsync(ct);
+                    _lastHeartbeat = DateTime.UtcNow;
+                }
+
+                // Карточки участников (для who + своего membership): каждые 30 с.
+                if ((DateTime.UtcNow - _lastWho).TotalSeconds >= 30)
+                {
+                    _who = await client.WhoAsync(ct);
+                    _lastWho = DateTime.UtcNow;
+                    var me = _who.FirstOrDefault(p => p.Id == AgentId);
+                    if (me is not null)
+                    {
+                        Alias = me.Alias; // сервер мог уникализировать алиас
+                        _channel = me.Channels.FirstOrDefault();
+                    }
+                }
+
+                if (_channel is null)
+                {
+                    // Меня ещё не посадили в канал — ждём (owner в web UI или pigeon_channels join).
+                    await Task.Delay(15_000, ct);
+                    continue;
+                }
+
+                // Описание канала — в state-строку (контекст комнаты без чтения истории).
+                var channels = await client.ChannelsAsync(ct);
+                _channelDescription = channels.FirstOrDefault(c => c.Id == _channel)?.Description;
+
+                // Long-poll: новые сообщения (до 25 с ожидания).
+                var batch = await client.ReadAsync(_channel, _cursor, 25, ct);
+                foreach (var m in batch)
+                {
+                    _cursor = Math.Max(_cursor, m.Id);
+                    HandleIncoming(m);
+                }
+                TryWakeIfIdle(client);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                try
+                {
+                    await Task.Delay(5_000, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    private void HandleIncoming(PigeonMessage m)
+    {
+        _newCount++;
+        _latest = (m.Author.Alias, m.Text);
+        if (m.Mentions.Contains(AgentId, StringComparer.Ordinal))
+        {
+            _pendingMention = (m.Author.Alias, m.Channel, m.Text);
+        }
+    }
+
+    /// <summary>
+    /// Mention этой сессии + свободный чат → wake-сигнал (путь heartbeat: следующий тик,
+    /// ≤20 с). Mention НЕ сбрасываем до pigeon_read (агент прочитал — значит обработал);
+    /// но повторно будить по тому же mention не будем — после отправки сигнала помечаем
+    /// его «будил» (внутренний флаг через null'ирование после wake).
+    /// </summary>
+    private void TryWakeIfIdle(PigeonClient client)
+    {
+        if (_pendingMention is not { } mention)
+        {
+            return;
+        }
+        if (IsBusyProvider is null || IsBusyProvider())
+        {
+            return; // чат занят — mention дождётся (виден в state-строке)
+        }
+        _pendingMention = null; // разбужен — не будим повторно по тому же сообщению
+        WakeProvider?.Invoke(
+            $"[pigeon] You were mentioned in #{mention.Channel} by @{mention.Alias}: \"{mention.Text}\". " +
+            "Read the channel with pigeon_read and reply with pigeon_send if a reply is due — " +
+            "ending the turn without replying is also fine (participation is optional).");
+    }
+
+    // ── Операции (вызываются из тулов) ──────────────────────────────────────────────
+
+    private PigeonClient ClientOrThrow()
+    {
+        if (_client is not { } client)
+        {
+            throw new InvalidOperationException("not connected — use pigeon_connect <address>");
+        }
+        return client;
+    }
+
+    /// <summary>
+    /// Прочитать последние N сообщений своего канала (peek — история, не только новое).
+    /// Сбрасывает счётчики «new»/mention: агент увидел.
+    /// </summary>
+    public async Task<PigeonMessage[]> ReadAsync(int count)
+    {
+        var client = ClientOrThrow();
+        if (_channel is null)
+        {
+            return [];
+        }
+        var messages = await client.PeekAsync(_channel, count);
+        _newCount = 0;
+        _latest = null;
+        _pendingMention = null;
+        return messages;
+    }
+
+    public async Task<PigeonMessage> SendAsync(string text, string[] mentions, long? thread, long? replyTo)
+    {
+        var client = ClientOrThrow();
+        if (_channel is null)
+        {
+            throw new InvalidOperationException("not seated in a channel yet (pigeon_channels join)");
+        }
+        return await client.SendAsync(new PigeonSendRequest
+        {
+            Channel = _channel,
+            Text = text,
+            Mentions = mentions,
+            Thread = thread,
+            ReplyTo = replyTo,
+        });
+    }
+
+    public async Task SetStatusAsync(string status)
+    {
+        var client = ClientOrThrow();
+        await client.SetStatusAsync(status);
+        var file = LoadFile(SessionDir);
+        if (file is not null)
+        {
+            file.Status = status;
+            SaveFile(SessionDir, file);
+        }
+    }
+
+    public Task<PigeonIdentity[]> WhoAsync() => ClientOrThrow().WhoAsync();
+
+    public Task<PigeonChannel[]> ChannelsAsync() => ClientOrThrow().ChannelsAsync();
+
+    public async Task JoinChannelAsync(string channelId)
+    {
+        var client = ClientOrThrow();
+        await client.JoinChannelAsync(channelId);
+        var file = LoadFile(SessionDir);
+        if (file is not null)
+        {
+            file.Channel = channelId;
+            SaveFile(SessionDir, file);
+        }
+        _channel = channelId; // не ждать 30-с who
+    }
+
+    // ── State-блок (IStateAnnouncer) ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Строка pigeon в state-блоке (метка "pigeon"): канал + описание, новые сообщения,
+    /// mention. Не подключён — тишина. Формат (docs §10):
+    ///   pigeon: #general — "what is this channel for"; 2 new (latest @builder: "diff is ready")
+    ///   pigeon: mention: @owner in #general: "check the build"
+    /// </summary>
+    public IReadOnlyList<StateAnnounce> GetAnnounces()
+    {
+        if (!Connected)
+        {
+            return [];
+        }
+        var messages = new List<string>(2);
+        if (_channel is null)
+        {
+            messages.Add($"connected to {Endpoint} — not seated in a channel yet " +
+                         "(the owner seats you in the web UI, or use pigeon_channels join)");
+        }
+        else
+        {
+            var line = $"#{_channel}" + (_channelDescription is { Length: > 0 } d ? $" — \"{d}\"" : "");
+            if (_newCount > 0)
+            {
+                line += _latest is { } latest
+                    ? $"; {_newCount} new (latest @{latest.Alias}: \"{Truncate(latest.Text)}\")"
+                    : $"; {_newCount} new";
+            }
+            if (LastError is { Length: > 0 } err && _newCount == 0)
+            {
+                line += $"; poll error: {Truncate(err)}";
+            }
+            messages.Add(line);
+            if (_pendingMention is { } mention)
+            {
+                messages.Add($"mention: @{mention.Alias} in #{mention.Channel}: \"{Truncate(mention.Text)}\"");
+            }
+        }
+        return [new StateAnnounce { Label = "pigeon", Messages = messages, Source = this }];
+    }
+
+    private static string Truncate(string text, int max = 120)
+    {
+        var oneLine = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return oneLine.Length <= max ? oneLine : oneLine[..max] + "…";
+    }
+
+    // ── pigeon.json ─────────────────────────────────────────────────────────────────
+
+    private static ConnectionFile? LoadFile(string dir)
+    {
+        var path = Path.Combine(dir, "pigeon.json");
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+        try
+        {
+            return JsonSerializer.Deserialize<ConnectionFile>(File.ReadAllText(path), Json);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void SaveFile(string dir, ConnectionFile file)
+    {
+        var path = Path.Combine(dir, "pigeon.json");
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(file, Json));
+        File.Move(tmp, path, overwrite: true);
+    }
+}

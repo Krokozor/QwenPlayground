@@ -94,6 +94,15 @@ public sealed class SettingsViewModel : ObservableObject {
         }
     }
 
+    /// <summary>
+    /// Адрес pigeon-сервера (docs/MESSANGER.md). Пусто — pigeon не используется.
+    /// Авто-подключение при старте: задан + у текущей сессии есть pigeon.json.
+    /// </summary>
+    public string PigeonEndpoint {
+        get => S.PigeonEndpoint;
+        set => Set(S.PigeonEndpoint, value, (s, v) => s.PigeonEndpoint = v);
+    }
+
     public int MaxTokens {
         get => S.MaxTokens;
         set => Set(S.MaxTokens, value, (s, v) => s.MaxTokens = v);

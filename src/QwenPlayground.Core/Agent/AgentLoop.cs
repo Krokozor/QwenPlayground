@@ -69,6 +69,7 @@ public sealed class AgentLoop
         var continueLastAssistant = request.ContinueLastAssistant;
         var allowToolExecution = request.AllowToolExecution;
         var toolDefinitions = request.ToolDefinitions;
+        var toolDefinitionsProvider = request.ToolDefinitionsProvider;
         var stateProvider = request.StateProvider;
         var systemPromptProvider = request.SystemPromptProvider;
         var toolExecutor = request.ToolExecutor;
@@ -80,7 +81,6 @@ public sealed class AgentLoop
         using var client = request.CompletionSourceFactory?.Invoke(endpoint) ?? new LlmCompletionClient(endpoint);
         var nags = 0;
         var iterationsSinceSanity = 0;
-        var definitions = toolDefinitions ?? _tools.Definitions;
         IReadOnlyList<string>? multimodalData = null;
 
         var bound = maxIterations > 0 ? maxIterations : int.MaxValue;
@@ -112,6 +112,12 @@ public sealed class AgentLoop
                 await contextBudgetGuard(cancellationToken);
                 DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: context budget guard done");
             }
+
+            // Список инструментов: свежий на КАЖДОЙ итерации (ToolDefinitionsProvider) — после
+            // activate_shelf СЕРЕДИНЕ хода новая полка доступна со следующей итерации
+            // (системный промпт и так пересобирается на итерацию — список следует за ним).
+            // null-провайдер — снапшот старта хода (ToolDefinitions).
+            var definitions = toolDefinitionsProvider?.Invoke() ?? toolDefinitions ?? _tools.Definitions;
 
             string prompt;
             ChatMessage? continued = null;
@@ -272,11 +278,11 @@ public sealed class AgentLoop
             ChatMessage? FindById(int id) =>
                 conversation.FirstOrDefault(m => m.Id == id && m.Role != ChatRole.System);
             // Авторизация (фаза 2, план 2026-09-28): разрешено ровно то, что рекламируется
-            // модели (request.ToolDefinitions) — «рекламируется = разрешено» по построению.
+            // модели в ЭТОЙ итерации (definitions) — «рекламируется = разрешено» по построению.
             // null — ход без списка (рекламируется весь реестр) → все инструменты.
-            var allowedTools = request.ToolDefinitions is null
-                ? null
-                : request.ToolDefinitions.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var allowedTools = toolDefinitionsProvider is not null || toolDefinitions is not null
+                ? definitions.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : null;
             // Рабочая папка (план 2026-10-01): своя у сессии, живое значение — читается
             // на итерацию, поэтому set_session_root действует со следующей итерации того
             // же хода. Не задана — глобальная настройка скоупа (дефолт).

@@ -347,8 +347,10 @@ public sealed class TurnPipelineTests : IDisposable
         Assert.NotNull(_observedRequest);
         var request = _observedRequest!;
         Assert.True(request.AllowToolExecution); // main-сессия: профиль разрешает инструменты
-        Assert.NotNull(request.ToolDefinitions);
-        Assert.NotEmpty(request.ToolDefinitions);
+        // Список инструментов — провайдер (свежий на итерацию, 2026-10-15): activate_shelf
+        // СЕРЕДИНЕ хода даёт новую полку со следующей итерации.
+        Assert.NotNull(request.ToolDefinitionsProvider);
+        Assert.NotEmpty(request.ToolDefinitionsProvider());
         // Рабочая папка (план 2026-10-01 + 2026-10-05): live-провайдер сессии + колбэк смены.
         // Новая сессия стартует с папкой проекта по умолчанию: провайдер отдаёт root,
         // захваченный при создании (в фикстуре — временный проект-каталог).
@@ -369,8 +371,8 @@ public sealed class TurnPipelineTests : IDisposable
         Assert.NotNull(_observedRequest);
         var request = _observedRequest!;
         Assert.True(request.AllowToolExecution);
-        Assert.NotNull(request.ToolDefinitions);
-        Assert.NotEmpty(request.ToolDefinitions);
+        Assert.NotNull(request.ToolDefinitionsProvider);
+        Assert.NotEmpty(request.ToolDefinitionsProvider());
     }
 
     [Fact]

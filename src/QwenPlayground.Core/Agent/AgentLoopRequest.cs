@@ -45,6 +45,14 @@ public sealed record AgentLoopRequest
     /// <summary>null — рекламируется полный реестр; пустой список — ничего не рекламировать.</summary>
     public IReadOnlyList<ToolDefinition>? ToolDefinitions { get; init; }
 
+    /// <summary>
+    /// Провайдер списка инструментов, СВЕЖИЙ НА КАЖДОЙ итерации (2026-10-15): после
+    /// activate_shelf СЕРЕДИНЕ хода новая полка становится доступной со следующей итерации
+    /// (системный промпт и так пересобирается на итерацию — список инструментов следует за ним).
+    /// null — использовать снапшот <see cref="ToolDefinitions"/> (старое поведение).
+    /// </summary>
+    public Func<IReadOnlyList<ToolDefinition>>? ToolDefinitionsProvider { get; init; }
+
     /// <summary>State-блок (msg_id, время, контекст, nag) — свежий на каждом рендере.</summary>
     public Func<IReadOnlyList<ChatMessage>, StateBlock?>? StateProvider { get; init; }
 
