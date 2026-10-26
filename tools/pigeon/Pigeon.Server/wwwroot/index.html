@@ -127,6 +127,7 @@
   .adm tr:hover td { background: var(--bg3); }
   .adm .alias { font-weight: 600; color: var(--acc); }
   .adm .mono { font-family: Consolas, monospace; font-size: 11px; color: var(--dim); }
+  .adm .adm-id { word-break: break-all; max-width: 260px; }
   .adm .act { background: none; border: 1px solid var(--line); color: var(--dim);
               border-radius: 5px; padding: 2px 8px; cursor: pointer; font-size: 11px; margin-right: 4px; }
   .adm .act:hover { color: var(--err); border-color: var(--err); }
@@ -705,7 +706,7 @@ function renderAdminTable() {
     }
     tr.innerHTML =
       '<td class="alias">@' + esc(p.alias) + "</td>" +
-      '<td class="mono" title="mention by @' + esc(p.id) + '">' + esc(p.id.slice(0, 12)) + "…</td>" +
+      '<td class="mono adm-id" data-id="' + esc(p.id) + '" title="click to copy — mention by @' + esc(p.id) + '">' + esc(p.id) + "</td>" +
       '<td>' + esc(p.kind) + "</td>" +
       '<td>' + (p.wake === "none" ? '<span class="tag pull">pull</span>' : "mention") + "</td>" +
       '<td>' + (p.state ? '<span class="state ' + esc(p.state) + '">' + esc(p.state) + "</span>" : "—") + "</td>" +
@@ -724,6 +725,15 @@ function renderAdminTable() {
         await api("/api/identity/" + encodeURIComponent(id) + "/forget", { method: "POST" });
         await refreshWho();
       } catch (e) { alert("forget failed: " + e.message); }
+    };
+  });
+  tbody.querySelectorAll(".adm-id").forEach(td => {
+    td.style.cursor = "pointer";
+    td.onclick = async () => {
+      const id = td.getAttribute("data-id");
+      try { await navigator.clipboard.writeText(id); td.style.color = "var(--ok)"; }
+      catch { prompt("copy the id:", id); return; }
+      setTimeout(() => { td.style.color = ""; }, 600);
     };
   });
   tbody.querySelectorAll("[data-seat]").forEach(sel => {

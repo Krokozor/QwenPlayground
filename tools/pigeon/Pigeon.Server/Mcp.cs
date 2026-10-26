@@ -248,6 +248,12 @@ public static class Mcp
         var id = ResolveId(store, alias, host, ref renamed);
         if (id is null)
             return null;
+        // The alias is derived from the resolved id, not from the client's self-claimed
+        // name: every MCP client sends clientInfo.name = "opencode", so a bare name is not
+        // unique. Deriving from the id makes the alias deterministic and collision-free —
+        // mcp:opencode → @opencode, mcp:opencode@localhost → @opencode-localhost.
+        // A mention by @alias then resolves to exactly one participant.
+        alias = AliasFromId(id);
 
         // Re-presenting the token we issued last time keeps Store.Join from rotating it on
         // every stateless request — otherwise the credential we hand out is stale immediately.
@@ -350,6 +356,20 @@ public static class Mcp
         foreach (var c in host)
             sb.Append(char.IsAsciiLetterOrDigit(c) || c is '.' or '_' ? char.ToLowerInvariant(c) : '-');
         return sb.ToString().Trim('-');
+    }
+
+    /// <summary>
+    /// The display alias for an auto-joined MCP identity, derived from its id so that two
+    /// clients that both call themselves "opencode" end up with distinct, mentionable names:
+    /// <c>mcp:opencode</c> → <c>opencode</c>, <c>mcp:opencode@localhost</c> →
+    /// <c>opencode-localhost</c>. Deterministic: the same id always yields the same alias,
+    /// so a reconnect keeps its name.
+    /// </summary>
+    private static string AliasFromId(string id)
+    {
+        var s = id.StartsWith("mcp:", StringComparison.Ordinal) ? id["mcp:".Length..] : id;
+        var alias = Sanitize(s);
+        return alias.Length > 0 ? alias : id;
     }
 
     /// <summary>Identities and aliases are @token-addressable, so keep them to the mention alphabet.</summary>
