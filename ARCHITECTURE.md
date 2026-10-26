@@ -306,6 +306,86 @@ KV вызывающего в `sessions/<id>-kv.bin` (плоское имя, ~320
 файловые сервисы готовы к многопоточности (AtomicFile, устойчивые List), узкие места —
 UI-коллекции (маршалинг) и перечисленная статика.
 
+## TODO-система (2026-10-14)
+
+`TodoStore` (Core/Sessions) — `sessions/<id>/TODO.json` (LastModifiedBy agent/user, статическое событие Saved).
+Инструменты: `TODO_add` (добавить задачи), `TODO_manage` (done/undone/remove по индексам).
+State-блок: `todo=...` (строки списка), `todo_src=...` (кто менял).
+Настройка: `TodoReminderInterval` (интервал напоминаний).
+
+## MCP (Model Context Protocol) (2026-10-14)
+
+`McpService` (Core/Mcp) — статический holder.
+`McpClient` — JSON-RPC 2.0, stdio+http; stderr → logs/mcp/<server>.stderr.log (ротация 1 МБ).
+`McpServerManager` — автопереподключение (фоновый цикл + lazy-reconnect в CallToolAsync + ReRegisterTools).
+`McpToolRegistrar` — ToolEntry {server}_{tool} (коллизия с built-in → warn+skip).
+Настройки: `McpServers` (List<McpServerConfig>: Name, Enabled, Transport, Command, Args, Env, Url, Description).
+Инструменты: `mcp_status`, `mcp_reload` + динамические {server}_{tool}.
+
+## Intuition (логит-пробы) (2026-10-14)
+
+`IntuitionTools` (Core/Tools/Builtins) — 3 инструмента: `intuition_choice`, `intuition_rating`, `intuition_vibe`.
+Слот 4 (SlotAllocation.Probe).
+Настройки: `IntuitionFormat` (по умолчанию "lines"), `IntuitionDebugDump` (по умолчанию false).
+Для чего: быстрая проверка интуиции / второй выбор среди вариантов без траты полного хода.
+
+## Pigeon (мессенджер для Qwen'ов) (2026-10-15/16)
+
+`PigeonSession` (Core/Pigeon) — резидентный клиент pigeon-сервера, состояние **per-session** (`sessions/<id>/pigeon.json`); long-poll новых сообщений, mention будит heartbeat **этого** окна (Register по SessionId). Авто-подключение при старте: `PigeonEndpoint` + наличие pigeon.json. Активация полки `pigeon` при connect. Тулы (App/Tools/PigeonTools): `pigeon_connect`, `pigeon_disconnect`, `pigeon_read`, `pigeon_send`, `pigeon_who`, `pigeon_channels`, `pigeon_status`. Диалог 🕊 в тулбаре чата (`PigeonDialog`). Сервер и клиент — `tools/pigeon` (Pigeon.Server: HTTP API + веб-UI; Pigeon.Client). Спецификация — docs/MESSANGER.md. State-анонсер `PigeonStateAnnouncer` даёт строку `pigeon:` в state-блоке.
+
+## Desktop tools (2026-10-14)
+
+`DesktopTools` (App/Desktop) — 10 инструментов: desktop_screenshot, desktop_grid_screenshot, desktop_click, desktop_move, desktop_type, desktop_key, desktop_scroll, desktop_drag, list_windows, focus_window.
+Win32 P/Invoke, оверлей-курсор DesktopCursorOverlay.
+Настройка: `DesktopCursorOverlay` (по умолчанию true).
+
+## Browser tools (2026-10-14)
+
+`BrowserTools` (App/Browser) — 22 инструмента (WebView2, CDP, 1280x800 viewport):
+browser_diagnose, browser_navigate, browser_click, browser_click_at, browser_cursor_move, browser_type, browser_key, browser_select, browser_scroll, browser_hover, browser_wait, browser_screenshot, browser_screenshot_full, browser_screenshot_series, browser_extract, browser_find, browser_download, browser_upload, browser_fetch, browser_evaluate, browser_console, browser_network.
+
+## CSharp tools (2026-10-14)
+
+`CSharp*Tool` (Core/Roslyn) — 11 инструментов: csharp_callers, csharp_class_map, csharp_definition, csharp_diagnostics, csharp_move_type, csharp_outline, csharp_reference_report, csharp_references, csharp_rename, csharp_symbol, csharp_unused_usings.
+
+## Memory tools (2026-10-14)
+
+`Memory*Tool` (Core/Tools/Builtins) — 6 инструментов: memory_add, memory_get, memory_list, memory_delete, memory_merge, memory_manage.
+MemoryToolGate — скрытие memory_* при MemoryEnabled=false.
+
+## File tools (2026-10-14)
+
+`*FileTool` (Core/Tools/Builtins) — 10 инструментов: read_file, write_file, edit_file, glob, grep, attach_image, load_image, remove_attachments, message_edit_content, set_session_root.
+Дополнительно: webfetch (получение контента веб-страниц), sleep (ожидание).
+
+## App tools (2026-10-14)
+
+`*Tool` (App/Tools) — 6 инструментов: screenshot, switch_tab, app_window, sanity_check, activate_shelf, deactivate_shelf.
+Дополнительно: get_settings, set_setting (чтение/запись настроек).
+
+## Самосборка лаунчера (2026-10-14)
+
+`RebuildLauncherTool` (Core/SelfBuild) — пересборка GUI-лаунчера и watchdog.
+Проверка: GUI-лаунчер должен быть закрыт (иначе бинарник заблокирован).
+Сборка: dotnet build → launcher/.
+После пересборки владелец должен перезапустить лаунчер.
+
+## Настройки (2026-10-14)
+
+Полный список настроек (61 свойство, плюс computed `CompanionConfigured`) — в `src/QwenPlayground.Core/Settings/SettingsStore.cs`:
+- MemoryEnabled, Endpoint, PigeonEndpoint, MaxTokens, ContextSize, ProjectRoot, AdditionalWorkspaces
+- ReasoningEffort, HeartbeatEnabled, HeartbeatIntervalMinutes, CompactKeepRatio, ImageTokensMax
+- CompanionEndpoint, CompanionEnabled, Temperature, TopP, TopK, MinP, RepeatPenalty, Seed
+- MaxIterations, SanityCheckInterval, IntuitionFormat, IntuitionDebugDump
+- PushOnRebuild, PushRepo, LastSessionId, KvCacheEnabled, SaveGenerationPrompts, TrafficLogEnabled
+- YoloMode, FocusOnConfirmation, MemoryFlushBudget, MemoryScanProbeBudget, MemorySurfacingThreshold
+- MemoryLiveRecallMinTokens, MemoryLiveRecallIntervalSec, MemoryNagEnabled, MemoryNagIntervalRenders
+- RecallTopX, RecallMinScore, SimilaritySimilarMin, SimilarityDistinctMax, SimilarityConfidentMaxEntropy
+- MemoryDialogueBudgetTokens, MemoryDialogueMaxMessages, MemoryClassifyNProbs, MemoryClassifyNPredict
+- MemoryRerankNProbs, MemoryRerankNPredict, MemoryRerankMaxCandidates, MemoryRerankCandidateContentLength
+- MemoryCategoryWeight, MemoryEmojiWeight, MemoryMaxFactsPerCompaction, MemoryDiaryMaxEntryLength
+- DesktopCursorOverlay, DiagnosticsMode, DraftSaveIntervalSeconds, TodoReminderInterval, McpServers
+
 ## Осознанные жертвы расширяемости
 
 Полный список с причинами — в refactoring.md («Роль MainViewModel и жертвы…»). Кратко:

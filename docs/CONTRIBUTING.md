@@ -15,6 +15,7 @@ src/
 │   ├── Inference/           # LLM-клиент (LlmCompletionClient, ICompletionSource, ServerProps)
 │   ├── Memory/              # Память (MemoryStore, MemoryClassifier, MemoryRecall, и др.)
 │   ├── MetaInfo/            # State-блок (StateBlock)
+│   ├── Pigeon/              # Клей pigeon-мессенджера (PigeonSession)
 │   ├── Probes/              # Логит-пробы (LlmProbeClient)
 │   ├── Roslyn/              # Roslyn-инструменты (CSharp*Tool, RoslynService)
 │   ├── Runtime/             # Профили чата (ChatProfiles, SamplerProfile, и др.)
@@ -39,7 +40,11 @@ src/
 tools/
 ├── QwenPlayground.Launcher/ # Лаунчер (запуск, сборка, GitHub sync)
 ├── QwenPlayground.Watchdog/ # Страж процесса (нативные краши)
-└── QwenPlayground.Harness/  # Тестовый harness (headless-агент)
+├── QwenPlayground.Harness/  # Тестовый harness (headless-агент)
+├── pigeon/                  # Pigeon-сервер и клиент (мессенджер для Qwen'ов)
+├── unity-mcp-relay/         # MCP-релей для Unity
+├── normalize_lf.py          # Утилита для нормализации EOL
+└── watchdog-test.ps1        # Тестовый скрипт watchdog
 
 tests/
 ├── QwenPlayground.Core.Tests/   # Тесты ядра
@@ -89,9 +94,31 @@ tests/
 
 2. Инструмент будет автоматически зарегистрирован через рефлексию `[Tool]`.
 
-3. Если инструмент нужен только в определённом контексте — укажите полку третьим аргументом `[Tool]`: `[Tool("my_tool", "Описание", ToolGroup.CSharp)]`. Полки: `Core` (по умолчанию, всегда в промпте), `Browser`, `CSharp`, `Desktop`, `Mcp`, `Intuition`.
+3. Если инструмент нужен только в определённом контексте — укажите полку третьим аргументом `[Tool]`: `[Tool("my_tool", "Описание", ToolGroup.CSharp)]`. Полки: `Core` (по умолчанию, всегда в промпте), `Browser`, `CSharp`, `Desktop`, `Mcp`, `Intuition`, `Pigeon`.
 
-4. Напишите тесты в `tests/QwenPlayground.Core.Tests/` или `tests/QwenPlayground.App.Tests/`.
+4. Если нужно ограничить доступ к инструменту для определённых профилей — используйте `AllowedTools` (белый список) или `DeniedTools` (чёрный список) в `PromptProfile`:
+   ```csharp
+   [Tool("my_tool", "Описание", ToolGroup.Core)]
+   public sealed class MyTool : AgentTool
+   {
+       // ...
+   }
+   ```
+   В `config/chat-profiles.json`:
+   ```json
+   {
+     "Prompts": {
+       "subagent": {
+         "SystemPrompt": "...",
+         "Tools": true,
+         "AllowedTools": ["read_file", "write_file"],
+         "DeniedTools": ["spawn_subagent", "rebuild_self"]
+       }
+     }
+   }
+   ```
+
+5. Напишите тесты в `tests/QwenPlayground.Core.Tests/` или `tests/QwenPlayground.App.Tests/`.
 
 ## Как добавить новую настройку
 
@@ -183,6 +210,7 @@ tests/
 - `README.md` — быстрый старт
 - `docs/CONCEPTS.md` — ключевые концепции
 - `docs/LLM-SETUP.md` — настройка LLM-сервера
+- `docs/MESSANGER.md` — Pigeon: мессенджер для Qwen'ов
 - `ARCHITECTURE.md` — подробная архитектура
 - `refactoring.md` — рабочий журнал проекта (локальный файл, не в git)
 

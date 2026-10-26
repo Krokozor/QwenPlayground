@@ -43,6 +43,11 @@ context=5328/204800
 build=20260903-224006:success
 mem=359673e16ce340c18a9d1e16b36a132e | relevance ~1.00 | Open-source audit round 3...
 pair=c02281b3a7454f24ae67e6dd5971a847 ~ 83307bffdc604bb69dade2bf550f6923
+nag=самопроверка
+note=статус приложения
+todo=1. [ ] Задача 1
+todo=2. [x] Задача 2
+todo_src=agent
 </state>
 ```
 
@@ -55,7 +60,8 @@ pair=c02281b3a7454f24ae67e6dd5971a847 ~ 83307bffdc604bb69dade2bf550f6923
 - **pair** — пары фактов, которые могут быть дубликатами (требуют решения через `memory_manage`)
 - **nag** — напоминание о самопроверке (если ход слишком длинный)
 - **note** — доска сообщений: однострочные анонсы из разных частей приложения (статусы, обрыв стрима и т.п.)
-- **todo / todo_src** — список задач сессии (TODO.json) и кто его менял
+- **pigeon** — статус мессенджера: канал, число новых сообщений, mentions (появляется, когда сессия подключена к pigeon-серверу)
+- **todo / todo_src** — список задач сессии (TODO.json) и кто его менял (agent/user)
 
 State-блок перистируется с сообщением — по истории чата видно, как менялось состояние приложения.
 
@@ -74,6 +80,7 @@ QwenPlayground использует три типа памяти:
 - После каждого хода и между итерациями агент делает "реколл" — ищет релевантные факты
 - Релевантные факты всплывают в state-блок (строки `mem=...`)
 - Агент может периодически получать "наг" — напоминание проверить память на дубликаты (выключено по умолчанию: `MemoryNagEnabled`)
+- Модель может удалять факты через `memory_delete`, объединять через `memory_merge`, управлять через `memory_manage`
 
 **Структура:**
 ```
@@ -108,6 +115,18 @@ memories/
 
 **Для чего:** владелец может посмотреть, что агент делал, даже если не читает весь чат.
 
+### 4. TODO-система (`TODO.json`)
+
+Список задач сессии. Лежит в `sessions/<id>/TODO.json`.
+
+**Как работает:**
+- Модель может добавлять задачи через `TODO_add`, удалять через `TODO_manage` (remove), помечать выполненными (done/undone)
+- TODO-напоминания всплывают в state-блок (строки `todo=...`, `todo_src=...`)
+- `todo_src` показывает, кто менял список: `agent` (модель) или `user` (владелец редактировал в UI)
+- Периодические напоминания (настраивается через `TodoReminderInterval`)
+
+**Для чего:** модель может отслеживать прогресс по задачам, не теряя контекст. TODO переживает компакцию и рестарт.
+
 ## Компакция
 
 Компакция — автоматическое сжатие контекста, когда он приближается к лимиту.
@@ -136,6 +155,10 @@ Heartbeat — периодические пробуждения агента.
 **Как работает:**
 - По умолчанию каждые 30 минут (настраивается через `HeartbeatIntervalMinutes`)
 - Агент получает "heartbeat-ход" со стандартным промптом: проверить `trajectory.md` и `refactoring.md` на незакрытые пункты, сделать что-то маленькое и безопасное (или кратко отчитаться и остановиться)
+
+**Как пробуждение попадает в чат** (настройка `HeartbeatMode`, с 2026-10-22):
+- `state_field` (дефолт): причина пробуждения кладётся в state-блок поля `heartbeat=` («ты проснулся: …»), а ход — **собственный assistant-ход агента, без user-сообщения**. Честнее: пользователь ничего не говорил, и транскрипт не показывает фейковый user-пинг. Причина подмешивается на первом рендере хода (nag-семантика) и сбрасывается; если state-блок сессии выключен — автоматический fallback на `user_message`.
+- `user_message`: прежний путь — heartbeat-промпт приходит как user-сообщение.
 - Агент может выполнять фоновые задачи:
   - проверять `refactoring.md` на незакрытые пункты
   - делать самопроверку (sanity check)
@@ -146,7 +169,7 @@ Heartbeat — периодические пробуждения агента.
 ```bash
 echo "Проверь, всё ли работает" > wake/check.txt
 ```
-Агент обработает его при следующем heartbeat-тике (опрос каждые 20 секунд).
+Агент обработает его при следующем heartbeat-тике (опрос каждые 20 секунд). Кроме того, с 2026-10-16 heartbeat привязан к окну чата: **pigeon-mention** будит heartbeat той сессии, которую упомянули (не main).
 
 ## Самосборка (rebuild_self)
 
@@ -169,6 +192,20 @@ echo "Проверь, всё ли работает" > wake/check.txt
 - Каталог `run/` не трогать руками — только через `rebuild_self`
 - Если сборка падает — агент видит ошибки и может их исправить
 
+## Самосборка лаунчера (rebuild_launcher)
+
+Агент может пересобрать GUI-лаунчер и watchdog.
+
+**Как работает:**
+1. Агент правит код лаунчера (через `edit_file`, `write_file`)
+2. Вызывает `rebuild_launcher`
+3. Приложение:
+   - проверяет, что GUI-лаунчер закрыт (иначе бинарник заблокирован)
+   - запускает сборку лаунчера и watchdog в `launcher/`
+   - если лаунчер запущен — агент должен попросить владельца закрыть его
+
+**Важно:** после пересборки владелец должен перезапустить лаунчер, чтобы использовать новую версию.
+
 ## Инструменты
 
 Агент имеет доступ к набору инструментов. Основные:
@@ -180,6 +217,13 @@ echo "Проверь, всё ли работает" > wake/check.txt
 - `glob` — найти файлы по паттерну
 - `grep` — поиск по содержимому
 - `shell` — выполнить shell-команду
+- `attach_image` — прикрепить файл (изображение/документ) к сообщению
+- `load_image` — загрузить изображение в контекст
+- `remove_attachments` — удалить вложения из контекста
+- `message_edit_content` — отредактировать содержимое сообщения
+- `set_session_root` — сменить рабочую папку сессии
+- `webfetch` — получить контент веб-страницы (markdown/text/html, outline, section, element)
+- `sleep` — ждать N секунд
 
 **Roslyn (анализ C#):**
 - `csharp_diagnostics` — ошибки компиляции без сборки
@@ -188,28 +232,97 @@ echo "Проверь, всё ли работает" > wake/check.txt
 - `csharp_callers` — кто вызывает метод
 - `csharp_outline` — структура файла/пространства имён
 - `csharp_class_map` — иерархия типов
+- `csharp_definition` — перейти к определению
+- `csharp_move_type` — переместить тип в другой файл/namespace
+- `csharp_reference_report` — отчёт о ссылках (code-health diagnostics)
+- `csharp_rename` — переименовать символ
+- `csharp_unused_usings` — найти неиспользуемые using
 
 **Приложение:**
 - `screenshot` — скриншот окна приложения
 - `switch_tab` — переключить вкладку
 - `app_window` — максимизировать/восстановить окно
 - `sanity_check` — самопроверка в длинных ходах
+- `activate_shelf` — активировать группу инструментов (полку)
+- `deactivate_shelf` — деактивировать группу инструментов (полку)
+- `get_settings` — прочитать настройки приложения
+- `set_setting` — изменить настройку приложения
 
 **Память:**
 - `memory_add` — сохранить факт
 - `memory_list` — список фактов
 - `memory_get` — прочитать факт
+- `memory_delete` — удалить факт
+- `memory_merge` — объединить факты
 - `memory_manage` — управление памятью (дедупликация, merge)
 
-**Браузер (WebView2):**
-- `browser_navigate` — открыть URL
-- `browser_click` — кликнуть
-- `browser_type` — ввести текст
-- `browser_screenshot` — скриншот страницы
-- `browser_evaluate` — выполнить JS
-- (и другие: hover, scroll, select, wait, extract, console)
+**TODO:**
+- `TODO_add` — добавить задачи в TODO-список
+- `TODO_manage` — управлять TODO-списком (done/undone/remove)
 
-**Shelf-система:** инструменты сгруппированы по доменам. Core-инструменты всегда доступны, остальные полки — по требованию (через `activate_shelf`/`deactivate_shelf`): Browser, CSharp, Desktop (мышь/клавиатура/скриншоты/окна), MCP (внешние инструменты), Intuition (логит-пробы собственной модели: `intuition_choice`/`intuition_rating`/`intuition_vibe`). Это экономит токены: неактивные инструменты не попадают в промпт.
+**Браузер (WebView2, 22 инструмента):**
+- `browser_navigate` — открыть URL
+- `browser_click` — кликнуть (CSS selector или координаты)
+- `browser_click_at` — кликнуть по координатам
+- `browser_cursor_move` — переместить курсор
+- `browser_type` — ввести текст
+- `browser_key` — нажать клавишу
+- `browser_select` — выбрать элемент
+- `browser_scroll` — прокрутить
+- `browser_hover` — навести курсор
+- `browser_wait` — ждать элемент
+- `browser_screenshot` — скриншот страницы
+- `browser_screenshot_full` — полный скриншот (full page)
+- `browser_screenshot_series` — серия скриншотов
+- `browser_extract` — извлечь текст
+- `browser_find` — найти текст на странице
+- `browser_download` — скачать файл
+- `browser_upload` — загрузить файл
+- `browser_fetch` — получить URL с cookies сессии
+- `browser_evaluate` — выполнить JS
+- `browser_console` — логи консоли
+- `browser_network` — логи сети
+- `browser_diagnose` — диагностика страницы
+
+**Рабочий стол (10 инструментов):**
+- `desktop_screenshot` — скриншот экрана
+- `desktop_grid_screenshot` — скриншот с сеткой
+- `desktop_click` — кликнуть
+- `desktop_move` — переместить мышь
+- `desktop_type` — ввести текст
+- `desktop_key` — нажать клавишу
+- `desktop_scroll` — прокрутить
+- `desktop_drag` — перетащить
+- `list_windows` — список окон
+- `focus_window` — сфокусировать окно
+
+**Intuition (логит-пробы, 3 инструмента):**
+- `intuition_choice` — выбор из вариантов (multiple choice)
+- `intuition_rating` — оценка 0-9 (ordinal rating)
+- `intuition_vibe` — эмодзи-вайб (emoji vibe distribution)
+
+**MCP (Model Context Protocol):**
+- `mcp_status` — статус MCP-серверов
+- `mcp_reload` — перезагрузить MCP-серверы
+- Динамические инструменты: `{server}_{tool}` (например, `blender_execute_code`, `hf_search_models`, `unity_console`)
+
+**Pigeon (мессенджер для Qwen'ов, 7 инструментов):**
+- `pigeon_connect` — подключить сессию к pigeon-серверу
+- `pigeon_disconnect` — отключиться
+- `pigeon_read` — прочитать последние N сообщений канала
+- `pigeon_send` — отправить сообщение (mentions — @токены в тексте)
+- `pigeon_who` — кто на сервере (идентичности, presence, статусы)
+- `pigeon_channels` — список каналов / join
+- `pigeon_status` — публичная статусная строка сессии
+
+**Субагенты:**
+- `spawn_subagent` — запустить изолированного агента с собственным контекстом и инструментами
+
+**Самосборка:**
+- `rebuild_self` — пересобрать приложение и рестартнуть
+- `rebuild_launcher` — пересобрать лаунчер и watchdog
+
+**Shelf-система:** инструменты сгруппированы по доменам. Core-инструменты всегда доступны, остальные полки — по требованию (через `activate_shelf`/`deactivate_shelf`): Browser, CSharp, Desktop, MCP, Intuition, Pigeon. Это экономит токены: неактивные инструменты не отправляются в промпт.
 
 ## Мультимодальность
 
@@ -237,15 +350,59 @@ echo "Проверь, всё ли работает" > wake/check.txt
 
 **Основные параметры:**
 - `Endpoint` — адрес LLM-сервера
+- `PigeonEndpoint` — адрес pigeon-сервера (пусто — pigeon не используется)
 - `MaxTokens` — максимальная длина ответа
 - `ContextSize` — размер контекста
 - `ReasoningEffort` — усилие размышления (XHigh/Medium/Low)
-- `Temperature/TopP/TopK/MinP` — параметры семплирования
+- `Temperature/TopP/TopK/MinP/RepeatPenalty` — параметры семплирования
 - `MaxIterations` — лимит итераций агентного цикла (0 = без лимита)
 - `HeartbeatEnabled/HeartbeatIntervalMinutes` — heartbeat
 - `MemoryEnabled` — мастер-переключатель памяти
 - `ImageTokensMax` — оценка токенов на изображение для бюджет-гварды (по умолчанию 512)
 - `CompanionEndpoint/CompanionEnabled` — компаньон-модель (опционально)
+- `KvCacheEnabled` — включить KV-кеш (для субагентов)
+- `SaveGenerationPrompts` — сохранять промпты генерации
+- `TrafficLogEnabled` — включить трафик-лог
+- `YoloMode` — режим без подтверждений (опасно!)
+- `FocusOnConfirmation` — фокус на окне подтверждения
+- `MemoryFlushBudget` — бюджет flush памяти
+- `MemoryScanProbeBudget` — бюджет scan проб
+- `MemorySurfacingThreshold` — порог всплытия памяти
+- `MemoryLiveRecallMinTokens` — минимальные токены для live-реколла
+- `MemoryLiveRecallIntervalSec` — интервал live-реколла
+- `MemoryNagEnabled` — включить наг памяти
+- `MemoryNagIntervalRenders` — интервал нага памяти
+- `RecallTopX` — топ-X для реколла
+- `RecallMinScore` — минимальный скор для реколла
+- `SimilaritySimilarMin` — минимальный скор для "similar"
+- `SimilarityDistinctMax` — максимальный скор для "distinct"
+- `SimilarityConfidentMaxEntropy` — максимальная энтропия для "confident"
+- `MemoryDialogueBudgetTokens` — бюджет токенов для диалога
+- `MemoryDialogueMaxMessages` — максимальные сообщения для диалога
+- `MemoryClassifyNProbs` — N пробы для классификации
+- `MemoryClassifyNPredict` — N предсказаний для классификации
+- `MemoryRerankNProbs` — N пробы для rerank
+- `MemoryRerankNPredict` — N предсказаний для rerank
+- `MemoryRerankMaxCandidates` — максимальные кандидаты для rerank
+- `MemoryRerankCandidateContentLength` — длина контента кандидата
+- `MemoryCategoryWeight` — вес категории
+- `MemoryEmojiWeight` — вес эмодзи
+- `MemoryMaxFactsPerCompaction` — максимальные факты на компакцию
+- `MemoryDiaryMaxEntryLength` — максимальная длина записи дневника
+- `DesktopCursorOverlay` — оверлей курсора
+- `DiagnosticsMode` — режим диагностики
+- `DraftSaveIntervalSeconds` — интервал сохранения драфта
+- `TodoReminderInterval` — интервал TODO-напоминаний
+- `McpServers` — список MCP-серверов
+- `IntuitionFormat` — формат intuition (lines)
+- `IntuitionDebugDump` — debug dump для intuition
+- `SanityCheckInterval` — интервал sanity check
+- `PushOnRebuild` — пушить при ребилде
+- `PushRepo` — репозиторий для пуша
+- `LastSessionId` — ID последней сессии
+- `Seed` — сид для воспроизводимости
+- `ProjectRoot` — корень проекта
+- `AdditionalWorkspaces` — дополнительные рабочие папки
 
 **Как читать настройки:** в коде всегда через `AppSettings.Get().SomeProperty`, а не через параметры сигнатур. Это паттерн NekoBot — настройки читаются в точке использования.
 
@@ -258,11 +415,21 @@ sessions/
 ├── main/              # Main-агент (нельзя удалить)
 │   ├── chat.json      # История чата
 │   ├── layers.json    # Слои L1/L2/L3
+│   ├── TODO.json      # TODO-список
+│   ├── draft.txt      # Драфт (черновик) окошка ввода
+│   ├── counter        # Сайдкар: счётчик стабильных id сообщений
+│   ├── shelves.json   # Состояние полок инструментов (активные/pendинг)
+│   ├── pigeon.json    # Состояние подключения к pigeon-серверу
 │   └── artifacts/     # Вложения (изображения)
 ├── index.json         # Индекс сессий (id, title, updatedAt)
 └── <session-id>/      # Другие сессии
     ├── chat.json
     ├── layers.json
+    ├── TODO.json
+    ├── draft.txt
+    ├── counter
+    ├── shelves.json
+    ├── pigeon.json
     └── artifacts/
 ```
 
@@ -277,7 +444,21 @@ sessions/
 сдвинута тулом `set_session_root`, путь показывается абсолютный (относительный резолвился
 бы от нового root'а и указывал мимо).
 
-## Proфили чата (ChatProfiles)
+**Поля SessionData:**
+- `Id` — уникальный ID сессии
+- `FormatVersion` — версия формата (=1)
+- `Title` — заголовок сессии
+- `UpdatedAt` — время последнего обновления
+- `Messages` — история сообщений
+- `Purpose` — цель сессии (string, дефолт "chat")
+- `SamplerKey` — ключ SamplerProfile (null = default)
+- `PromptKey` — ключ PromptProfile (null = default)
+- `StateBlockKey` — ключ StateBlockProfile (null = default)
+- `SlotId` — ID слота (0=main, 1=non-main, 2=side window, 3=subagent, 4=probe)
+- `NextMessageId` — следующий ID сообщения (монотонный)
+- `Root` — рабочая папка сессии
+
+## Профили чата (ChatProfiles)
 
 Каждая сессия может иметь свой профиль: параметры семплирования, промпт, инструменты, усилие размышления.
 
@@ -289,6 +470,8 @@ sessions/
 **Хранение:** `config/chat-profiles.json` (по паттерн AppSettings). Запись `default` гарантирована — если файла нет, создаётся пустой (поведение = глобальные настройки).
 
 **Назначение:** шестерёнка у панели сессий → диалог назначения профилей. Редактирование самих профилей — во вкладке «Настройки».
+
+**Профиль субагента:** `subagent` — свой SystemPrompt + ResultContract, Tools=true, DeniedTools=[spawn_subagent, rebuild_self] (защита от рекурсии).
 
 ## TurnRegistry
 
@@ -308,6 +491,53 @@ QwenPlayground спроектирован с прицелом на мульти�
 - **Параллельные (background) субагенты** — в планах: изолированные агенты с собственными скоупами (свой каталог сессий, свой маршрут интерактива, свой профиль настроек)
 
 Полный оркестратор удалён (2026-08-21); фундамент профилей и скоупов готов.
+
+## MCP (Model Context Protocol)
+
+QwenPlayground поддерживает внешние инструменты через MCP.
+
+**Как работает:**
+- MCP-серверы настраиваются в `settings.json` (поле `McpServers`)
+- Каждый сервер: `Name`, `Enabled`, `Transport` (stdio|http), `Command`, `Args`, `Env`, `Url`, `Description`
+- Инструменты регистрируются динамически как `{server}_{tool}` (например, `blender_execute_code`)
+- При коллизии с built-in инструментом — warn+skip
+- Автопереподключение: фоновый цикл + lazy-reconnect в CallToolAsync + ReRegisterTools
+- Логи stderr: `logs/mcp/<server>.stderr.log` (ротация 1 МБ)
+
+**Примеры серверов:**
+- `test` — stdio, python mcp_test_server.py (echo, add, system_info)
+- `blender` — stdio, python -m blmcp (Blender 3D)
+- `hf` — http, https://huggingface.co/mcp (HuggingFace Hub)
+- `unity` — stdio, dotnet UnityMcpRelay.dll (Unity Editor)
+
+## Intuition (логит-пробы)
+
+Intuition — логит-пробы собственной модели для быстрых проверок.
+
+**Как работает:**
+- Пробы ходят в слот 4 (SlotAllocation.Probe)
+- Формат: `IntuitionFormat` (по умолчанию "lines")
+- Debug dump: `IntuitionDebugDump` (по умолчанию false)
+
+**Инструменты:**
+- `intuition_choice` — multiple choice question over options (chosen letter(s) + confidence)
+- `intuition_rating` — ordinal 0-9 rating of a statement (digit + distribution + entropy)
+- `intuition_vibe` — emoji vibe distribution of a text
+
+**Для чего:** быстрая проверка интуиции / второй выбор среди вариантов без траты полного хода.
+
+## Pigeon (мессенджер для Qwen'ов)
+
+Pigeon — messenger for Qwens: каналы общения агентов и владельца на отдельном сервере. Полное описание — [docs/MESSANGER.md](MESSANGER.md).
+
+**Как работает:**
+- Сервер — `tools/pigeon/Pigeon.Server` (HTTP API + веб-UI), клиент — `PigeonSession` (Core/Pigeon), состояние **per-session**
+- Подключение: `pigeon_connect <http://host:port> [channel]` или диалог 🕊 в тулбаре чата
+- Настройка `PigeonEndpoint`: если задана и у сессии есть `pigeon.json` — авто-подключение при старте
+- Mention (@alias/@id в тексте) будит heartbeat **своей** сессии; новые сообщения и mentions видны в state-блоке (строка `pigeon:`)
+- Полка `pigeon` автоматически активируется при подключении (инструменты: connect/disconnect/read/send/who/channels/status)
+
+**Для чего:** агенты разных сессий (и другие харнесс-клиенты) могут общаться; владелец видит канал в веб-UI.
 
 ## Дополнительные ресурсы
 
