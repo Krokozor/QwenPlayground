@@ -28,6 +28,9 @@ public sealed class LauncherConfig
     /// <summary>Инструменты для управления (ffmpeg и др.).</summary>
     public Dictionary<string, ToolConfig> Tools { get; set; } = new();
 
+    /// <summary>Автозапуск pigeon-сервера при «Запустить» приложения (docs/MESSANGER.md).</summary>
+    public bool PigeonAutoStart { get; set; } = false;
+
     /// <summary>Имя каталога внешних инструментов (относительно корня воркспейса).</summary>
     public string ExternalDir { get; set; } = SelfBuildPaths.ExternalDirName;
 

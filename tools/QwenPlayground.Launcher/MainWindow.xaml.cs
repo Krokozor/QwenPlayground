@@ -17,6 +17,7 @@ public partial class MainWindow : Window
         RefreshStatus();
         BuildToolsPanel();
         BuildEnvPanel();
+        LoadPigeonPanel();
         LoadSettingsTab();
         _ = AutoSyncCheckAsync();
         _ = FillRepoFromOriginAsync();
@@ -296,6 +297,98 @@ public partial class MainWindow : Window
         }
     }
 
+    // ===== Pigeon =====
+
+    private void LoadPigeonPanel()
+    {
+        PigeonAutoStartCheck.IsChecked = _config.PigeonAutoStart;
+        PigeonAutoStartCheck.Checked += (_, _) =>
+        {
+            _config.PigeonAutoStart = true;
+            _config.Save();
+        };
+        PigeonAutoStartCheck.Unchecked += (_, _) =>
+        {
+            _config.PigeonAutoStart = false;
+            _config.Save();
+        };
+        _ = RefreshPigeonStatusAsync();
+    }
+
+    private async Task RefreshPigeonStatusAsync()
+    {
+        if (!PigeonService.IsBuilt(ToolRoot))
+        {
+            Dispatcher.Invoke(() =>
+            {
+                PigeonStatusText.Text = "сервер не собран — «Собрать» (источник: tools/pigeon)";
+                PigeonStartButton.IsEnabled = false;
+            });
+            return;
+        }
+
+        var port = PigeonService.GetPort(ToolRoot);
+        var running = await PigeonService.IsRunningAsync(port);
+        Dispatcher.Invoke(() =>
+        {
+            PigeonStatusText.Text = running
+                ? $"работает: http://127.0.0.1:{port} (данные: data/pigeon)"
+                : $"собран, остановлен (порт {port})";
+            PigeonStartButton.Content = running ? "Остановить" : "Запустить";
+            PigeonStartButton.IsEnabled = true;
+        });
+    }
+
+    private async void PigeonBuild_Click(object sender, RoutedEventArgs e)
+    {
+        PigeonBuildButton.IsEnabled = false;
+        PigeonBuildButton.Content = "Сборка…";
+        SetBusy(true);
+        StatusText.Text = "Сборка pigeon-сервера…";
+        try
+        {
+            var (ok, message) = await PigeonService.BuildServerAsync(ToolRoot);
+            StatusText.Text = "Pigeon: " + message;
+            LogBox.AppendText($"\n[{DateTime.Now:HH:mm:ss}] pigeon build: {message}");
+            LogBox.ScrollToEnd();
+        }
+        finally
+        {
+            PigeonBuildButton.IsEnabled = true;
+            PigeonBuildButton.Content = "Собрать";
+            SetBusy(false);
+            await RefreshPigeonStatusAsync();
+        }
+    }
+
+    private async void PigeonStart_Click(object sender, RoutedEventArgs e)
+    {
+        SetBusy(true);
+        try
+        {
+            var port = PigeonService.GetPort(ToolRoot);
+            if (await PigeonService.IsRunningAsync(port))
+            {
+                PigeonService.Stop();
+                StatusText.Text = "Pigeon: сервер остановлен";
+            }
+            else
+            {
+                var ok = await PigeonService.StartAsync(ToolRoot);
+                StatusText.Text = ok
+                    ? $"Pigeon: запущен http://127.0.0.1:{port}"
+                    : "Pigeon: запуск не удался (сборка? порт занят?)";
+            }
+            LogBox.AppendText($"\n[{DateTime.Now:HH:mm:ss}] pigeon: {StatusText.Text}");
+            LogBox.ScrollToEnd();
+        }
+        finally
+        {
+            SetBusy(false);
+            await RefreshPigeonStatusAsync();
+        }
+    }
+
     // ===== Окружение =====
 
     private void BuildEnvPanel()
@@ -410,13 +503,18 @@ public partial class MainWindow : Window
 
     // ===== Кнопки =====
 
-    private void StartButton_Click(object sender, RoutedEventArgs e)
+    private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
         SetBusy(true);
         try
         {
+            if (_config.PigeonAutoStart)
+            {
+                var ok = await PigeonService.StartAsync(ToolRoot);
+                StatusText.Text = ok ? "Pigeon: сервер запущен (автозапуск)" : "Pigeon: автозапуск не удался (собрать сервер?)";
+            }
             var pid = SwapService.StartCurrent();
-            StatusText.Text = $"запущено (pid {pid}).";
+            StatusText.Text += $" запущено (pid {pid}).";
         }
         catch (Exception ex)
         {
@@ -426,6 +524,7 @@ public partial class MainWindow : Window
         {
             SetBusy(false);
             RefreshStatus();
+            _ = RefreshPigeonStatusAsync();
         }
     }
 
