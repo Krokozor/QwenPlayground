@@ -696,8 +696,11 @@ public sealed class McpClient : IAsyncDisposable
 
         if (_stderrPump is { } pump)
         {
-            try { await pump.WaitAsync(CancellationToken.None); }
-            catch { /* насос может быть уже мёртв */ }
+            // Потолок 2 с: процесс уже убит выше (KillProcess), EOF stderr должен прийти.
+            // Если насос не ушёл (race-килл / унаследованный пайп-хэндл) — НЕ висим
+            // вечно: неограниченный await вешал dispose → тест → гейт rebuild_self.
+            try { await pump.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch { /* насос не успел — процесс мёртв, ресурс уйдёт вместе с ним */ }
         }
 
         KillProcess();

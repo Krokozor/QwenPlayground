@@ -23,6 +23,7 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
     private readonly Action _saveCurrent;
     private readonly Action _refreshPreview;
     private readonly Action<string> _status;
+    private readonly Func<string> _sessionDir;
 
     public ObservableCollection<MessageViewModel> Messages { get; }
     public ObservableCollection<PendingAttachment> PendingAttachments { get; }
@@ -36,7 +37,8 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
         Func<bool, Task> generate,
         Action saveCurrent,
         Action refreshPreview,
-        Action<string> status) {
+        Action<string> status,
+        Func<string> sessionDir) {
         Messages = messages;
         PendingAttachments = pendingAttachments;
         _log = log;
@@ -46,6 +48,7 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
         _saveCurrent = saveCurrent;
         _refreshPreview = refreshPreview;
         _status = status;
+        _sessionDir = sessionDir;
     }
 
     private bool CanInteract() => _canInteract();
@@ -167,6 +170,15 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
 
     [RelayCommand(CanExecute = nameof(CanInteract))]
     private void CopyChat() {
+        System.Windows.Clipboard.SetText(BuildChatText());
+        _status("чат скопирован в буфер обмена");
+    }
+
+    /// <summary>
+    /// Весь чат в markdown-подобный текст: role-заголовки, reasoning, контент, tool calls.
+    /// Общий для CopyChat и SaveChat — формат один, разница только в приёмнике.
+    /// </summary>
+    private string BuildChatText() {
         var builder = new StringBuilder();
         foreach (var message in Messages) {
             builder.Append("### ").Append(message.Role).Append('\n');
@@ -181,8 +193,39 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
             }
             builder.Append('\n');
         }
-        System.Windows.Clipboard.SetText(builder.ToString());
-        _status("чат скопирован в буфер обмена");
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Сохранить чат в файл (SaveFileDialog). Обход лимита буфера обмена:
+    /// WPF Clipboard.SetText кладёт текст в CF_UNICODETEXT, а этот формат
+    /// ограничен Windows ~32K символами — длинные чаты в буфер не помещаются,
+    /// в файл — да.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanInteract))]
+    private void SaveChat() {
+        var dialog = new Microsoft.Win32.SaveFileDialog {
+            Title = "Сохранить чат",
+            Filter = "Markdown (*.md)|*.md|Текст (*.txt)|*.txt",
+            FileName = $"chat_{DateTime.Now:yyyy-MM-dd_HH-mm}.md"
+        };
+        try {
+            var dir = _sessionDir();
+            if (Directory.Exists(dir)) {
+                dialog.InitialDirectory = dir;
+            }
+        } catch {
+            // Папка сессии недоступна — диалог откроется в дефолтной директории.
+        }
+        if (dialog.ShowDialog() != true) {
+            return;
+        }
+        try {
+            File.WriteAllText(dialog.FileName, BuildChatText(), new UTF8Encoding(false));
+            _status($"чат сохранён: {dialog.FileName}");
+        } catch (Exception ex) {
+            _status($"не удалось сохранить чат: {ex.Message}");
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanReroll))]
@@ -201,12 +244,20 @@ public sealed partial class MessageCommandsViewModel : ObservableObject {
 
     [RelayCommand(CanExecute = nameof(CanContinue))]
     private async Task ContinueAsync() {
-        await _generate(true);
+        // После assistant — continue-префилл (EOS срезан, модель продолжает текст);
+        // после user/tool — полноценный ход (обычный рендер всего чата).
+        var continueLast = Messages[^1].Role == "assistant";
+        await _generate(continueLast);
         _saveCurrent();
     }
 
+    /// <summary>
+    /// ▶ активна, когда чат idle и последнее сообщение — не system (user/tool/assistant).
+    /// Confirm-карточка (role "confirm") не персистится в лог, а ожидание решения держит
+    /// FSM в AwaitingConfirmation → IsGenerating-гвард уже гасит кнопку.
+    /// </summary>
     private bool CanContinue() =>
-        !_isGenerating() && Messages.Count > 0 && Messages[^1].Role == "assistant";
+        !_isGenerating() && Messages.Count > 0 && Messages[^1].Role != "system";
 
     // Вложения НЕ блокируются во время хода: они готовятся для СЛЕДУЮЩЕГО сообщения
     // (ручной отправке или очереди) и не трогают текущий ход. Блокировка (CanInteract)

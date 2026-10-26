@@ -45,7 +45,9 @@ namespace QwenPlayground.Core.SelfBuild;
     "XAML bindings / x:Name issues are caught by the full build with MC#### codes.")]
 public sealed class RebuildSelfTool : AgentTool
 {
-    // Общий Roslyn-воркспейс — не создавать свой, см. RoslynService.Shared.
+    // Общий Roslyn-воркспейс (см. RoslynService.Shared). Pre-check гоняет его в отдельном
+    // потоке с жёстким таймаутом (CollectRoslynErrors), чтобы висящий MSBuild-воркспейс
+    // не блокировал rebuild_self.
     private static readonly Roslyn.RoslynService Service = Roslyn.RoslynService.Shared;
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
@@ -64,12 +66,16 @@ public sealed class RebuildSelfTool : AgentTool
         // Страховка от «новая версия сломала код» (инцидент: Muse 1.3 в OpenCode
         // уничтожил переносы строк в MainViewModel.cs через shell-regex — владелец
         // чинил руками). Не блокирует билд при сбое — лог + отчёт.
+        RebuildEventLog.App("rebuild_self: snapshot started");
         var snapshotRef = TakePreBuildSnapshot();
+        RebuildEventLog.App($"rebuild_self: snapshot done ({snapshotRef})");
 
         // XAML-валидация: Roslyn не гоняет XAML-компилятор, поэтому невалидный XML в .xaml
         // (сырой '<' в атрибуте и т.п.) проявляется как ложный CS0103 'InitializeComponent'.
         // Проверяем XML напрямую — корневая причина с точной строкой/колонкой.
+        RebuildEventLog.App("rebuild_self: XAML check started");
         var xamlErrors = CollectXamlXmlErrors();
+        RebuildEventLog.App($"rebuild_self: XAML check done ({xamlErrors.Count} error(s))");
         var roslynErrors = await CollectRoslynErrors(cancellationToken);
         var allErrors = xamlErrors.Concat(roslynErrors).ToList();
         RebuildEventLog.App($"rebuild_self: pre-check done ({xamlErrors.Count} XAML, {roslynErrors.Count} Roslyn problem(s))");
@@ -327,10 +333,26 @@ public sealed class RebuildSelfTool : AgentTool
             }
             using var process = System.Diagnostics.Process.Start(startInfo);
             if (process is null) return (-1, "");
-            // git пишет результат в stderr (push: "To https://…") — читаем оба потока.
-            var stdout = process.StandardOutput.ReadToEnd().Trim();
-            var stderr = process.StandardError.ReadToEnd().Trim();
-            process.WaitForExit(timeoutMs);
+            // НЕБЛОКИРУЮЩЕЕ чтение (BeginOutputReadLine/BeginErrorReadLine) + WaitForExit(timeout).
+            // Старый ReadToEnd() блокировал вызывающий поток до EOF БЕЗ таймаута: если git-процесс
+            // виси́т (лок/медленный диск), ReadToEnd висел вечно и WaitForExit(timeout) не
+            // достигался (инциденты rebuild_self 21:48/01:25/12:00/13:17 — висяк до "pre-check done").
+            var stdoutSb = new System.Text.StringBuilder();
+            var stderrSb = new System.Text.StringBuilder();
+            process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdoutSb.AppendLine(e.Data); };
+            process.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderrSb.AppendLine(e.Data); };
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            var exited = process.WaitForExit(timeoutMs);
+            if (!exited)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return (-2, $"git TIMED OUT after {timeoutMs}ms: {string.Join(' ', args)}");
+            }
+            // Короткая пауза: DataReceived-потоки могут доесть хвост буфера после exit.
+            Thread.Sleep(200);
+            var stdout = stdoutSb.ToString().Trim();
+            var stderr = stderrSb.ToString().Trim();
             var output = (stdout + (stderr.Length > 0 ? (stdout.Length > 0 ? " " : "") + stderr : "")).Trim();
             return (process.ExitCode, output);
         }
@@ -384,11 +406,38 @@ public sealed class RebuildSelfTool : AgentTool
 
     private static async Task<List<string>> CollectRoslynErrors(CancellationToken cancellationToken)
     {
-        var solution = await Service.GetSolutionAsync(cancellationToken);
+        // Pre-check в отдельном потоке + жёсткий WaitAsync(60s). Висящий MSBuild-воркспейс
+        // (file lock / состояние после правок) не должен вешать rebuild_self: превысили —
+        // пропускаем pre-check (dotnet build — настоящий гейт, всё равно всё поймает).
+        // Остаточный риск: если MSBuild starve-ит thread-pool, WaitAsync может не зафайрить
+        // (инцидент 2026-10-24 12:00) — но настоящий корень висяков (git-снапшот,
+        // блокирующий ReadToEnd) уже починен, так что pre-check больше не вешает rebuild.
+        var preCheckTask = Task.Run(() => CollectRoslynErrorsCore(cancellationToken));
+        try
+        {
+            return await preCheckTask.WaitAsync(TimeSpan.FromSeconds(60), cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            RebuildEventLog.App("rebuild_self: Roslyn pre-check HARD TIMED OUT (60 s) — skipped (MSBuild workspace stuck); build is the real gate and will catch errors");
+            return new List<string>();
+        }
+        // OperationCanceledException (отмена хода) и прочие ошибки — прокидываем (не глотаем).
+    }
+
+    /// <summary>
+    /// Тело pre-check; выполняется в отдельном потоке (жёсткий таймаут — снаружи, в
+    /// <see cref="CollectRoslynErrors"/>). MSBuild-оценка может блокировать поток без
+    /// наблюдения token — поэтому асинхронные методы здесь дожидаются синхронно
+    /// (GetAwaiter().GetResult), а прерывание обеспечивает только внешний WaitAsync.
+    /// </summary>
+    private static List<string> CollectRoslynErrorsCore(CancellationToken cancellationToken)
+    {
+        var solution = Service.GetSolutionAsync(cancellationToken).GetAwaiter().GetResult();
         var errors = new List<string>();
         foreach (var project in solution.Projects)
         {
-            var compilation = await project.GetCompilationAsync(cancellationToken);
+            var compilation = project.GetCompilationAsync(cancellationToken).GetAwaiter().GetResult();
             if (compilation is null)
             {
                 continue;
@@ -401,9 +450,8 @@ public sealed class RebuildSelfTool : AgentTool
                 }
                 var position = diagnostic.Location.GetLineSpan();
                 var rawPath = position.Path;
-                // Roslyn не гоняет XAML-компилятор: CS0103/CS0117 в code-behind (.xaml.cs)
-                // на сгенерированные XAML-члены (InitializeComponent, x:Name) — ложные. Их
-                // ловит реальный dotnet build с точным MC####-сообщением (он идёт следом).
+                // Roslyn не гоняет XAML-компилятор: CS0103/CS0117 в code-behind
+                // (.xaml.cs) на сгенерированные XAML-члены — ложные; их ловит build.
                 if (rawPath is not null &&
                     rawPath.EndsWith(".xaml.cs", StringComparison.OrdinalIgnoreCase) &&
                     (diagnostic.Id == "CS0103" || diagnostic.Id == "CS0117"))

@@ -574,10 +574,13 @@
                 <Button Content="{Binding SendButtonText}" Command="{Binding SendCommand}"
                         ToolTip="{Binding SendButtonToolTip}" Style="{StaticResource SendButtonStyle}"
                         Padding="16,4" Margin="0,0,8,0" />
-                <Button Content="Продолжить" Command="{Binding MessageCommands.ContinueCommand}"
-                        Padding="16,4" Margin="0,0,8,0" />
-                <Button Content="Стоп" Command="{Binding CancelCommand}"
-                        Padding="16,4" />
+                <!-- ▶: после assistant — continue-префилл (продолжить текст), после
+                     user/tool — полноценный ход. ⏹ — отмена активного хода. -->
+                <Button Content="&#9654;" Command="{Binding MessageCommands.ContinueCommand}"
+                        ToolTip="Продолжить: после моего сообщения — продолжить текст, после твоего/tool — новый ход"
+                        Padding="16,4" Margin="0,0,8,0" FontWeight="Bold" />
+                <Button Content="&#9209;" Command="{Binding CancelCommand}"
+                        Padding="16,4" FontWeight="Bold" />
             </StackPanel>
         </Grid>
 

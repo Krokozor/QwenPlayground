@@ -15,6 +15,13 @@ public partial class MainWindow : Window
         StartupTrace.Log("MainWindow ctor: begin (InitializeComponent создаёт MainViewModel)");
         InitializeComponent();
         StartupTrace.Log("MainWindow ctor: InitializeComponent done");
+        // Handshake как можно раньше: лаунчер ждёт маркер 30 с, а Loaded может наступить
+        // позже (MCP-коннекты на UI-потоке тянут старт за 30 с — rollback при
+        // здоровом UI). Окно построено, диспетчер отвечает — этого достаточно, чтобы
+        // считать новую версию живой; Loaded маркер подтвердит повторно.
+        SelfBuildService.WriteHandshake();
+        StartupTrace.Log("handshake written early (window constructed, " +
+            $"+{(DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime).TotalSeconds:F0}s from process start)");
         SourceInitialized += (_, _) => DarkWindowFrame.Apply(this);
         Closing += (_, _) =>
         {
