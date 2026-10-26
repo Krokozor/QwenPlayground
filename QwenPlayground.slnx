@@ -14,5 +14,6 @@
     <Project Path="tools/QwenPlayground.Watchdog/QwenPlayground.Watchdog.csproj" />
     <Project Path="tools/pigeon/Pigeon.Client/Pigeon.Client.csproj" />
     <Project Path="tools/pigeon/Pigeon.Server/Pigeon.Server.csproj" />
+    <Project Path="tools/pigeon/Pigeon.Bridge/Pigeon.Bridge.csproj" />
   </Folder>
 </Solution>
