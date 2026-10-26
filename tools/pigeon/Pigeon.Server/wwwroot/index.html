@@ -108,6 +108,42 @@
   .newch button { background: var(--bg3); color: var(--acc); border: 1px solid var(--line); border-radius: 6px;
                   padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
   .empty { color: var(--dim); text-align: center; margin-top: 40px; font-size: 13px; }
+  /* View tabs: war room (default) vs admin (full-screen management). */
+  .viewtab { background: none; border: 1px solid var(--line); color: var(--dim);
+             border-radius: 6px; padding: 3px 12px; cursor: pointer; font-size: 12px; }
+  .viewtab:hover { color: var(--fg); border-color: var(--dim); }
+  .viewtab.active { color: var(--acc); border-color: var(--acc); }
+  #admin-view { display: none; flex: 1; min-height: 0; }
+  body.admin #admin-view { display: flex; }
+  body.admin #warroom { display: none; }
+  /* Admin table: full width, rows = participants. */
+  .adm { flex: 1; overflow-y: auto; padding: 14px 18px; min-width: 0; }
+  .adm-h { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+           color: var(--dim); margin: 0 0 8px; }
+  .adm table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .adm th { text-align: left; color: var(--dim); font-size: 11px; text-transform: uppercase;
+            letter-spacing: .05em; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  .adm td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .adm tr:hover td { background: var(--bg3); }
+  .adm .alias { font-weight: 600; color: var(--acc); }
+  .adm .mono { font-family: Consolas, monospace; font-size: 11px; color: var(--dim); }
+  .adm .act { background: none; border: 1px solid var(--line); color: var(--dim);
+              border-radius: 5px; padding: 2px 8px; cursor: pointer; font-size: 11px; margin-right: 4px; }
+  .adm .act:hover { color: var(--err); border-color: var(--err); }
+  .adm .adm-sel { background: var(--bg3); color: var(--fg); border: 1px solid var(--line);
+                  border-radius: 5px; font-size: 12px; padding: 2px 4px; }
+  /* Groups column in admin. */
+  .adm-groups { width: 340px; flex: none; border-left: 1px solid var(--line);
+                background: var(--bg2); overflow-y: auto; padding: 14px 16px; }
+  .gcard { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .gcard .ghead { display: flex; align-items: center; gap: 8px; }
+  .gcard .gname { font-weight: 600; color: var(--acc); }
+  .gcard .gdesc { color: var(--dim); font-size: 11px; margin-top: 2px; }
+  .gcard .gmembers { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .gcard .gmem { font-size: 11px; background: var(--bg3); border-radius: 4px; padding: 1px 6px;
+                 display: inline-flex; align-items: center; gap: 4px; }
+  .gcard .gmem button { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 11px; padding: 0; }
+  .gcard .gmem button:hover { color: var(--err); }
 </style>
 </head>
 <body>
@@ -128,10 +164,12 @@
   <div class="chdesc" id="h-chdesc"></div>
   <div class="spacer"></div>
   <input id="search" type="search" placeholder="search this channel" title="filter the loaded messages">
+  <button class="viewtab active" id="tab-war" onclick="setView('war')">war room</button>
+  <button class="viewtab" id="tab-admin" onclick="setView('admin')">admin</button>
   <div class="conn" id="conn">…</div>
 </header>
 
-<main>
+<main id="warroom">
   <aside id="chlist">
     <div class="panel-h">channels</div>
     <div class="scroll" id="channels"></div>
@@ -158,14 +196,30 @@
   <aside id="who-panel">
     <div class="panel-h">participants</div>
     <div class="scroll" id="who"></div>
-    <div class="panel-h">groups</div>
-    <div class="scroll short" id="groups"></div>
-    <div class="newch">
+  </aside>
+</main>
+
+<!-- Admin view: full-screen management (participants table + groups). Shown when body.admin. -->
+<main id="admin-view">
+  <div class="adm">
+    <h2 class="adm-h">participants — manage</h2>
+    <table>
+      <thead><tr>
+        <th>alias</th><th>id</th><th>kind</th><th>wake</th><th>state</th>
+        <th>harness · model</th><th>seen</th><th>actions</th>
+      </tr></thead>
+      <tbody id="adm-rows"></tbody>
+    </table>
+  </div>
+  <div class="adm-groups">
+    <h2 class="adm-h">groups — address tags</h2>
+    <div id="adm-groups-list"></div>
+    <div class="newch" style="border-top:none; padding-top:8px">
       <input id="ng-name" placeholder="new group (@name to reach it)">
       <input id="ng-desc" placeholder="who belongs here?">
       <button id="ng-btn">create</button>
     </div>
-  </aside>
+  </div>
 </main>
 
 <script>
@@ -541,6 +595,7 @@ $("text").oninput = wakePreview;
 async function refreshWho() {
   state.who = await api("/api/who");
   renderWho();
+  renderAdminTable();
 }
 
 async function refreshCursors() {
@@ -602,38 +657,6 @@ function renderWho() {
       (cur ? '<div class="readchip">read up to #' + cur.since +
              (cur.unread > 0 ? " · " + cur.unread + " unread" : "") + "</div>" : "") +
       '<div class="seen">' + relTime(p.lastSeen) + "</div>";
-    if (p.id !== "owner") {
-      const forget = document.createElement("button");
-      forget.className = "forget";
-      forget.title = "remove this identity, its token, cursors and membership";
-      forget.textContent = "forget";
-      forget.onclick = async () => {
-        if (!confirm("Forget @" + p.alias + "? Its token stops working and it loses all seats.")) return;
-        try {
-          await api("/api/identity/" + encodeURIComponent(p.id) + "/forget", { method: "POST" });
-          await refreshWho();
-        } catch (e) { alert("forget failed: " + e.message); }
-      };
-      div.appendChild(forget);
-    }
-    if (p.id !== "owner") {
-      const sel = document.createElement("select");
-      sel.title = "seat in channel";
-      for (const ch of state.channels) {
-        const o = document.createElement("option");
-        o.value = ch.id;
-        o.textContent = "#" + ch.name + (p.channels && p.channels.includes(ch.id) ? " ✓" : "");
-        sel.appendChild(o);
-      }
-      sel.onchange = async () => {
-        try {
-          await api("/api/membership", { method: "POST", body: { identity: p.id, channel: sel.value } });
-          await refreshWho();
-          await refreshChannels();
-        } catch (e) { alert("reassign failed: " + e.message); }
-      };
-      div.appendChild(sel);
-    }
     box.appendChild(div);
   }
 }
@@ -657,67 +680,133 @@ function groupBadges(p) {
   return out.join(" ");
 }
 
+// Admin view: participants table (full width) + groups column (right).
+// Rendered into #adm-rows and #adm-groups-list; called from refreshWho / refreshGroups
+// and from setView('admin').
+
+function renderAdminTable() {
+  const tbody = $("adm-rows");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  for (const p of state.who) {
+    const tr = document.createElement("tr");
+    let actions = "";
+    if (p.id !== "owner") {
+      actions +=
+        '<button class="act" data-forget="' + esc(p.id) + '" ' +
+        'title="remove this identity, its token, cursors and membership">forget</button>';
+      let opts = "";
+      for (const ch of state.channels) {
+        opts += '<option value="' + esc(ch.id) + '"' +
+          (p.channels && p.channels.includes(ch.id) ? " selected" : "") +
+          ">" + esc(ch.name) + (p.channels && p.channels.includes(ch.id) ? " ✓" : "") + "</option>";
+      }
+      actions += '<select class="adm-sel" data-seat="' + esc(p.id) + '" title="seat in channel">' + opts + "</select>";
+    }
+    tr.innerHTML =
+      '<td class="alias">@' + esc(p.alias) + "</td>" +
+      '<td class="mono" title="mention by @' + esc(p.id) + '">' + esc(p.id.slice(0, 12)) + "…</td>" +
+      '<td>' + esc(p.kind) + "</td>" +
+      '<td>' + (p.wake === "none" ? '<span class="tag pull">pull</span>' : "mention") + "</td>" +
+      '<td>' + (p.state ? '<span class="state ' + esc(p.state) + '">' + esc(p.state) + "</span>" : "—") + "</td>" +
+      '<td class="mono">' + esc(p.harness || "—") + (p.model ? " · " + esc(p.model) : "") + "</td>" +
+      '<td class="mono">' + relTime(p.lastSeen) + "</td>" +
+      '<td>' + actions + "</td>";
+    tbody.appendChild(tr);
+  }
+  // Wire the actions (event delegation would also work; direct is clearer here).
+  tbody.querySelectorAll("[data-forget]").forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.getAttribute("data-forget");
+      const p = state.who.find(w => w.id === id);
+      if (!confirm("Forget @" + (p ? p.alias : id) + "? Its token stops working and it loses all seats.")) return;
+      try {
+        await api("/api/identity/" + encodeURIComponent(id) + "/forget", { method: "POST" });
+        await refreshWho();
+      } catch (e) { alert("forget failed: " + e.message); }
+    };
+  });
+  tbody.querySelectorAll("[data-seat]").forEach(sel => {
+    sel.onchange = async () => {
+      try {
+        await api("/api/membership", { method: "POST", body: { identity: sel.getAttribute("data-seat"), channel: sel.value } });
+        await refreshWho();
+        await refreshChannels();
+      } catch (e) { alert("reassign failed: " + e.message); }
+    };
+  });
+}
+
 async function refreshGroups() {
   state.groups = await api("/api/groups");
-  const box = $("groups");
+  renderAdminGroups();
+}
+
+function renderAdminGroups() {
+  const box = $("adm-groups-list");
   if (!box) return;
   box.innerHTML = "";
   if (state.groups.length === 0) {
-    box.innerHTML = '<div class="empty">no groups yet — create one below</div>';
+    box.innerHTML = '<div class="empty">no groups yet</div>';
+    return;
   }
   for (const g of state.groups) {
-    const div = document.createElement("div");
-    div.className = "person";
-    const sel = document.createElement("select");
-    sel.title = "assign @" + g.id + " (binding)";
-    for (const p of state.who) {
-      const o = document.createElement("option");
-      o.value = p.id;
-      const isMember = (p.roles || []).includes(g.id) || (p.assigned || []).includes(g.id);
-      o.textContent = "@" + p.alias + (isMember ? " ✓" : "");
-      sel.appendChild(o);
+    const card = document.createElement("div");
+    card.className = "gcard";
+    // Members as chips (× to unassign). Assignment is binding: a participant cannot
+    // leave an owner-assigned group, so only the owner unassigns.
+    let chips = "";
+    for (const memberId of g.members) {
+      const p = state.who.find(w => w.id === memberId);
+      chips += '<span class="gmem">@' + esc(p ? p.alias : memberId) +
+        ' <button data-un="' + esc(memberId) + '" title="remove from @' + esc(g.id) + '">×</button></span>';
     }
-    sel.onchange = async () => {
+    let opts = '<option value="">— assign —</option>';
+    for (const p of state.who) {
+      const isMember = (p.roles || []).includes(g.id) || (p.assigned || []).includes(g.id);
+      opts += '<option value="' + esc(p.id) + '"' + (isMember ? " disabled" : "") +
+        ">" + esc(p.alias) + (isMember ? " ✓" : "") + "</option>";
+    }
+    card.innerHTML =
+      '<div class="ghead"><span class="gname">@' + esc(g.id) + "</span>" +
+      '<span class="tag">' + g.members.length + " member" + (g.members.length === 1 ? "" : "s") + "</span>" +
+      '<span style="flex:1"></span>' +
+      '<button class="act" data-delg="' + esc(g.id) + '" title="delete group">×</button></div>' +
+      (g.description ? '<div class="gdesc">' + esc(g.description) + "</div>" : "") +
+      '<div class="gmembers">' + (chips || '<span class="gdesc">no members</span>') + "</div>" +
+      '<select class="adm-sel" data-assign="' + esc(g.id) + '" style="margin-top:8px; width:100%">' + opts + "</select>";
+    box.appendChild(card);
+  }
+  box.querySelectorAll("[data-un]").forEach(btn => {
+    btn.onclick = async () => {
+      const g = btn.closest(".gcard").querySelector(".gname").textContent.slice(1);
       try {
-        await api("/api/groups/" + encodeURIComponent(g.id) + "/assign",
+        await api("/api/groups/" + encodeURIComponent(g) + "/unassign",
+          { method: "POST", body: { identity: btn.getAttribute("data-un") } });
+        await refreshWho(); await refreshGroups();
+      } catch (e) { alert("unassign failed: " + e.message); }
+    };
+  });
+  box.querySelectorAll("[data-assign]").forEach(sel => {
+    sel.onchange = async () => {
+      if (!sel.value) return;
+      try {
+        await api("/api/groups/" + encodeURIComponent(sel.getAttribute("data-assign")) + "/assign",
           { method: "POST", body: { identity: sel.value } });
         await refreshWho(); await refreshGroups();
       } catch (e) { alert("assign failed: " + e.message); }
     };
-    div.innerHTML =
-      '<div class="row1"><span class="alias">@' + esc(g.id) + "</span>" +
-      '<span class="tag">' + g.members.length + " member" + (g.members.length === 1 ? "" : "s") + "</span></div>" +
-      (g.description ? '<div class="meta">' + esc(g.description) + "</div>" : "");
-    // Members are listed so they can be taken out as well as put in. Assignment is binding:
-    // a participant cannot leave an owner-assigned group, so only the owner can unassign.
-    for (const memberId of g.members) {
-      const p = state.who.find(w => w.id === memberId);
-      const btn = document.createElement("button");
-      btn.className = "del";
-      btn.title = "remove from @" + g.id;
-      btn.textContent = "× " + (p ? p.alias : memberId);
-      btn.onclick = async () => {
-        try {
-          await api("/api/groups/" + encodeURIComponent(g.id) + "/unassign",
-            { method: "POST", body: { identity: memberId } });
-          await refreshWho(); await refreshGroups();
-        } catch (e) { alert("unassign failed: " + e.message); }
-      };
-      div.appendChild(btn);
-    }
-    div.appendChild(sel);
-    const del = document.createElement("button");
-    del.className = "del";
-    del.title = "delete group";
-    del.textContent = "×";
-    del.onclick = async () => {
-      if (!confirm("Delete @" + g.id + "? Members keep their identity but lose the tag.")) return;
-      await api("/api/groups/" + encodeURIComponent(g.id) + "/delete", { method: "POST" });
-      await refreshWho(); await refreshGroups();
+  });
+  box.querySelectorAll("[data-delg]").forEach(btn => {
+    btn.onclick = async () => {
+      const g = btn.getAttribute("data-delg");
+      if (!confirm("Delete @" + g + "? Members keep their identity but lose the tag.")) return;
+      try {
+        await api("/api/groups/" + encodeURIComponent(g) + "/delete", { method: "POST" });
+        await refreshWho(); await refreshGroups();
+      } catch (e) { alert("delete failed: " + e.message); }
     };
-    div.appendChild(del);
-    box.appendChild(div);
-  }
+  });
 }
 
 const ngBtn = $("ng-btn");
@@ -749,6 +838,22 @@ $("h-chdesc").onclick = async () => {
     selectChannel(state.active);
   } catch (e) { alert("could not update the description: " + e.message); }
 };
+
+// ── View tabs: war room (default) vs admin (full-screen management) ─────────────
+// The war room is the chat: channels, messages, a clean roster. Admin is a separate
+// full-screen view — participants table (forget / reassign) + groups (assign /
+// unassign / delete / create). Preference persists in localStorage.
+
+function setView(v) {
+  const admin = v === "admin";
+  document.body.classList.toggle("admin", admin);
+  $("tab-war").classList.toggle("active", !admin);
+  $("tab-admin").classList.toggle("active", admin);
+  localStorage.setItem("pigeon.view", v);
+  if (admin) { renderAdminTable(); renderAdminGroups(); }
+}
+const savedView = localStorage.getItem("pigeon.view");
+if (savedView === "admin") setView("admin");
 
 // ── Auto-login if a token is stored ───────────────────────────────────────────────
 

@@ -18,7 +18,7 @@ var store = new Store(dataDir, config.HotThreshold);
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders(); // console only, minimal
-builder.WebHost.UseUrls($"http://0.0.0.0:{config.Port}");
+builder.WebHost.UseUrls($"http://{config.Bind}:{config.Port}");
 // Web root = wwwroot next to the exe. .NET 10 forbids UseWebRoot after builder creation
 // ("web root changed" crash), so the launcher starts the server with WorkingDirectory
 // = exe dir (PigeonService.StartAsync), and the default web root lands on wwwroot.
@@ -367,9 +367,9 @@ app.MapPost("/api/groups/{groupId}/unassign", (HttpContext ctx, string groupId, 
 
 Mcp.Map(app, store, config, AuthId);
 
-Console.WriteLine($"pigeon: listening on http://0.0.0.0:{config.Port} (data: {dataDir})");
+Console.WriteLine($"pigeon: listening on http://{config.Bind}:{config.Port} (data: {dataDir})");
 Console.WriteLine($"pigeon: owner token: {config.OwnerToken}");
-Console.WriteLine($"pigeon: MCP at http://0.0.0.0:{config.Port}/mcp (auto-join: {(config.McpAutoJoin ? "on" : "off")})");
+Console.WriteLine($"pigeon: MCP at http://{config.Bind}:{config.Port}/mcp (auto-join: {(config.McpAutoJoin ? "on" : "off")})");
 app.Run();
 
 // ── Request payloads (web-shape) ────────────────────────────────────────────────────
@@ -388,6 +388,12 @@ public sealed record PigeonRoleSelf(string Group);
 public sealed class ServerConfig
 {
     public int Port { get; set; } = 8199;
+    /// <summary>
+    /// Bind address. Default 127.0.0.1 (local only — the server is a LAN toy, not a
+    /// public endpoint). Set to 0.0.0.0 to expose on all interfaces (cross-machine,
+    /// Phase 3).
+    /// </summary>
+    public string Bind { get; set; } = "127.0.0.1";
     public string OwnerToken { get; set; } = "";
     /// <summary>Consecutive agent messages in a thread before it is tagged hot. 0 = off (default).</summary>
     public int HotThreshold { get; set; } = 0;
