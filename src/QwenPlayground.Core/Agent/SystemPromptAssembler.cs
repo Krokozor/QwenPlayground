@@ -63,32 +63,34 @@ public sealed class SystemPromptAssembler
     {
         var id = _currentSessionId();
         var role = id == MainAgent.SessionId
-            ? "main — главный чат владельца"
+            ? "main — the owner's primary chat (long-term memory is active here)"
             : _promptKey() == ChatProfileSet.SubagentPromptKey
-                ? "субагент (спавнен main-агентом, ходишь в своём окне/пузыре)"
-                : "pinned-сессия (отдельное окно или не-main сессия)";
+                ? "subagent — spawned by the main agent, running in its own window"
+                : "working session — a regular independent chat (own window or a non-main session)";
         var root = _root();
-        // Папка сессии: root не задан — относительный путь от корня проекта (file-тулы
-        // резолвят его туда, всё сходится). Root сдвинут (set_session_root) — относительный
-        // путь резолвится ОТ НОВОГО root'а и указывает мимо; показываем абсолютный путь.
+        // Session folder: no root set — relative path from the project root (file tools
+        // resolve it there, everything lines up). Root moved (set_session_root) — a
+        // relative path would resolve from the NEW root and point at the wrong place;
+        // show the absolute path.
         var sessionPath = root is null ? $"sessions/{id}/" : _sessionDir();
         var lines = new List<string>
         {
-            "## Твоя сессия",
+            "## Your session",
             string.Empty,
-            $"- Сессия: {id}; роль: {role}.",
-            $"- Папка сессии: {sessionPath} — твой ЛИЧНЫЙ СКЛАД «рабочих документов»: " +
-            "задачи, журнал действий, черновики, заметки. Храни туда всё, что должно пережить " +
-            "компакцию и рестарт приложения (TODO.json и layers.json уже живут здесь).",
+            $"- Session: {id}; role: {role}.",
+            $"- Session folder: {sessionPath} — your PRIVATE STORE for working documents: " +
+            "tasks, action logs, drafts, notes. Keep everything here that must survive " +
+            "compaction and app restarts (TODO.json and layers.json are stored here by the app).",
             root is null
-                ? "- Рабочая папка (root инструментов): не задана — у path-тулов нет рабочей папки."
-                : $"- Рабочая папка (root инструментов): {root} — относительные пути file-тулов " +
-                  "и cwd shell резолвятся от неё. Сменить папку в рамках чата — тул set_session_root.",
+                ? "- Working folder (tool root): not set — path tools have no working folder."
+                : $"- Working folder (tool root): {root} — relative file-tool paths and the " +
+                  "shell cwd resolve from it. Change the folder within this chat with the " +
+                  "set_session_root tool.",
         };
         if (id != MainAgent.SessionId)
         {
-            lines.Add("- То, что ты не main, не уменьшает твою важность: у тебя те же инструменты " +
-                      "и своя ответственность за свой контекст.");
+            lines.Add("- Not being main does not reduce your importance: you have the same " +
+                      "tools and your own responsibility for your own context.");
         }
         return string.Join("\n", lines);
     }

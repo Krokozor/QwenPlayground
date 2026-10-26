@@ -12,7 +12,7 @@ namespace QwenPlayground.App.Tools;
 [Tool("switch_tab",
     "Switch the tab of your own app window so you can inspect a different screen. Known tabs: " +
     "'Чат' (chat), 'Превью промпта' (prompt preview), 'Настройки' (settings), 'Память' (memory), " +
-    "'Суммаризация' (summarization), 'Диагностика' (diagnostics). Accepts the tab header text " +
+    "'Суммаризация' (summarization), 'Диагностика' (diagnostics), 'Браузер' (browser). Accepts the tab header text " +
     "(case-insensitive) or a 1-based index. Pair with the screenshot tool to see the result.")]
 public sealed class SwitchTabTool : AgentTool
 {

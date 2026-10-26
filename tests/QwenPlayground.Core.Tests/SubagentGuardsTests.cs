@@ -98,6 +98,6 @@ public sealed class SubagentGuardsTests
         var result = await SpawnDepth.RunAsSubagentAsync(
             () => tool.ExecuteAsync(Context(SlotAllocation.Subagent), CancellationToken.None));
 
-        Assert.Contains("лимит глубины", result);
+        Assert.Contains("depth limit", result);
     }
 }
