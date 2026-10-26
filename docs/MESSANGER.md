@@ -320,6 +320,99 @@ Two layers, so the harness family can adopt it without pain:
   the human participant gets the platform's notification. Bridges are just other
   clients of the same API.
 
+### 14.1 MCP adapter (implemented 2026-10-19)
+
+`POST /mcp` on the same server — JSON-RPC 2.0 over Streamable HTTP, one endpoint, no
+SDK (~300 lines, `tools/pigeon/Pigeon.Server/Mcp.cs`). It calls the same `Store`
+methods the REST handlers do; nothing new was added to the data layer.
+
+| MCP tool | maps to |
+|---|---|
+| `pigeon_who` | `store.Who()` |
+| `pigeon_channels` | `store.Channels()` |
+| `pigeon_join` | `store.Reassign` |
+| `pigeon_read` | `store.Read` — advances the reader cursor |
+| `pigeon_send` | `store.Send` |
+| `pigeon_status` | `store.SetStatus` |
+
+**Protocol revision.** The adapter implements the *legacy*, initialize-based revision
+and answers `2025-11-25`. The current spec revision (`2026-07-28`) removed the
+`initialize` handshake in favour of a mandatory `server/discover` RPC, but no shipped
+client speaks it (opencode 1.18.35: zero occurrences of `server/discover`, 79 of
+`2025-11-25`). Revisit when a client does — only the envelope handling changes, the
+tool catalogue does not.
+
+**Identity — "if it introduced itself, we know who it is; if not, we name it".**
+
+Every MCP client sends `clientInfo.name = "opencode"`, so the name alone cannot tell two
+machines apart — and `Store.Join` does not disambiguate: a known id is re-authenticated in
+place, so two clients sharing one id would share one alias, one status line and **one read
+cursor**, and a mention could no longer separate them. (The id-derived alias suffix only
+runs on *create* — hence the guard below.)
+
+- **Introduced** — the client presents a bearer token. `AuthByToken` names it outright.
+  This is the durable path: the identity outlives the process, the address and the restart.
+- **Not introduced** — auto-join derives an id from `?client=` (or `clientInfo.name`):
+  the bare `mcp:<name>` if it is free **or already ours** (that is a restart, not a second
+  box), and `mcp:<name>@<host>` only when the bare id belongs to a *different* recorded
+  host. A client that named nothing at all gets `mcp:client-<host>`. `initialize` then says
+  plainly that the server chose the name and recommends the two durable fixes.
+
+**Connection.** `PigeonIdentity.Connection` records where a participant is reachable from
+(`mcp#49c40ded@192.168.1.77`), refreshed with the heartbeat. It is *not* part of identity —
+one identity may be reached from several addresses, and the identity outlives the address.
+It answers "which box is that?" when the id cannot, and it is the input the auto-join
+disambiguation uses. Reverse DNS is deliberately not used: on this network `127.0.0.1`
+resolves to `kubernetes.docker.internal`.
+
+A generated alias must stay **mentionable**: `@tokens` match `[A-Za-z0-9][A-Za-z0-9_-]*`
+and stop at a dot, so the id tail used to disambiguate is sanitized before it becomes part
+of a name (`mcp:x@10.0.0.7` → `@x-0-7`, never `@x-0.0.7`).
+
+`pigeonAutoJoin: false` in `pigeon.config.json` requires a real token on every MCP call.
+
+**Persisting an identity on the client side.** MCP gives a remote server no storage, but
+the client config layer does — OpenCode substitutes `{env:VAR}` and `{file:path}` inside
+`mcp.*.headers`, so the token can live outside the config, one file per machine:
+
+```jsonc
+{ "mcp": { "pigeon": {
+  "type": "remote",
+  "url": "http://192.168.x.x:8199/mcp",
+  "oauth": false,
+  "enabled": true,
+  "headers": { "Authorization": "Bearer {file:~/.pigeon/lab.token}" }  // no trailing newline
+} } }
+```
+
+The file is substituted verbatim, so write it without a line break. Provisioning once per
+machine is `POST /api/join` (owner token) and writing the returned token to that file;
+afterwards the same config travels between machines unchanged.
+
+**Still a pull client (§5, §9).** The adapter never long-polls and never pushes. A
+mention of an MCP participant is recorded and wakes nothing — there is no MCP
+mechanism that can start an LLM turn, and none is likely to appear. The asymmetry
+is deliberate: an MCP participant *can* wake a push-capable one, so the working
+pattern is "dispatch a task, read the answer later", not conversation.
+
+Client config (opencode):
+
+```jsonc
+{ "mcp": { "pigeon": {
+  "type": "remote",
+  "url": "http://192.168.x.x:8199/mcp?client=opencode",
+  "oauth": false,
+  "enabled": true,
+  "headers": { "Authorization": "Bearer <token>" }   // optional: auto-join without it
+} } }
+```
+
+Tests: `tests/pigeon_mcp.ps1` — raw JSON-RPC handshake (initialize → tools/list →
+tools/call), plus the cursor semantics. 41 assertions, no MCP client involved.
+
+The operational reference (how to connect, identity, troubleshooting, and the design
+notes for groups / read windows / bridges) is [`docs/MCP.md`](MCP.md).
+
 ## 15. Phases
 
 **Phase 0 — MVP (the demo)**

@@ -27,6 +27,8 @@
              color: var(--dim); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
   .panel-h button { background: none; border: none; color: var(--acc); cursor: pointer; font-size: 14px; }
   .scroll { overflow-y: auto; flex: 1; }
+/* groups sit under participants; capped so the roster above stays the main thing */
+.scroll.short { flex: 0 1 auto; max-height: 34%; }
   .ch { padding: 7px 12px; cursor: pointer; display: flex; gap: 6px; align-items: center; border-left: 3px solid transparent; }
   .ch:hover { background: var(--bg3); }
   .ch.active { background: var(--bg3); border-left-color: var(--acc); }
@@ -60,6 +62,26 @@
   #composer button { background: var(--acc); color: #10131a; border: none; border-radius: 8px; padding: 0 18px;
                      font-weight: 600; cursor: pointer; }
   #composer button:disabled { opacity: .4; cursor: default; }
+  /* The cost of a mention, shown before you send. */
+  #wakeinfo { padding: 4px 14px 8px; color: var(--dim); font-size: 11px; background: var(--bg2);
+              border-top: 1px solid var(--line); min-height: 18px; }
+  #wakeinfo .wake { color: var(--ok); } #wakeinfo .pull { color: var(--warn); }
+  #wakeinfo .miss { color: var(--err); }
+  .person .seen { color: var(--dim); font-size: 11px; margin-top: 2px; }
+  .person .forget { background: none; border: none; color: var(--dim); cursor: pointer;
+                    font-size: 11px; padding: 0; margin-top: 3px; }
+  .person .forget:hover { color: var(--err); }
+  /* Activity, not just presence: a dot says a process exists, a state says somebody is awake. */
+  .state { font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; color: var(--dim); }
+  .state.idle { color: var(--ok); } .state.generating, .state.dispatching { color: var(--acc); }
+  .state.hung, .state.errored { color: var(--err); }
+  .readchip { color: var(--dim); font-size: 10px; margin-top: 4px; }
+  .dateline { color: var(--dim); font-size: 11px; text-align: center; margin: 6px 0 2px; }
+  #search { background: var(--bg3); border: 1px solid var(--line); color: var(--fg);
+            border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; width: 200px; }
+  .msg .replyto { color: var(--dim); font-size: 11px; }
+  .harness-panel { margin-top: 5px; font-size: 11px; color: var(--dim);
+                   border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
   .person { padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
   .person .row1 { display: flex; gap: 6px; align-items: center; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
@@ -105,6 +127,7 @@
   <div class="chname" id="h-chname">—</div>
   <div class="chdesc" id="h-chdesc"></div>
   <div class="spacer"></div>
+  <input id="search" type="search" placeholder="search this channel" title="filter the loaded messages">
   <div class="conn" id="conn">…</div>
 </header>
 
@@ -129,11 +152,19 @@
       <textarea id="text" placeholder="message… (@alias to mention)"></textarea>
       <button id="send">send</button>
     </div>
+    <div id="wakeinfo" title="what your @tokens will do before you send"></div>
   </section>
 
   <aside id="who-panel">
     <div class="panel-h">participants</div>
     <div class="scroll" id="who"></div>
+    <div class="panel-h">groups</div>
+    <div class="scroll short" id="groups"></div>
+    <div class="newch">
+      <input id="ng-name" placeholder="new group (@name to reach it)">
+      <input id="ng-desc" placeholder="who belongs here?">
+      <button id="ng-btn">create</button>
+    </div>
   </aside>
 </main>
 
@@ -145,11 +176,13 @@
 const $ = id => document.getElementById(id);
 const state = {
   token: localStorage.getItem("pigeon.token") || "",
-  channels: [], who: [], active: null, thread: null,
+  channels: [], who: [], groups: [], active: null, thread: null,
   cursor: {},          // channel -> last read id (server-side cursor is authoritative; this drives the poll)
+  cursors: [],         // read receipts for the active channel: who has read up to where
   msgs: {},            // channel -> [PigeonMessage]
   pollGen: 0,          // generation counter to cancel stale long-polls
   heartbeat: null,
+  search: "",
 };
 
 async function api(path, opts = {}) {
@@ -165,6 +198,14 @@ function setConn(ok, text) {
   const el = $("conn");
   el.className = "conn " + (ok ? "ok" : "bad");
   el.textContent = text;
+}
+
+function relTime(ts) {
+  const s = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (s < 60) return "seen " + Math.round(s) + "s ago";
+  if (s < 3600) return "seen " + Math.round(s / 60) + " min ago";
+  if (s < 86400) return "seen " + Math.round(s / 3600) + " h ago";
+  return "seen " + Math.round(s / 86400) + " d ago";
 }
 
 function fmtTime(ts) {
@@ -204,10 +245,11 @@ $("token").onkeydown = e => { if (e.key === "Enter") tryLogin($("token").value.t
 async function boot() {
   await refreshWho();
   await refreshChannels();
+  await refreshGroups();
   // seat myself: the owner is a human participant; give me the first channel if I have none.
   const me = state.who.find(w => w.id === "owner");
   if (me && (!me.channels || me.channels.length === 0) && state.channels.length > 0) {
-    try { await api("/api/membership", { method: "POST", body: { identity: "owner", channel: state.channels[0].id } }); } catch {}
+    await seatMe(state.channels[0].id);
     await refreshWho();      // my membership changed — re-read the cards
     await refreshChannels();
   }
@@ -268,12 +310,32 @@ $("nc-btn").onclick = async () => {
   try {
     const ch = await api("/api/channels", { method: "POST", body: { name, description: $("nc-desc").value.trim() } });
     $("nc-name").value = ""; $("nc-desc").value = "";
+    // Seat myself in the channel I just created. boot()'s self-seat only fires when a channel
+    // already existed at page load, so creating the very first one left the owner outside it -
+    // and the first message then failed with a bare 403. Creating a channel you cannot post in
+    // is not a state worth having: the owner is the only principal that can create one.
+    await seatMe(ch.id);
     await refreshChannels();
     selectChannel(ch.id);
   } catch (e) { alert("create failed: " + e.message); }
 };
 
+// Put the owner into a channel, if not already there. Never throws: seating is a convenience,
+// not something to block the UI on.
+async function seatMe(id) {
+  const me = state.who.find(w => w.id === "owner");
+  if (!me || (me.channels || []).includes(id)) return;
+  try {
+    await api("/api/membership", { method: "POST", body: { identity: "owner", channel: id } });
+    me.channels = (me.channels || []).concat([id]);
+  } catch {}
+}
+
 function selectChannel(id) {
+  // Recovery path: a seatless owner (fresh server, wiped membership, a tab opened before the
+  // channel existed) otherwise only discovers it as a 403 on the first send.
+  const me = state.who.find(w => w.id === "owner");
+  if (me && (!me.channels || me.channels.length === 0)) seatMe(id);
   state.active = id;
   state.thread = null;
   state.pollGen++;
@@ -281,8 +343,10 @@ function selectChannel(id) {
   const ch = state.channels.find(c => c.id === id);
   $("h-chname").textContent = ch ? "#" + ch.name : id;
   $("h-chdesc").textContent = ch && ch.description ? "— " + ch.description : "";
+  $("h-chdesc").title = "click to edit what this channel is for";
   renderChannels();
   loadChannel(id, state.pollGen);
+  refreshCursors().catch(() => {});
 }
 
 // ── Messages: initial load + long-poll loop ───────────────────────────────────────
@@ -309,11 +373,7 @@ async function poll(channel, since, gen) {
       const batch = await api(`/api/messages?channel=${encodeURIComponent(channel)}&since=${s}&wait=25`);
       if (gen !== state.pollGen) return;
       if (batch.length > 0) {
-        const arr = state.msgs[channel] || (state.msgs[channel] = []);
-        // dedupe against the peek history
-        const known = new Set(arr.map(m => m.id));
-        for (const m of batch) if (!known.has(m.id)) arr.push(m);
-        arr.sort((a, b) => a.id - b.id);
+        for (const m of batch) upsert(channel, m);
         s = Math.max(s, ...batch.map(m => m.id));
         state.cursor[channel] = s;
         renderMsgs();
@@ -327,6 +387,18 @@ async function poll(channel, since, gen) {
   }
 }
 
+// One place where a message enters the local view. The duplicate bug: send() pushes the
+// message it just posted, while a long-poll that started BEFORE the post is still in flight
+// and returns the same message. Whichever response arrives first is the one that counts —
+// without the id check the other one renders the message twice.
+function upsert(channel, m) {
+  const arr = state.msgs[channel] || (state.msgs[channel] = []);
+  if (arr.some(x => x.id === m.id)) return false;
+  arr.push(m);
+  arr.sort((a, b) => a.id - b.id);
+  return true;
+}
+
 function checkMentions(batch) {
   // A mention of the owner: flash + system beep-ish (title blink).
   for (const m of batch)
@@ -338,18 +410,34 @@ function checkMentions(batch) {
 
 function renderMsgs() {
   const box = $("msglist");
-  const arr = (state.msgs[state.active] || []).filter(m =>
+  let arr = (state.msgs[state.active] || []).filter(m =>
     state.thread ? (m.thread === state.thread || m.id === state.thread) : true);
+  if (state.search) {
+    const q = state.search.toLowerCase();
+    arr = arr.filter(m => m.text.toLowerCase().includes(q) ||
+      (m.author.alias || "").toLowerCase().includes(q));
+  }
   box.innerHTML = "";
   if (arr.length === 0) {
-    box.innerHTML = '<div class="empty">' + (state.thread ? "no messages in this thread yet" : "no messages yet — say hi") + "</div>";
+    box.innerHTML = '<div class="empty">' + (state.search ? "nothing matches “" + esc(state.search) + "”"
+      : (state.thread ? "no messages in this thread yet" : "no messages yet — say hi")) + "</div>";
     return;
   }
+  let lastDay = null;
   for (const m of arr) {
+    const day = new Date(m.ts).toLocaleDateString();
+    if (day !== lastDay) {
+      const dl = document.createElement("div");
+      dl.className = "dateline";
+      dl.textContent = day;
+      box.appendChild(dl);
+      lastDay = day;
+    }
     const div = document.createElement("div");
     div.className = "msg" + (m.author.kind === "human" ? " human" : "") +
       ((m.mentions || []).includes("owner") ? " mention-me" : "");
     const isThreadRoot = m.thread == null && arr.some(x => x.thread === m.id);
+    const seen = readersOf(m.id).length;
     div.innerHTML =
       '<div class="head">' +
       '<span class="alias" title="' + esc(m.author.id) + '">@' + esc(m.author.alias) + "</span>" +
@@ -358,10 +446,12 @@ function renderMsgs() {
       (m.author.harness ? '<span class="harness">[' + esc(m.author.harness) + "]</span>" : "") +
       (m.author.model ? '<span class="model">' + esc(m.author.model) + "</span>" : "") +
       (m.thread != null ? '<span class="tag">thread</span>' : "") +
+      (m.replyTo ? '<span class="replyto">re: #' + m.replyTo + "</span>" : "") +
       '<span class="time">' + fmtTime(m.ts) + "</span>" +
       "</div>" +
       '<div class="text">' + esc(m.text) + "</div>" +
-      (isThreadRoot ? '<button class="threadbtn">→ open thread</button>' : "");
+      (isThreadRoot ? '<button class="threadbtn">→ open thread</button>' : "") +
+      (state.cursors.length ? '<div class="readchip">read by ' + seen + " of " + state.cursors.length + "</div>" : "");
     if (isThreadRoot)
       div.querySelector(".threadbtn").onclick = () => openThread(m.id);
     box.appendChild(div);
@@ -392,8 +482,7 @@ async function send() {
     const m = await api("/api/messages", { method: "POST", body: {
       channel: state.active, thread: state.thread, text,
     }});
-    const arr = state.msgs[state.active] || (state.msgs[state.active] = []);
-    arr.push(m);
+    upsert(state.active, m);
     state.cursor[state.active] = Math.max(state.cursor[state.active] || 0, m.id);
     $("text").value = "";
     renderMsgs();
@@ -406,11 +495,66 @@ $("text").onkeydown = e => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
 };
 
+// ── Wake preview ────────────────────────────────────────────────────────────────────
+// A mention is not punctuation: it wakes somebody. The server resolves @tokens on send,
+// so the only honest preview is to run the same resolution locally and show the cost
+// before the message exists.
+function resolveTokens(text) {
+  const out = [];
+  // "@\alias" is the escape: the backslash sits before the @ and stops it from being an
+  // address. A token may also be a guid ("@a05575…") or a group name ("@agents").
+  const re = /@([A-Za-z0-9_.\-]+)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > 0 && text[m.index - 1] === "\\") continue;
+    out.push(m[1]);
+  }
+  return out;
+}
+
+function wakePreview() {
+  const el = $("wakeinfo");
+  const tokens = resolveTokens($("text").value);
+  if (tokens.length === 0) { el.textContent = ""; return; }
+  const parts = [];
+  for (const t of tokens) {
+    const g = state.groups.find(x => x.id === t.toLowerCase());
+    if (g) {
+      const members = g.members.map(id => state.who.find(w => w.id === id)).filter(Boolean);
+      const push = members.filter(p => p.wake !== "none" && p.online).length;
+      parts.push(`@${g.id} → ${members.length} member(s), wakes ${push}`);
+      continue;
+    }
+    const p = state.who.find(w => w.alias === t || w.id === t || w.alias.toLowerCase() === t.toLowerCase());
+    if (!p) { parts.push(`@${t} → nobody by that name`); continue; }
+    parts.push(p.wake === "none"
+      ? `@${p.alias} → pull-only, no wake`
+      : (p.online ? `@${p.alias} → wakes` : `@${p.alias} → online=false, mention recorded`));
+  }
+  el.innerHTML = parts.map(p => '<span class="' + (p.includes("wakes") ? "wake" : "pull") + '">' + esc(p) + "</span>").join(" · ");
+}
+
+$("text").oninput = wakePreview;
+
 // ── Who panel ─────────────────────────────────────────────────────────────────────
 
 async function refreshWho() {
   state.who = await api("/api/who");
   renderWho();
+}
+
+async function refreshCursors() {
+  if (!state.active) return;
+  try {
+    state.cursors = await api("/api/cursors?channel=" + encodeURIComponent(state.active));
+  } catch { state.cursors = []; }
+  renderWho();
+  renderMsgs();
+}
+
+// Who has read this message? A participant has read it when their cursor is at or past its id.
+function readersOf(id) {
+  return state.cursors.filter(c => c.since >= id);
 }
 
 function renderWho() {
@@ -419,16 +563,59 @@ function renderWho() {
   for (const p of state.who) {
     const div = document.createElement("div");
     div.className = "person";
+    const cur = state.cursors.find(c => c.identity === p.id);
+    // The bridge reports what it *observed* about its harness as JSON. Render it as a panel
+    // rather than dumping the raw string: version, model, session, the last turn's cost.
+    let harnessPanel = "";
+    if (p.status) {
+        try {
+            const s = JSON.parse(p.status);
+            if (s && s.harness) {
+                const w = s.lastWake || {};
+                harnessPanel =
+                    '<div class="harness-panel">' +
+                    esc(s.harness) + (s.version ? " " + esc(s.version) : "") +
+                    " · " + esc(s.model || "unknown model") +
+                    (s.modelSource ? " (" + esc(s.modelSource) + ")" : "") +
+                    (s.session ? " · session " + esc(String(s.session).slice(0, 12)) : "") +
+                    (w.id ? " · last wake #" + w.id + " " + (w.durationMs / 1000).toFixed(1) + "s exit " + w.exit
+                          + (w.tokens ? " · " + w.tokens + " tokens" : "")
+                          + (w.tools && w.tools.length ? " · " + esc(w.tools.join(",")) : "") : "") +
+                    "</div>";
+            }
+        } catch { /* not JSON: show it as a plain status line */ }
+    }
     div.innerHTML =
       '<div class="row1"><span class="dot' + (p.online ? " on" : "") + '"></span>' +
       '<span class="alias">@' + esc(p.alias) + "</span>" +
       '<span class="tag">' + esc(p.kind) + "</span>" +
       (p.wake === "none" ? '<span class="tag pull">pull-only</span>' : "") +
+      (p.state ? '<span class="state ' + esc(p.state) + '">' + esc(p.state) + "</span>" : "") +
       "</div>" +
       // The identifier: [guid]-[model] (mention the agent by @guid in the text).
-      '<div class="meta">' + esc(p.harness || "—") + (p.model ? " · " + esc(p.model) : "") + "</div>" +
+      '<div class="meta">' + esc(p.harness || "—") + (p.model ? " · " + esc(p.model) : "") +
+      (p.connection ? " · " + esc(p.connection) : "") + "</div>" +
       (p.id !== "owner" ? '<div class="guid" title="mention by @' + esc(p.id) + '">' + esc(p.id) + "</div>" : "") +
-      (p.status ? '<div class="status">' + esc(p.status) + "</div>" : "");
+      (groupBadges(p) ? '<div class="meta">' + groupBadges(p) + "</div>" : "") +
+      (p.status && !harnessPanel ? '<div class="status">' + esc(p.status) + "</div>" : "") +
+      harnessPanel +
+      (cur ? '<div class="readchip">read up to #' + cur.since +
+             (cur.unread > 0 ? " · " + cur.unread + " unread" : "") + "</div>" : "") +
+      '<div class="seen">' + relTime(p.lastSeen) + "</div>";
+    if (p.id !== "owner") {
+      const forget = document.createElement("button");
+      forget.className = "forget";
+      forget.title = "remove this identity, its token, cursors and membership";
+      forget.textContent = "forget";
+      forget.onclick = async () => {
+        if (!confirm("Forget @" + p.alias + "? Its token stops working and it loses all seats.")) return;
+        try {
+          await api("/api/identity/" + encodeURIComponent(p.id) + "/forget", { method: "POST" });
+          await refreshWho();
+        } catch (e) { alert("forget failed: " + e.message); }
+      };
+      div.appendChild(forget);
+    }
     if (p.id !== "owner") {
       const sel = document.createElement("select");
       sel.title = "seat in channel";
@@ -451,7 +638,117 @@ function renderWho() {
   }
 }
 
-setInterval(() => { refreshWho().catch(() => {}); refreshUnread().catch(() => {}); }, 15000);
+// ── Groups ─────────────────────────────────────────────────────────────────────────
+// An address that reaches a kind of agent. Owner-assigned (✓) is binding — the participant
+// cannot leave it — so it is marked distinctly from a voluntary tag the agent picked itself.
+
+function groupBadges(p) {
+  const out = [];
+  for (const g of state.groups) {
+    const own = (p.roles || []).includes(g.id);
+    const assigned = (p.assigned || []).includes(g.id);
+    if (own || assigned) {
+      out.push('<span class="tag' + (assigned ? "" : " pull") + '" title="'
+        + (assigned ? "owner-assigned — cannot be left by the participant"
+                    : "joined voluntarily — the participant may leave")
+        + '">@' + esc(g.id) + (assigned ? " ✓" : "") + "</span>");
+    }
+  }
+  return out.join(" ");
+}
+
+async function refreshGroups() {
+  state.groups = await api("/api/groups");
+  const box = $("groups");
+  if (!box) return;
+  box.innerHTML = "";
+  if (state.groups.length === 0) {
+    box.innerHTML = '<div class="empty">no groups yet — create one below</div>';
+  }
+  for (const g of state.groups) {
+    const div = document.createElement("div");
+    div.className = "person";
+    const sel = document.createElement("select");
+    sel.title = "assign @" + g.id + " (binding)";
+    for (const p of state.who) {
+      const o = document.createElement("option");
+      o.value = p.id;
+      const isMember = (p.roles || []).includes(g.id) || (p.assigned || []).includes(g.id);
+      o.textContent = "@" + p.alias + (isMember ? " ✓" : "");
+      sel.appendChild(o);
+    }
+    sel.onchange = async () => {
+      try {
+        await api("/api/groups/" + encodeURIComponent(g.id) + "/assign",
+          { method: "POST", body: { identity: sel.value } });
+        await refreshWho(); await refreshGroups();
+      } catch (e) { alert("assign failed: " + e.message); }
+    };
+    div.innerHTML =
+      '<div class="row1"><span class="alias">@' + esc(g.id) + "</span>" +
+      '<span class="tag">' + g.members.length + " member" + (g.members.length === 1 ? "" : "s") + "</span></div>" +
+      (g.description ? '<div class="meta">' + esc(g.description) + "</div>" : "");
+    // Members are listed so they can be taken out as well as put in. Assignment is binding:
+    // a participant cannot leave an owner-assigned group, so only the owner can unassign.
+    for (const memberId of g.members) {
+      const p = state.who.find(w => w.id === memberId);
+      const btn = document.createElement("button");
+      btn.className = "del";
+      btn.title = "remove from @" + g.id;
+      btn.textContent = "× " + (p ? p.alias : memberId);
+      btn.onclick = async () => {
+        try {
+          await api("/api/groups/" + encodeURIComponent(g.id) + "/unassign",
+            { method: "POST", body: { identity: memberId } });
+          await refreshWho(); await refreshGroups();
+        } catch (e) { alert("unassign failed: " + e.message); }
+      };
+      div.appendChild(btn);
+    }
+    div.appendChild(sel);
+    const del = document.createElement("button");
+    del.className = "del";
+    del.title = "delete group";
+    del.textContent = "×";
+    del.onclick = async () => {
+      if (!confirm("Delete @" + g.id + "? Members keep their identity but lose the tag.")) return;
+      await api("/api/groups/" + encodeURIComponent(g.id) + "/delete", { method: "POST" });
+      await refreshWho(); await refreshGroups();
+    };
+    div.appendChild(del);
+    box.appendChild(div);
+  }
+}
+
+const ngBtn = $("ng-btn");
+if (ngBtn) ngBtn.onclick = async () => {
+  const name = $("ng-name").value.trim();
+  if (!name) return;
+  try {
+    await api("/api/groups", { method: "POST", body: { name, description: $("ng-desc").value.trim() } });
+    $("ng-name").value = ""; $("ng-desc").value = "";
+    await refreshGroups();
+  } catch (e) { alert("create failed: " + e.message); }
+};
+
+setInterval(() => { refreshWho().catch(() => {}); refreshUnread().catch(() => {}); refreshCursors().catch(() => {}); }, 15000);
+
+$("search").oninput = e => { state.search = e.target.value.trim(); renderMsgs(); };
+
+// The description is not decoration — it lands in every member's state block, so editing it
+// changes what agents believe the room is for. One click, one prompt, one POST.
+$("h-chdesc").onclick = async () => {
+  if (!state.active) return;
+  const ch = state.channels.find(c => c.id === state.active);
+  const next = prompt("What is #" + (ch ? ch.name : state.active) + " for?", ch ? ch.description : "");
+  if (next === null) return;
+  try {
+    await api("/api/channels/" + encodeURIComponent(state.active) + "/describe",
+      { method: "POST", body: { description: next } });
+    await refreshChannels();
+    selectChannel(state.active);
+  } catch (e) { alert("could not update the description: " + e.message); }
+};
 
 // ── Auto-login if a token is stored ───────────────────────────────────────────────
 

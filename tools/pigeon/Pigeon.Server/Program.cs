@@ -19,9 +19,9 @@ var store = new Store(dataDir, config.HotThreshold);
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders(); // console only, minimal
 builder.WebHost.UseUrls($"http://0.0.0.0:{config.Port}");
-// Pin the web root to the build output explicitly: the default resolves against the
-// CURRENT directory, and the server is usually started from somewhere else (cwd ≠ exe dir).
-builder.WebHost.UseWebRoot(Path.Combine(AppContext.BaseDirectory, "wwwroot"));
+// Web root = wwwroot next to the exe. .NET 10 forbids UseWebRoot after builder creation
+// ("web root changed" crash), so the launcher starts the server with WorkingDirectory
+// = exe dir (PigeonService.StartAsync), and the default web root lands on wwwroot.
 var app = builder.Build();
 
 app.UseDefaultFiles();
@@ -33,12 +33,22 @@ app.UseStaticFiles();
 var logPath = Path.Combine(dataDir, "pigeon.log");
 app.Use(async (ctx, next) =>
 {
-    if (!ctx.Request.Path.StartsWithSegments("/api"))
+    if (!ctx.Request.Path.StartsWithSegments("/api") && !ctx.Request.Path.StartsWithSegments("/mcp"))
     {
         await next();
         return;
     }
-    await next();
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        // Unhandled handler exceptions otherwise return a bare 500 with no trace —
+        // log them (the request line below never runs in that case).
+        Console.WriteLine($"pigeon: UNHANDLED {ctx.Request.Method} {ctx.Request.Path} -> {ex.Message}");
+        throw;
+    }
     var id = AuthId(ctx) ?? "-";
     var line = $"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} {ctx.Request.Method} {ctx.Request.Path}{(ctx.Request.QueryString.HasValue ? ctx.Request.QueryString : "")} -> {ctx.Response.StatusCode} [{id}]";
     Console.WriteLine("pigeon: " + line);
@@ -74,26 +84,56 @@ string? AuthId(HttpContext ctx)
 }
 
 IResult Unauthorized() => Results.Unauthorized();
+// Forbidden() needs AddAuthentication() registered — this server uses bearer
+// tokens only, so return a plain 403 (Forbid threw "Unable to find IAuthenticationService").
+IResult Forbidden() => Results.StatusCode(403);
 
 // ── Identity ────────────────────────────────────────────────────────────────────────
 
 app.MapPost("/api/join", (HttpContext ctx, PigeonJoinRequest req) =>
 {
+    var bearer = BearerToken(ctx);
+    // The owner token is a master key, not a client credential: the owner seats people,
+    // they don't join as themselves. Handing it to Join would read as "wrong token for
+    // this id" and answer 401 (which is exactly the 403-adjacent bug the web UI hit).
+    if (bearer == config.OwnerToken)
+    {
+        var (adminToken, adminDuplicate, _) = store.AdminJoin(req);
+        return Results.Ok(new PigeonJoinResult { Token = adminToken, Duplicate = adminDuplicate });
+    }
     // Re-join may authenticate via the Authorization header (PigeonClient sends it there),
     // not only via the body field.
     if (string.IsNullOrEmpty(req.Token))
-        req.Token = BearerToken(ctx);
+        req.Token = bearer;
     var (token, duplicate, unauthorized) = store.Join(req);
     return unauthorized
         ? Results.Unauthorized()
         : Results.Ok(new PigeonJoinResult { Token = token, Duplicate = duplicate });
 });
 
-app.MapPost("/api/heartbeat", (HttpContext ctx) =>
+app.MapPost("/api/heartbeat", async (HttpContext ctx) =>
 {
     var id = AuthId(ctx);
     if (id is null) return Unauthorized();
-    store.Heartbeat(id);
+
+    // A heartbeat may carry a state: {"state":"generating","activity":"tool: browser_navigate"}.
+    // A bare heartbeat (no body) is still a heartbeat — the state simply stays as it was.
+    string? state = null, activity = null;
+    if (ctx.Request.ContentLength is not null && ctx.Request.ContentLength > 0)
+    {
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(ctx.Request.Body);
+            if (doc.RootElement.TryGetProperty("state", out var s)) state = s.GetString();
+            if (doc.RootElement.TryGetProperty("activity", out var a)) activity = a.GetString();
+        }
+        catch
+        {
+            // malformed body: presence still counts, the state is just not updated.
+        }
+    }
+
+    store.Heartbeat(id, state, activity);
     return Results.NoContent();
 });
 
@@ -101,6 +141,20 @@ app.MapGet("/api/who", (HttpContext ctx) =>
 {
     if (AuthId(ctx) is null) return Unauthorized();
     return Results.Ok(store.Who());
+});
+
+// Read receipts for the war room: who in this channel has read up to where.
+app.MapGet("/api/cursors", (HttpContext ctx, string channel) =>
+{
+    if (AuthId(ctx) is null) return Unauthorized();
+    try
+    {
+        return Results.Ok(store.Cursors(channel));
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound();
+    }
 });
 
 app.MapPost("/api/status", (HttpContext ctx, PigeonStatusSet req) =>
@@ -121,15 +175,25 @@ app.MapPost("/api/channels", (HttpContext ctx, PigeonChannelCreate req) =>
 {
     var id = AuthId(ctx);
     if (id is null) return Unauthorized();
-    if (id != Store.OwnerId) return Results.Forbid(); // Phase 0: the owner creates rooms
+    if (id != Store.OwnerId) return Forbidden(); // Phase 0: the owner creates rooms
     return Results.Ok(store.CreateChannel(req.Name, req.Description ?? ""));
+});
+
+app.MapPost("/api/channels/{channelId}/describe", (HttpContext ctx, string channelId, PigeonChannelDescribe req) =>
+{
+    var id = AuthId(ctx);
+    if (id is null) return Unauthorized();
+    if (id != Store.OwnerId) return Forbidden(); // the owner defines what a room is for
+    return store.DescribeChannel(channelId, req.Description)
+        ? Results.Ok(store.Channels().First(c => c.Id == channelId))
+        : Results.NotFound();
 });
 
 app.MapPost("/api/channels/{channelId}/archive", (HttpContext ctx, string channelId) =>
 {
     var id = AuthId(ctx);
     if (id is null) return Unauthorized();
-    if (id != Store.OwnerId) return Results.Forbid();
+    if (id != Store.OwnerId) return Forbidden();
     store.ArchiveChannel(channelId);
     return Results.NoContent();
 });
@@ -138,7 +202,7 @@ app.MapPost("/api/channels/{channelId}/delete", (HttpContext ctx, string channel
 {
     var id = AuthId(ctx);
     if (id is null) return Unauthorized();
-    if (id != Store.OwnerId) return Results.Forbid(); // the owner deletes rooms
+    if (id != Store.OwnerId) return Forbidden(); // the owner deletes rooms
     try
     {
         store.DeleteChannel(channelId);
@@ -171,7 +235,7 @@ app.MapPost("/api/membership", (HttpContext ctx, PigeonMembership req) =>
 {
     var id = AuthId(ctx);
     if (id is null) return Unauthorized();
-    if (id != Store.OwnerId) return Results.Forbid(); // Phase 0: the owner seats the flock
+    if (id != Store.OwnerId) return Forbidden(); // Phase 0: the owner seats the flock
     store.Reassign(req.Identity, req.Channel);
     return Results.NoContent();
 });
@@ -199,7 +263,7 @@ app.MapPost("/api/messages", (HttpContext ctx, PigeonSendRequest req) =>
     }
     catch (UnauthorizedAccessException)
     {
-        return Results.Forbid();
+        return Forbidden();
     }
     catch (InvalidOperationException ex)
     {
@@ -237,8 +301,75 @@ app.MapGet("/api/messages/peek", (HttpContext ctx, string channel, int count) =>
     }
 });
 
+app.MapPost("/api/identity/{id}/forget", (HttpContext ctx, string id) =>
+{
+    if (AuthId(ctx) is not Store.OwnerId) return Unauthorized();
+    return store.Forget(id) ? Results.NoContent() : Results.NotFound();
+});
+
+// ── Groups ──────────────────────────────────────────────────────────────────────────
+// docs/MESSANGER.md §4/§9: an address that reaches a kind of agent. The owner curates the
+// catalogue; members may join and leave of their own accord, except where the owner named
+// them — that one is binding.
+
+app.MapGet("/api/groups", (HttpContext ctx) =>
+{
+    if (AuthId(ctx) is null) return Unauthorized();
+    return Results.Ok(store.Groups());
+});
+
+app.MapPost("/api/roles/join", (HttpContext ctx, PigeonRoleSelf req) =>
+{
+    var id = AuthId(ctx);
+    if (id is null) return Unauthorized();
+    var error = store.JoinGroup(id, req.Group, voluntary: true);
+    return error is null ? Results.NoContent() : Results.BadRequest(error);
+});
+
+app.MapPost("/api/roles/leave", (HttpContext ctx, PigeonRoleSelf req) =>
+{
+    var id = AuthId(ctx);
+    if (id is null) return Unauthorized();
+    var error = store.LeaveGroup(id, req.Group);
+    return error is null ? Results.NoContent() : Results.BadRequest(error);
+});
+
+app.MapPost("/api/groups", (HttpContext ctx, PigeonGroupCreate req) =>
+{
+    if (AuthId(ctx) is not Store.OwnerId) return Unauthorized();
+    return store.CreateGroup(req.Name, req.Description ?? "") ? Results.Ok() : Results.Conflict();
+});
+
+app.MapPost("/api/groups/{groupId}/delete", (HttpContext ctx, string groupId) =>
+{
+    if (AuthId(ctx) is not Store.OwnerId) return Unauthorized();
+    return store.DeleteGroup(groupId) ? Results.Ok() : Results.NotFound();
+});
+
+app.MapPost("/api/groups/{groupId}/assign", (HttpContext ctx, string groupId, PigeonGroupMember req) =>
+{
+    if (AuthId(ctx) is not Store.OwnerId) return Unauthorized();
+    if (!store.Exists(req.Identity)) return Results.NotFound();
+    store.AssignRole(req.Identity, groupId);
+    return Results.NoContent();
+});
+
+app.MapPost("/api/groups/{groupId}/unassign", (HttpContext ctx, string groupId, PigeonGroupMember req) =>
+{
+    if (AuthId(ctx) is not Store.OwnerId) return Unauthorized();
+    store.UnassignRole(req.Identity, groupId);
+    return Results.NoContent();
+});
+
+// ── MCP adapter ──────────────────────────────────────────────────────────────────────
+// docs/MESSANGER.md §14.1: the same participant surface, as MCP tools over JSON-RPC. Mounted
+// last so it never shadows /api. See Mcp.cs for the protocol-revision note.
+
+Mcp.Map(app, store, config, AuthId);
+
 Console.WriteLine($"pigeon: listening on http://0.0.0.0:{config.Port} (data: {dataDir})");
 Console.WriteLine($"pigeon: owner token: {config.OwnerToken}");
+Console.WriteLine($"pigeon: MCP at http://0.0.0.0:{config.Port}/mcp (auto-join: {(config.McpAutoJoin ? "on" : "off")})");
 app.Run();
 
 // ── Request payloads (web-shape) ────────────────────────────────────────────────────
@@ -246,6 +377,9 @@ app.Run();
 public sealed record PigeonStatusSet(string? Status);
 public sealed record PigeonChannelCreate(string Name, string? Description);
 public sealed record PigeonMembership(string Identity, string Channel);
+public sealed record PigeonGroupCreate(string Name, string? Description);
+public sealed record PigeonGroupMember(string Identity);
+public sealed record PigeonRoleSelf(string Group);
 
 /// <summary>
 /// Server config: data/pigeon.config.json. Created on first run with a generated
@@ -257,6 +391,12 @@ public sealed class ServerConfig
     public string OwnerToken { get; set; } = "";
     /// <summary>Consecutive agent messages in a thread before it is tagged hot. 0 = off (default).</summary>
     public int HotThreshold { get; set; } = 0;
+    /// <summary>
+    /// MCP (docs/MESSANGER.md §14.1): let a foreign client that presents no bearer token
+    /// seat itself on <c>initialize</c> as <c>mcp:&lt;client-name&gt;</c>. Turn off to require
+    /// a real token on every MCP call.
+    /// </summary>
+    public bool McpAutoJoin { get; set; } = true;
 
     public static ServerConfig Load(string dataDir)
     {

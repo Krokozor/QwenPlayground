@@ -53,10 +53,33 @@ public sealed class PigeonIdentity
     public string Model { get; set; } = "";
     /// <summary>Self-reported "what I'm doing" — a living card, updated via pigeon_status.</summary>
     public string Status { get; set; } = "";
+    /// <summary>
+    /// Coarse activity state, self-reported on the heartbeat: idle | generating | dispatching |
+    /// hung | errored. The server stores what it is told and draws no conclusions — "online"
+    /// only says a heartbeat arrived, which is not the same as "this agent is awake and thinking".
+    /// </summary>
+    public string State { get; set; } = "";
+    /// <summary>One line of what the state means right now: "tool: browser_navigate", "waiting for owner".</summary>
+    public string Activity { get; set; } = "";
+    /// <summary>When the state was last reported (states go stale: a "generating" from an hour ago is not a generating).</summary>
+    public DateTimeOffset StateAt { get; set; }
     /// <summary>Wake capability: "mention" (push client) | "none" (pull client).</summary>
     public string Wake { get; set; } = "mention";
     /// <summary>Channel membership; Phase 0 validates exactly 1.</summary>
     public string[] Channels { get; set; } = [];
+    /// <summary>Groups this participant joined of their own accord.</summary>
+    public string[] Roles { get; set; } = [];
+    /// <summary>Groups the owner put them in. Cannot be left by the participant.</summary>
+    public string[] Assigned { get; set; } = [];
+    /// <summary>
+    /// Where this participant is connected from — e.g. "mcp#49c40ded@192.168.1.77".
+    /// NOT part of identity: the identity outlives any one connection, and one identity may be
+    /// reached from several addresses. Empty until a client reports one (MCP does, on every
+    /// request; the harness does not). Answering "which box is that?" when the id cannot:
+    /// <c>Store.Join</c> derives a disambiguated id from the host for clients that arrive
+    /// without an identity.
+    /// </summary>
+    public string Connection { get; set; } = "";
     public DateTimeOffset FirstSeen { get; set; }
     public DateTimeOffset LastSeen { get; set; }
     /// <summary>Presence: online = last heartbeat less than 45 s ago.</summary>
@@ -82,6 +105,51 @@ public sealed class PigeonUnread
     public string Channel { get; set; } = "";
     public long Since { get; set; }
     public int Count { get; set; }
+}
+
+/// <summary>
+/// One participant's reading position in one channel. Read receipts for the war room:
+/// "did the agent see my message" is not guesswork when every identity carries a cursor.
+/// </summary>
+public sealed class PigeonCursor
+{
+    public string Identity { get; set; } = "";
+    public string Alias { get; set; } = "";
+    public string Channel { get; set; } = "";
+    /// <summary>Highest message id this identity has read (0 = nothing read).</summary>
+    public long Since { get; set; }
+    /// <summary>Highest message id in the channel, so the gap is visible without arithmetic.</summary>
+    public long Head { get; set; }
+    public int Unread { get; set; }
+}
+
+/// <summary>
+/// A named subset of participants, so an address can reach a KIND of agent rather than a
+/// specific one. Owner-managed; nobody is born into one. Replaces a magic @all: the owner
+/// creates a group when they want everyone, and gives it a name and a description that say
+/// what it is for.
+/// </summary>
+public sealed class PigeonGroup
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    /// <summary>"What is this group for" — the owner writes it so members can pick sensibly.</summary>
+    public string Description { get; set; } = "";
+    public DateTimeOffset Created { get; set; }
+    /// <summary>Members, for `who` and for showing a client what a name will reach.</summary>
+    public string[] Members { get; set; } = [];
+}
+
+/// <summary>Self-service group membership change; the server knows who is asking.</summary>
+public sealed class PigeonRoleChange
+{
+    public string Group { get; set; } = "";
+}
+
+/// <summary>Owner's edit of a channel's purpose. The description is read by every member, so it is configuration, not decoration.</summary>
+public sealed class PigeonChannelDescribe
+{
+    public string Description { get; set; } = "";
 }
 
 /// <summary>Join request (idempotent; a persisted token re-authenticates).</summary>

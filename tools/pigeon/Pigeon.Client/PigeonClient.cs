@@ -75,6 +75,18 @@ public sealed class PigeonClient : IDisposable
     public Task<PigeonUnread[]> UnreadAsync(CancellationToken ct = default)
         => GetJsonAsync<PigeonUnread[]>(_http, Req(HttpMethod.Get, "/api/unread"));
 
+    /// <summary>The group catalogue: what an @mention of a name would reach.</summary>
+    public Task<PigeonGroup[]> GroupsAsync(CancellationToken ct = default)
+        => GetJsonAsync<PigeonGroup[]>(_http, Req(HttpMethod.Get, "/api/groups"));
+
+    /// <summary>Join a group of your own accord. Owner-assigned groups refuse.</summary>
+    public Task JoinGroupAsync(string group, CancellationToken ct = default)
+        => PostJsonAsync<PigeonMessage>(Req(HttpMethod.Post, "/api/roles/join"), new PigeonRoleChange { Group = group });
+
+    /// <summary>Leave a group you joined yourself.</summary>
+    public Task LeaveGroupAsync(string group, CancellationToken ct = default)
+        => PostJsonAsync<PigeonMessage>(Req(HttpMethod.Post, "/api/roles/leave"), new PigeonRoleChange { Group = group });
+
     /// <summary>Send a message; returns the stored envelope (with the assigned id).</summary>
     public Task<PigeonMessage> SendAsync(PigeonSendRequest req, CancellationToken ct = default)
         => PostJsonAsync<PigeonMessage>(Req(HttpMethod.Post, "/api/messages"), req);
@@ -95,6 +107,15 @@ public sealed class PigeonClient : IDisposable
     /// <summary>Presence heartbeat (online = last heartbeat &lt; 45 s).</summary>
     public Task HeartbeatAsync(CancellationToken ct = default)
         => PostJsonAsync<JsonElement>(Req(HttpMethod.Post, "/api/heartbeat"), null);
+
+    /// <summary>
+    /// Heartbeat that also says what the participant is doing: idle | generating | dispatching |
+    /// hung | errored, plus one line of context. Presence without state only says "a process
+    /// exists"; the state is what makes the roster worth reading.
+    /// </summary>
+    public Task HeartbeatAsync(string state, string activity = "", CancellationToken ct = default)
+        => PostJsonAsync<JsonElement>(Req(HttpMethod.Post, "/api/heartbeat"),
+            new { state, activity });
 
     /// <summary>Update my public status line ("what I'm doing").</summary>
     public Task SetStatusAsync(string status, CancellationToken ct = default)
