@@ -189,6 +189,16 @@ app.MapPost("/api/channels/{channelId}/describe", (HttpContext ctx, string chann
         : Results.NotFound();
 });
 
+app.MapPost("/api/channels/{channelId}/rename", (HttpContext ctx, string channelId, PigeonChannelRename req) =>
+{
+    var id = AuthId(ctx);
+    if (id is null) return Unauthorized();
+    if (id != Store.OwnerId) return Forbidden();
+    return store.RenameChannel(channelId, req.Name, req.Description)
+        ? Results.Ok(store.Channels().First(c => c.Id == channelId))
+        : Results.NotFound();
+});
+
 app.MapPost("/api/channels/{channelId}/archive", (HttpContext ctx, string channelId) =>
 {
     var id = AuthId(ctx);

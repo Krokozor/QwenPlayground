@@ -152,6 +152,13 @@ public sealed class PigeonChannelDescribe
     public string Description { get; set; } = "";
 }
 
+/// <summary>Owner's rename of a channel. The id is stable (it is the slug the log and memberships point at); only the display name and optionally the description move.</summary>
+public sealed class PigeonChannelRename
+{
+    public string Name { get; set; } = "";
+    public string? Description { get; set; }
+}
+
 /// <summary>Join request (idempotent; a persisted token re-authenticates).</summary>
 public sealed class PigeonJoinRequest
 {

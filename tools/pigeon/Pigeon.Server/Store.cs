@@ -714,6 +714,27 @@ public sealed class Store
         }
     }
 
+    /// <summary>
+    /// Rename a channel (owner-only, checked by the caller). The id is NOT changed — it is
+    /// the slug the message log and every membership reference point at; only the display
+    /// name (and optionally the description) move.
+    /// </summary>
+    public bool RenameChannel(string channelId, string name, string? description = null)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("name is required");
+        lock (_gate)
+        {
+            if (!_channels.TryGetValue(channelId, out var rec))
+                return false;
+            rec.Name = name.Trim();
+            if (description is not null)
+                rec.Description = description.Trim();
+            SaveChannelMeta(channelId);
+            return true;
+        }
+    }
+
     public void ArchiveChannel(string channelId)
     {
         lock (_gate)
