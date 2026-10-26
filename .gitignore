@@ -55,6 +55,15 @@ ffmpeg/
 /reports/
 /QwenMultimodalTest/
 
+# Pigeon runtime data (owner token in config, identities, channel jsonl, logs)
+/data/
+
+# Working docs (model bug reports + audit), not part of the code
+/BugreportsAndAudits/
+
+# One-off diagnostic script
+/tests/port_probe.ps1
+
 # User settings (created on first run)
 settings.json
 
