@@ -196,8 +196,8 @@ public sealed class Main
                 return ServerProps.Name;
             });
         // Main-сессия динамическая (селектор) — перерегистрируем при каждом переключении.
-        Sessions.SessionChanged += () => RegisterSession(rt, wakeStore);
-        RegisterSession(rt, wakeStore);
+        Sessions.SessionChanged += () => RegisterSession(rt);
+        RegisterSession(rt);
     }
 
     /// <summary>
@@ -267,13 +267,13 @@ public sealed class Main
             () => slotId,
             () => pinnedRoot,
             SetPinnedRoot));
-        // Pigeon: свои busy + wake (mention будит ЭТО окно, не main). Pinned-окно без
-        // собственного heartbeat'а — wake идёт прямо в RunHeartbeatTurnAsync окна
-        // (хук HeartbeatStartTurn), без ожидания тика и без signal-файла.
+        // Pigeon: свои busy + wake (mention будит ЭТО окно, не main). Внешний wake —
+        // в per-chat контроллер (rt.Heartbeat.Wake): сразу, без ожидания тика,
+        // независимо от HeartbeatEnabled; присмотр хода — внутри контроллера.
         PigeonSession.Register(
             Sessions.DirectoryFor(sessionId),
             () => rt.ChatState.IsBusy,
-            hooks.HeartbeatStartTurn);
+            reason => rt.Heartbeat!.Wake(reason));
         return rt;
     }
 
@@ -284,12 +284,21 @@ public sealed class Main
     /// переключает сессии) — RegisterSession вызывается на старте и при каждом
     /// переключении (Sessions.SessionChanged).
     /// </summary>
-    private void RegisterSession(ChatRuntime rt, WakeSignalStore wakeStore)
+    /// <summary>Каталог сессии, зарегистрированный в pigeon для main-окна (Unregister при переключении).</summary>
+    private string? _pigeonRegisteredDir;
+
+    private void RegisterSession(ChatRuntime rt)
     {
-        PigeonSession.Register(
-            Sessions.DirectoryFor(rt.SessionId),
-            () => rt.ChatState.IsBusy,
-            wakeStore.Send);
+        var dir = Sessions.DirectoryFor(rt.SessionId());
+        // Переключение main-сессии: устаревшая запись не должна будить main-окно от имени
+        // чужой сессии (mention без окна ждёт в state-строке, не просыпает чужой чат).
+        if (_pigeonRegisteredDir is { } old && !string.Equals(old, dir, StringComparison.OrdinalIgnoreCase))
+        {
+            PigeonSession.Unregister(old);
+        }
+        _pigeonRegisteredDir = dir;
+        // Внешний wake: сразу, без ожидания тика, независимо от HeartbeatEnabled.
+        PigeonSession.Register(dir, () => rt.ChatState.IsBusy, reason => rt.Heartbeat!.Wake(reason));
     }
 
     /// <summary>

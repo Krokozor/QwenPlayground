@@ -28,7 +28,6 @@ public partial class MainViewModel : ObservableObject, IChatHost {
     public TurnPanel TurnsPanel { get; private set; } = null!;
     // UI-таймеры качают Core-контроллеры (heartbeat, draft) — Core без WPF.
     private System.Windows.Threading.DispatcherTimer _draftTimer;
-    private System.Windows.Threading.DispatcherTimer _heartbeatTimer;
     // Оконный интерактив инструментов (подтверждение shell) поверх FSM — провайдеры окон,
     // поэтому живёт в App (Core не знает про окна).
     private readonly ChatInteraction _interaction;
@@ -163,15 +162,57 @@ public partial class MainViewModel : ObservableObject, IChatHost {
     /// <summary>
     /// Pigeon: авто-подключение при старте (endpoint из настроек + pigeon.json сессии).
     /// Ошибка не роняет старт — лог в RebuildEventLog.App, пользователь подключится тулом.
+    /// Ретраим, пока не получится: сервер может ещё не быть поднят (лаунчер стартует
+    /// pigeon позже приложения), и молчаливый отказ здесь означает пустую комнату.
     /// </summary>
+    // Инкрементальный backoff для auto-connect: 60s → 2min → 5min → 10min (capped).
+    // Ручной реконнект (pigeon_connect) сбрасывает индекс (ResetPigeonRetry), чтобы
+    // следующий цикл начал с 60s. Без backoff спам «connect failed» каждые 60s
+    // (инцидент 2026-10-26: попытки 94-97, ×3 в логе, сервер не запущен).
+    private static readonly int[] PigeonRetryDelaysMs = { 60_000, 120_000, 300_000, 600_000 };
+    private static int _pigeonRetryIndex;
+
+    /// <summary>Сброс backoff-индекса (вызывается при ручном реконнекте pigeon_connect).</summary>
+    public static void ResetPigeonRetry() => _pigeonRetryIndex = 0;
+
     private async Task AutoConnectPigeonAsync(string dir, string endpoint) {
-        try {
-            var error = await QwenPlayground.Core.Pigeon.PigeonSession.ConnectAsync(dir, endpoint);
-            RebuildEventLog.App(error is null
-                ? "pigeon: auto-connect ok"
-                : $"pigeon: auto-connect failed: {error}");
-        } catch (Exception ex) {
-            RebuildEventLog.App($"pigeon: auto-connect error: {ex.Message}");
+        while (true)
+        {
+            // Уже подключено (гонка с другим путём/параллельным циклом) — это ЦЕЛЕВОЕ
+            // состояние, а не ошибка. Сбрасываем backoff-индекс.
+            if (QwenPlayground.Core.Pigeon.PigeonSession.For(dir) is { Connected: true })
+            {
+                RebuildEventLog.App("pigeon: auto-connect ok (already connected)");
+                _pigeonRetryIndex = 0;
+                return;
+            }
+            string? error = null;
+            try
+            {
+                error = await QwenPlayground.Core.Pigeon.PigeonSession.ConnectAsync(dir, endpoint);
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+            }
+            if (error is null)
+            {
+                RebuildEventLog.App("pigeon: auto-connect ok");
+                _pigeonRetryIndex = 0;
+                return;
+            }
+            // ConnectAsync вернул «Already connected» как ошибку (сессия подключилась
+            // между предпроверкой и вызовом) — считаем успехом, не ретраим.
+            if (error.StartsWith("Already connected", StringComparison.Ordinal))
+            {
+                RebuildEventLog.App("pigeon: auto-connect ok (already connected)");
+                _pigeonRetryIndex = 0;
+                return;
+            }
+            var delayMs = PigeonRetryDelaysMs[Math.Min(_pigeonRetryIndex, PigeonRetryDelaysMs.Length - 1)];
+            RebuildEventLog.App($"pigeon: auto-connect failed (attempt {_pigeonRetryIndex + 1}): {error} — retry in {delayMs / 1000} s");
+            await Task.Delay(delayMs);
+            _pigeonRetryIndex++;
         }
     }
 
@@ -197,7 +238,7 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         // Окно чата: ядро разговора + LEGO-модули (сессии/полки/команды/проекция хода).
         // Старт чата — после присваивания: Core во время RestoreLast колбэкает хук ввода,
         // который идёт через Chat (в конструкторе Chat ещё null).
-        Chat = new(_main.Runtime, _main.Sessions, _main.Heartbeat, _main.Background,
+        Chat = new(_main.Runtime, _main.Sessions, _main.Background,
             Settings.ScheduleSave, () => SelectedTabIndex = SettingsTabIndex,
             _main.KvCache, _main.Subagents);
         Chat.Initialize();
@@ -207,10 +248,14 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         var pigeonEndpoint = AppSettings.Get().PigeonEndpoint;
         if (!string.IsNullOrWhiteSpace(pigeonEndpoint))
         {
-            var pigeonDir = _main.Sessions.DirectoryFor(_main.Sessions.CurrentId);
-            if (File.Exists(Path.Combine(pigeonDir, "pigeon.json")))
+            // Every session that has ever joined the room reconnects, not just the current
+            // one — the roster is a list of agents, and a session that is merely not the
+            // active window is still alive and should show up with its state.
+            foreach (var info in _main.Sessions.List)
             {
-                _ = AutoConnectPigeonAsync(pigeonDir, pigeonEndpoint);
+                var pigeonDir = _main.Sessions.DirectoryFor(info.Id);
+                if (File.Exists(Path.Combine(pigeonDir, "pigeon.json")))
+                    _ = AutoConnectPigeonAsync(pigeonDir, pigeonEndpoint);
             }
         }
         TurnsPanel = new TurnPanel(_main.Background.Turns);
@@ -352,16 +397,15 @@ public partial class MainViewModel : ObservableObject, IChatHost {
             }
         }, TaskScheduler.Default);
 
-        // Качание тиков heartbeat — за UI (паттерн NekoBot: DispatcherTimer UI качает
-        // Core-контроллер; сам контроллер собран в Main).
-        _heartbeatTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-        _heartbeatTimer.Tick += (_, _) => _main.Heartbeat.Tick();
-        _main.Lifecycle.Register(new DelegateAppService("heartbeat",
-            start: () => _heartbeatTimer.Start(),
-            shutdown: () => _heartbeatTimer.Stop()));
+        // Heartbeat: per-chat контроллер (rt.Heartbeat, решение владельца 2026-10-16) —
+        // тики качает UI-таймер САМОГО чата (ChatViewModel), здесь таймера нет.
 
         // Настройки: закрытие приложения — единственный синхронный flush (дебаунс не гарантирован).
         _main.Lifecycle.Register(new DelegateAppService("настройки", shutdown: () => Settings.FlushSettingsSave()));
+        // Pigeon: выход приложения — разлогин всех чатов (решение владельца, 2026-10-16):
+        // идентичности уходят в оффлайн сразу, а не через 45-с heartbeat-таймаут сервера.
+        _main.Lifecycle.Register(new DelegateAppService("pigeon",
+            shutdown: () => QwenPlayground.Core.Pigeon.PigeonSession.DisconnectAll()));
         // Настройки, изменённые агентом изнутри (инструмент set_setting): живой экземпляр уже
         // обновлён и записан, остаётся перерисовать биндинг. Событие может прийти из
         // agent-потока → маришализуем на Dispatcher (см. OnSettingsChangedExternally).

@@ -47,12 +47,39 @@ public sealed class PigeonSession : IStateAnnouncer
     public static void Register(string sessionDir, Func<bool> isBusy, Action<string> wake) =>
         SessionDepsByDir[Path.GetFullPath(sessionDir)] = new SessionDeps(isBusy, wake);
 
+    /// <summary>
+    /// Снять регистрацию (main-окно переключилось с сессии): mention без окна ждёт в
+    /// state-строке, а не будит чужой чат по устаревшей записи.
+    /// </summary>
+    public static void Unregister(string sessionDir) =>
+        SessionDepsByDir.Remove(Path.GetFullPath(sessionDir));
+
     private static SessionDeps? DepsFor(string dir) =>
         SessionDepsByDir.TryGetValue(Path.GetFullPath(dir), out var d) ? d : null;
 
     /// <summary>Живое подключение каталога сессии или null (не подключено).</summary>
     public static PigeonSession? For(string? sessionDir) =>
         sessionDir is null ? null : BySessionDir.TryGetValue(Path.GetFullPath(sessionDir), out var s) ? s : null;
+
+    /// <summary>
+    /// Разлогинить ВСЕ живые подключения (выход приложения, решение владельца 2026-10-16):
+    /// сервер не ждёт 45 с heartbeat-таймаута — идентичности уходят в оффлайн сразу.
+    /// pigeon.json сохраняется (reconnect после рестарта мгновенный).
+    /// </summary>
+    public static void DisconnectAll()
+    {
+        foreach (var session in BySessionDir.Values)
+        {
+            try
+            {
+                session.Disconnect();
+            }
+            catch
+            {
+                // Одна мёртвая сессия не должна ломать разлогин остальных при shutdown.
+            }
+        }
+    }
 
     /// <summary>
     /// Содержимое pigeon.json — состояние подключения сессии (персистентно: reconnect
@@ -86,6 +113,7 @@ public sealed class PigeonSession : IStateAnnouncer
     private PigeonClient? _client;
     private CancellationTokenSource? _cts;
     private Task? _pollLoop;
+    private Task? _heartbeatLoop;
     private long _cursor;
     private DateTime _lastHeartbeat = DateTime.MinValue;
     private DateTime _lastWho = DateTime.MinValue;
@@ -93,6 +121,7 @@ public sealed class PigeonSession : IStateAnnouncer
     private string? _channel;
     private string? _channelDescription;
     private int _newCount;
+    private bool _channelHot;
     private (string Alias, string Text, DateTimeOffset Ts)? _latest;
     private (string Alias, string Channel, string Text, DateTimeOffset Ts)? _pendingMention;
 
@@ -246,6 +275,37 @@ public sealed class PigeonSession : IStateAnnouncer
         var ct = _cts.Token;
         // Без Task.Run: async-машина остаётся на UI-контексте (инвариант: агентный код на UI-потоке).
         _pollLoop = PollLoopAsync(ct);
+        // Presence is not agent code. While a turn is running the UI thread is busy, and a
+        // heartbeat living in the poll loop would stop exactly when the agent is most alive —
+        // the roster would read "offline" for an agent deep in a tool loop. So it ticks on its
+        // own thread and only ever touches HTTP.
+        _heartbeatLoop = Task.Run(() => HeartbeatLoopAsync(ct));
+    }
+
+    private async Task HeartbeatLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            var client = _client;
+            if (client is null) break;
+            try
+            {
+                var deps = DepsFor(SessionDir);
+                string state = deps is null ? "detached" : deps.IsBusy() ? "generating" : "idle";
+                string activity = deps is null
+                    ? "no chat window open for this session"
+                    : deps.IsBusy()
+                        ? "turn in progress"
+                        : "listening";
+                await client.HeartbeatAsync(state, activity, ct);
+            }
+            catch
+            {
+                // Presence is cosmetic; a failed heartbeat must not kill the loop.
+            }
+            try { await Task.Delay(10_000, ct); }
+            catch (OperationCanceledException) { break; }
+        }
     }
 
     private void StopLoops()
@@ -260,6 +320,7 @@ public sealed class PigeonSession : IStateAnnouncer
         }
         _cts = null;
         _pollLoop = null;
+        _heartbeatLoop = null;
     }
 
     private async Task PollLoopAsync(CancellationToken ct)
@@ -273,13 +334,8 @@ public sealed class PigeonSession : IStateAnnouncer
             }
             try
             {
-                // Presence: heartbeat каждые 20 с (онлайн = last_seen < 45 с).
-                if ((DateTime.UtcNow - _lastHeartbeat).TotalSeconds >= 20)
-                {
-                    await client.HeartbeatAsync(ct);
-                    _lastHeartbeat = DateTime.UtcNow;
-                }
-
+                // Presence lives in its own loop (HeartbeatLoopAsync) so a busy UI thread
+                // does not make a working agent look offline.
                 // Карточки участников (для who + своего membership): каждые 30 с.
                 if ((DateTime.UtcNow - _lastWho).TotalSeconds >= 30)
                 {
@@ -302,7 +358,9 @@ public sealed class PigeonSession : IStateAnnouncer
 
                 // Описание канала — в state-строку (контекст комнаты без чтения истории).
                 var channels = await client.ChannelsAsync(ct);
-                _channelDescription = channels.FirstOrDefault(c => c.Id == _channel)?.Description;
+                var mine = channels.FirstOrDefault(c => c.Id == _channel);
+                _channelDescription = mine?.Description;
+                _channelHot = mine?.Hot ?? false;
 
                 // Long-poll: новые сообщения (до 25 с ожидания).
                 var batch = await client.ReadAsync(_channel, _cursor, 25, ct);
@@ -320,6 +378,44 @@ public sealed class PigeonSession : IStateAnnouncer
             catch (Exception ex)
             {
                 LastError = ex.Message;
+                // 401 = токен больше не действителен (сервер пересоздан / другая dataDir).
+                // Re-join с пустым токеном: сервер выпускает новый (docs §4). Иначе клиент
+                // будет вечно ретраить stale-токен (инцидент 2026-10-18: лаунчер поднял
+                // свежий сервер, старая сессия получила 401 и молчала).
+                if (ex.Message.Contains("401"))
+                {
+                    try
+                    {
+                        client.SetToken(null);
+                        var file = LoadFile(SessionDir);
+                        var model = ModelNameProvider is not null
+                            ? await ModelNameProvider(ct) ?? "unknown"
+                            : "unknown";
+                        var rejoin = await client.JoinAsync(new PigeonJoinRequest
+                        {
+                            Id = AgentId,
+                            Alias = AgentId,
+                            Kind = "agent",
+                            Harness = "qwen",
+                            Model = model,
+                            Status = file?.Status ?? "",
+                            Wake = "mention",
+                            Token = null,
+                        }, ct);
+                        client.SetToken(rejoin.Token);
+                        if (file is not null)
+                        {
+                            file.Token = rejoin.Token;
+                            SaveFile(SessionDir, file);
+                        }
+                        LastError = null;
+                        continue;
+                    }
+                    catch
+                    {
+                        // re-join не удался — падаем в обычный ретрай
+                    }
+                }
                 try
                 {
                     await Task.Delay(5_000, ct);
@@ -431,6 +527,14 @@ public sealed class PigeonSession : IStateAnnouncer
 
     public Task<PigeonChannel[]> ChannelsAsync() => ClientOrThrow().ChannelsAsync();
 
+    /// <summary>Group catalogue — what an @mention of a name would reach.</summary>
+    public Task<PigeonGroup[]> GroupsAsync() => ClientOrThrow().GroupsAsync();
+
+    /// <summary>Join a group of this session's own accord; owner-assigned groups refuse.</summary>
+    public Task JoinGroupAsync(string group) => ClientOrThrow().JoinGroupAsync(group);
+
+    public Task LeaveGroupAsync(string group) => ClientOrThrow().LeaveGroupAsync(group);
+
     public async Task JoinChannelAsync(string channelId)
     {
         var client = ClientOrThrow();
@@ -466,7 +570,8 @@ public sealed class PigeonSession : IStateAnnouncer
         }
         else
         {
-            var line = $"#{_channel}" + (_channelDescription is { Length: > 0 } d ? $" — \"{d}\"" : "");
+            var line = $"#{_channel}" + (_channelDescription is { Length: > 0 } d ? $" — \"{d}\"" : "")
+                       + (_channelHot ? " [hot]" : "");
             if (_newCount > 0)
             {
                 // Время локальное (сервер хранит UTC): владелец и агент смотрят на одни часы.
