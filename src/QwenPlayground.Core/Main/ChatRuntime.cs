@@ -1,6 +1,7 @@
 using QwenPlayground.Core.Agent;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Compaction;
+using QwenPlayground.Core.Heartbeat;
 using QwenPlayground.Core.Inference;
 using QwenPlayground.Core.Memory;
 using QwenPlayground.Core.MetaInfo;
@@ -44,6 +45,14 @@ public sealed class ChatRuntime {
     /// OnRendered — в Turns (только после реального рендера, не превью).
     /// </summary>
     public TodoReminder Todo { get; internal set; } = null!;
+
+    /// <summary>
+    /// Сердцебиение ЭТОГО чата (решение владельца, 2026-10-16: heartbeat доступен для всех
+    /// чатов в процессе; настраиваемое расписание и внешние будильщики разделены):
+    /// Tick — качает таймер окна, Wake/WakeNow — внешние события (pigeon-mention, кнопка).
+    /// null — контекст без UI (тесты).
+    /// </summary>
+    public HeartbeatController? Heartbeat { get; internal set; }
     public PromptPipeline Pipeline { get; internal set; } = null!;
     public ContextMaintenance Maintenance { get; internal set; } = null!;
     public DraftKeeper Draft { get; internal set; } = null!;

@@ -80,7 +80,6 @@ public sealed class Main
     public ServiceCompletionClient ServiceLlm { get; }
     public AppLifecycle Lifecycle { get; }
     public SessionController Sessions { get; }
-    public HeartbeatController Heartbeat { get; }
 
     // ── Субагенты (KV-якорь + оркестрация спавна) ────────────────────────────────────
     /// <summary>Ручное управление KV-кешем сервера: /slots, save/restore/erase (см. KvCacheController).</summary>
@@ -159,7 +158,11 @@ public sealed class Main
             SlotId: () => Sessions!.CurrentSlotId,
             _identity,
             _externalTools,
-            LayerStore));
+            LayerStore,
+            // Внешний канал wake/ файлов — только main (файлы адресованы main-агенту);
+            // страж процесса — process-level, тоже только main.
+            WakeSignals: new WakeSignalStore(),
+            WatchdogGuard: WatchdogLauncher.EnsureAlive));
         // Сессии: после драфта (WireRuntimeCore создаёт Draft последним — Load пользуется драфтом).
         Sessions = new SessionController(rt.Log, rt.Draft, rt.MemorySurfacer);
         // Ход: после сессий (пользуется их ключами/каталогом) и maintenance (бюджет-гард).
@@ -178,18 +181,9 @@ public sealed class Main
             () => Sessions.Root,
             Sessions.SetRoot));
         // ── Main-специфичное ─────────────────────────────────────────────────────────
-        // Heartbeat: опрос wake/ и расписания. Период опроса фиксированный (20 с),
-        // частота реальных пробуждений — HeartbeatIntervalMinutes; сигналы не ждут расписания.
-        var wakeStore = new WakeSignalStore();
-        Heartbeat = new HeartbeatController(
-            wakeStore,
-            isBusy: () => rt.ChatState.IsBusy,
-            heartbeatEnabled: () => AppSettings.Get().HeartbeatEnabled,
-            heartbeatIntervalMinutes: () => AppSettings.Get().HeartbeatIntervalMinutes,
-            setStatus: hooks.Status,
-            startTurn: hooks.HeartbeatStartTurn,
-            flushMemory: hooks.FlushMemory,
-            watchdogGuard: WatchdogLauncher.EnsureAlive);
+        // Heartbeat — per-chat (в WireRuntimeCore → rt.Heartbeat): настраиваемое
+        // расписание и внешние будильщики разделены (решение владельца, 2026-10-16);
+        // тик (20 с) качает UI-таймер окна (ChatViewModel).
         // Pigeon (docs/MESSANGER.md): процессные зависимости клея — self-report модели
         // (активный /props, кэш ServerProps: карточка не уходит с "unknown").
         // PER-SESSION зависимости (busy + wake) — в RegisterSession ниже и в
@@ -259,7 +253,10 @@ public sealed class Main
             SlotId: () => slotId,
             new InjectedIdentity(),
             new ExternalToolsNote(),
-            new MemoryLayerStore(Sessions.DirectoryFor(sessionId))));
+            new MemoryLayerStore(Sessions.DirectoryFor(sessionId)),
+            // Пinned-окно: ни wake/ файлов (канал main-агента), ни стража процесса.
+            WakeSignals: null,
+            WatchdogGuard: null));
         WireTurns(rt, hooks, new TurnSessionView(
             rt.SessionId,
             () => Sessions.DirectoryFor(sessionId),
@@ -314,7 +311,14 @@ public sealed class Main
         Func<int?> SlotId,
         InjectedIdentity Identity,
         ExternalToolsNote ExternalTools,
-        MemoryLayerStore LayerStore);
+        MemoryLayerStore LayerStore,
+        /// <summary>
+        /// Внешний канал wake/ файлов (решение владельца, 2026-10-16: настраиваемое
+        /// расписание и внешние будильщики разделены): main — файл-хранилище, pinned — null.
+        /// </summary>
+        WakeSignalStore? WakeSignals,
+        /// <summary>Страж процесса (process-level, main только): живость watchdog'а на каждом тике.</summary>
+        Action? WatchdogGuard);
 
     /// <summary>
     /// Общие пер-разговорные сервисы — идентичны для main- и pinned-рантаймов:
@@ -337,6 +341,19 @@ public sealed class Main
         rt.Todo = new TodoReminder(
             w.SessionDirectory,
             () => AppSettings.Get().TodoReminderInterval);
+        // Heartbeat — per-chat (решение владельца, 2026-10-16: доступен для всех чатов
+        // процесса; настраиваемое расписание и внешние будильщики разделены): тик 20 с
+        // качает UI-таймер окна (ChatViewModel), Wake/WakeNow — внешние события.
+        rt.Heartbeat = new HeartbeatController(
+            w.WakeSignals,
+            isBusy: () => rt.ChatState.IsBusy,
+            heartbeatEnabled: () => AppSettings.Get().HeartbeatEnabled,
+            heartbeatIntervalMinutes: () => AppSettings.Get().HeartbeatIntervalMinutes,
+            setStatus: w.Hooks.Status,
+            startTurn: w.Hooks.HeartbeatStartTurn,
+            flushMemory: w.Hooks.FlushMemory,
+            background: Background,
+            watchdogGuard: w.WatchdogGuard);
         // Доска сообщений state-блока: pull-анонсеры (состояние на момент рендера) +
         // BoardAnnouncer — дрейн статичной мусорки (push из кода без интерфейса).
         rt.StateBlocks = new StateBlockBuilder(

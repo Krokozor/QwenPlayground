@@ -38,6 +38,10 @@ public static class QwenOutputParser
         // а снапшот статуса. Извлекаем в message.StateBlock, чтобы он персистировался
         // с сообщением и рендерился в истории.
         var (stateBlock, rest) = StateBlock.SplitLeading(reasoning);
+        // Срезаем ведущие </state> (галлюцинация «дозакрытия» state-блока, который
+        // приложение уже закрыло), чтобы они не улетали в контекст и не подкармливали
+        // повторение. Срез только у начала — см. StateBlock.StripLeadingClose.
+        rest = StateBlock.StripLeadingClose(rest);
         reasoning = rest.Length == 0 ? null : rest;
 
         var toolCalls = new List<ToolCall>();

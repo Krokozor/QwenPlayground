@@ -232,6 +232,14 @@ public sealed class TurnPipeline
                 // ходят через PromptPipeline без OnRendered — счётчики не двигаются.
                 StateProvider = stateEnabled ? messages => {
                     var state = _stateBlocks.Build();
+                    // Heartbeat (режим state_field): причина пробуждения — в state-блоке
+                    // (heartbeat=), а не user-сообщением. Подмешивается на ПЕРВОМ рендере
+                    // хода и сбрасывается (nag-семантика): дальше модель и так действует.
+                    if (_scope.PendingHeartbeatReason is { } reason)
+                    {
+                        state = StateBlock.WithHeartbeat(state, reason);
+                        _scope.PendingHeartbeatReason = null;
+                    }
                     _memorySurfacer.OnRendered();
                     _todo?.OnRendered();
                     return state;
@@ -262,8 +270,11 @@ public sealed class TurnPipeline
 
             // Повторный прогон при переполнении контекста: сервер — единственный, кто знает
             // реальный размер image-токенов (оценка ImageTokensMax может быть занизена).
-            // 400 → принудительная компакция → 1 retry. Лимит жёсткий: повтор только если
-            // модель ещё не ответила (iterations == 0) и retry ещё не был — иначе зацикливание.
+            // 400 → принудительная компакция → 1 retry. Работает в любой точке хода (и на
+            // первом запросе, и в середине — когда контекст нарос из-за накопившихся
+            // скриншотов/ответов, а оценка бюджета промахнулась): компакция уменьшает
+            // промпт, повторный запрос влезает. Зацикливание исключено жёстко: повтор
+            // строго один на ход (overflowRetried).
             var overflowRetried = false;
             while (true)
             {
@@ -296,7 +307,7 @@ public sealed class TurnPipeline
                     outcome = FinishOutcome(canceled: true);
                     break;
                 }
-                catch (ContextOverflowException overflow) when (iterations == 0 && !overflowRetried)
+                catch (ContextOverflowException overflow) when (!overflowRetried)
                 {
                     overflowRetried = true;
                     _onStatus("Переполнение контекста (400 от сервера) — принудительная компакция, повтор хода...");

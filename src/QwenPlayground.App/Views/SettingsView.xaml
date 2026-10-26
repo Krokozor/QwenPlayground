@@ -206,6 +206,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="включено"
                                ToolTip="По расписанию агент сам просыпается и проверяет, чем заняться. Сигналы из wake/ обрабатываются вне расписания." />
@@ -217,6 +218,15 @@
                     <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
                              local:NumField.Min="1" local:NumField.IsInteger="True"
                              Text="{Binding HeartbeatIntervalMinutes, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="как будит чат"
+                               ToolTip="state_field (дефолт): причина пробуждения — в state-блоке (heartbeat=), ход — собственный assistant-ход агента без user-сообщения (честнее: пользователь ничего не говорил). user_message: прежний путь — heartbeat-промпт как user-сообщение. Fallback на user_message, если state-блок сессии выключен." />
+                    <ComboBox Grid.Row="2" Grid.Column="1" Width="320" HorizontalAlignment="Left" Margin="0,3"
+                              VerticalAlignment="Center"
+                              SelectedValuePath="Tag"
+                              SelectedValue="{Binding HeartbeatMode, UpdateSourceTrigger=PropertyChanged}">
+                        <ComboBoxItem Tag="state_field" Content="state_field (причина в state-блоке, свой ход)" />
+                        <ComboBoxItem Tag="user_message" Content="user_message (heartbeat как user-сообщение)" />
+                    </ComboBox>
                 </Grid>
             </Expander>
 

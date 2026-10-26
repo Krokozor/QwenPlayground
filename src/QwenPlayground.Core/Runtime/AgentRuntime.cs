@@ -37,6 +37,14 @@ public sealed class AgentRuntime
     /// <summary>Настройки этого скоупа на момент обращения (через провайдер).</summary>
     public AppSettings Settings => SettingsProvider();
 
+    /// <summary>
+    /// Причина пробуждения heartbeat (режим <c>HeartbeatMode=state_field</c>): ставится
+    /// перед ходом (ChatViewModel.RunHeartbeatTurnAsync), StateProvider подмешивает её в
+    /// state-блок (поле heartbeat=) на ПЕРВОМ рендере хода и сбрасывает (nag-семантика).
+    /// null — heartbeat-хода нет. Потокобезопасно без локов: агентный код — на потоке UI.
+    /// </summary>
+    public string? PendingHeartbeatReason { get; set; }
+
     /// <summary>Маршрут интерактива: подтверждение опасного действия (null — недоступен).</summary>
     public Func<string, CancellationToken, Task<bool>>? Confirm { get; set; }
 

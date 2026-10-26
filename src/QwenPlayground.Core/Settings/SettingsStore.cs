@@ -63,6 +63,14 @@ public sealed class AppSettings
     /// <summary>Автономные пробуждения main-агента: расписание + wake-сигналы из wake/.</summary>
     public bool HeartbeatEnabled { get; set; } = true;
     public int HeartbeatIntervalMinutes { get; set; } = 30;
+    /// <summary>
+    /// Как heartbeat будит чат (решение владельца, 2026-10-22):
+    /// "state_field" (дефолт) — причина в state-блоке (поле heartbeat=), ход — собственный
+    /// assistant-ход агента, БЕЗ user-сообщения (честнее: пользователь ничего не говорил);
+    /// "user_message" — прежний путь (heartbeat-промпт как user-сообщение). Fallback на
+    /// user_message, если state-блок сессии выключен (причине тогда некуда деться).
+    /// </summary>
+    public string HeartbeatMode { get; set; } = "state_field";
     /// <summary>Доля недавних сообщений, которую компактация сохраняет дословно (0–1).</summary>
     public string CompactKeepRatio { get; set; } = "0.5";
     /// <summary>

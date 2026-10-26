@@ -275,7 +275,9 @@ public static class QwenChatTemplate
         
         // jinja (строка 117): после закрывающего think — пустая строка, затем content;
         // модель генерит именно \n\n (сверено с traffic-логами), ToRawOutput — тот же формат.
-        builder.Append(message.Reasoning?.Trim() ?? string.Empty).Append('\n').Append(QwenSpecialTokens.ThinkEnd).Append("\n\n");
+        // Срезаем ведущие </state> из reasoning (галлюцинация «дозакрытия» state-блока)
+        // для старых сохранённых чатов — новые чаты уже чистятся на парсинге.
+        builder.Append(StateBlock.StripLeadingClose(message.Reasoning).Trim()).Append('\n').Append(QwenSpecialTokens.ThinkEnd).Append("\n\n");
         builder.Append(content);
 
         if (message.ToolCalls is { Count: > 0 } toolCalls)

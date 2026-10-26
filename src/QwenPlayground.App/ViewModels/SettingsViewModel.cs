@@ -234,6 +234,16 @@ public sealed class SettingsViewModel : ObservableObject {
     }
 
     /// <summary>
+    /// Как heartbeat будит чат: "state_field" (дефолт) — причина в state-блоке (heartbeat=),
+    /// ход — собственный assistant-ход агента без user-сообщения; "user_message" — прежний путь.
+    /// Fallback на user_message, если state-блок сессии выключен.
+    /// </summary>
+    public string HeartbeatMode {
+        get => S.HeartbeatMode;
+        set => Set(S.HeartbeatMode, value, (s, v) => s.HeartbeatMode = v);
+    }
+
+    /// <summary>
     /// Режим диагностики: детальный трейс в logs/diag-YYYYMMDD.log. Включается без
     /// перезапуска (DiagnosticsLog.SetEnabled) — сразу видно, где процесс стоит.
     /// </summary>

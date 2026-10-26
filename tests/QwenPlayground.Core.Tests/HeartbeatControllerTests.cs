@@ -41,6 +41,21 @@ public sealed class HeartbeatControllerTests : IDisposable
             background: new BackgroundWork(s => _backgroundErrors.Add(s)));
     }
 
+    /// <summary>Контроллер БЕЗ wake/ файла (pinned-чат: канал файлов — только main-агент).</summary>
+    private HeartbeatController CreateNoStore(Func<string, Task>? startTurn = null)
+    {
+        return new HeartbeatController(
+            null,
+            isBusy: () => _busy,
+            heartbeatEnabled: () => _enabled,
+            heartbeatIntervalMinutes: () => _intervalMinutes,
+            setStatus: s => _statuses.Add(s),
+            startTurn: startTurn ?? (prompt => { _turns.Add(prompt); return Task.CompletedTask; }),
+            flushMemory: () => { _flushCount++; return Task.CompletedTask; },
+            clock: () => _now,
+            background: new BackgroundWork(s => _backgroundErrors.Add(s)));
+    }
+
     private void SendWake(string text) => new WakeSignalStore(_wakeDir).Send(text);
 
     [Fact]
@@ -120,19 +135,76 @@ public sealed class HeartbeatControllerTests : IDisposable
     }
 
     [Fact]
-    public void Disabled_NoScheduledTurn_AndSignalsStayQueued()
+    public void Disabled_NoScheduledTurn_ButExternalSignalStillWakes()
     {
+        // Решение владельца (2026-10-16): настраиваемое расписание и внешние будильщики
+        // разделены — выключенное расписание не глушит wake/ файлы (внешнее событие).
         var hb = Create();
-        SendWake("отложено");
+        SendWake("внешняя задача");
         _enabled = false;
 
         hb.Tick();
-        Assert.Empty(_turns);
-        Assert.Equal(1, new WakeSignalStore(_wakeDir).Count); // сигнал не съеден
 
-        _enabled = true;
+        var turn = Assert.Single(_turns);
+        Assert.Contains("внешняя задача", turn);
+        Assert.Equal(0, new WakeSignalStore(_wakeDir).Count); // сигнал съеден
+
+        // Расписание при выключенном heartbeat не будит.
+        _now = _start.AddMinutes(31);
         hb.Tick();
         Assert.Single(_turns);
+    }
+
+    [Fact]
+    public void Wake_ExternalPrompt_WorksWhenDisabled()
+    {
+        // Внешний wake с готовым промптом (pigeon-mention): сразу, без тика,
+        // независимо от HeartbeatEnabled.
+        _enabled = false;
+        var hb = Create();
+
+        hb.Wake("[pigeon] you were mentioned");
+
+        var turn = Assert.Single(_turns);
+        Assert.Contains("[pigeon]", turn);
+        Assert.Contains("⏰ внешний wake", _statuses);
+    }
+
+    [Fact]
+    public void Wake_WhenBusy_DoesNotStartTurn()
+    {
+        var hb = Create();
+        _busy = true;
+
+        hb.Wake("[pigeon] you were mentioned");
+
+        Assert.Empty(_turns);
+    }
+
+    [Fact]
+    public void NoStore_TickOnlySchedule_AndWakeStillWorks()
+    {
+        // Pinned-чат: wake/ файла нет (канал main-агента), но расписание и внешний Wake
+        // работают (решение владельца, 2026-10-16: heartbeat — для всех чатов процесса).
+        var hb = CreateNoStore();
+
+        _now = _start.AddMinutes(31);
+        hb.Tick();
+        Assert.Equal(HeartbeatController.DefaultPrompt, Assert.Single(_turns));
+
+        hb.Wake("[pigeon] you were mentioned");
+        Assert.Equal(2, _turns.Count);
+    }
+
+    [Fact]
+    public void NoStore_WakeNow_FallsBackToDefaultPrompt()
+    {
+        // Кнопка в окне без wake/ канала — дефолтный heartbeat-промпт.
+        var hb = CreateNoStore();
+
+        hb.WakeNow();
+
+        Assert.Equal(HeartbeatController.DefaultPrompt, Assert.Single(_turns));
     }
 
     [Fact]

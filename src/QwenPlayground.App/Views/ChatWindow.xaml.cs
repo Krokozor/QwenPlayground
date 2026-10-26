@@ -46,9 +46,16 @@ public partial class ChatWindow : Window {
         _chat.AttentionRequired += () => WindowAttention.Focus(this);
         // Закрываем окно — сохраняем разговор (своя сессия, SavePinned). Слот вычищаем
         // только если окно — единственный хозяин чата; у popout-окна чат живёт в пузыре
-        // tool call (слот чистит спавнер в конце хода субагента).
+        // tool call (слот чистит спавнер в конце хода субагента). Pigeon: окно закрыто —
+        // чат разлогинен (решение владельца, 2026-10-16): файл подключения сохраняется,
+        // reconnect из диалога 🕊 мгновенный.
         Closing += (_, _) => {
             _chat.SaveCurrent();
+            _chat.StopHeartbeat(); // heartbeat этого чата больше некому качать (решение 2026-10-16)
+            if (_sessionId is not null && _main is not null)
+            {
+                QwenPlayground.Core.Pigeon.PigeonSession.For(_main.Sessions.DirectoryFor(_sessionId))?.Disconnect();
+            }
             if (_eraseSlotOnClose) EraseSlot();
         };
     }
@@ -82,7 +89,7 @@ public partial class ChatWindow : Window {
             () => chat?.GetQueuedMessage());
         var sessionId = existingSessionId ?? main.Sessions.CreateDetached();
         var runtime = main.CreatePinnedRuntime(sessionId, hooks, promptKey: promptKey, slotId: slotId);
-        chat = new ChatViewModel(runtime, main.Sessions, main.Heartbeat, main.Background,
+        chat = new ChatViewModel(runtime, main.Sessions, main.Background,
             scheduleSettingsSave: () => { }, goToSettings: () => { },
             kv: main.KvCache, subagents: main.Subagents) { Pinned = true };
         // Per-scope подтверждение (фаза 2, план 2026-09-28): опасная команда в этом чате

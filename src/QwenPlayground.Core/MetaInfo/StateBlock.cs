@@ -33,6 +33,36 @@ public sealed class StateBlock
     public const string Open = "<state>";
     public const string Close = "</state>";
 
+    /// <summary>
+    /// Срезает ведущие </state> из reasoning: модель иногда «дозакрывает» state-блок
+    /// (уже закрытый приложением) рефлексивно, и это улетает в контекст, подкармливая
+    /// галлюцинацию (~1 из 7 чатов; чаты с </state></state> теряют стабильность). Срез
+    /// только у начала (не глобальный replace), чтобы не задеть легитимное упоминание
+    /// тега в тексте мыслей. Применяется на парсинге (QwenOutputParser) и рендере
+    /// (QwenChatTemplate) — для новых и старых чатов.
+    /// </summary>
+    public static string StripLeadingClose(string? reasoning)
+    {
+        if (string.IsNullOrEmpty(reasoning))
+        {
+            return string.Empty;
+        }
+        var result = reasoning;
+        while (true)
+        {
+            var trimmed = result.TrimStart();
+            if (trimmed.StartsWith(Close, StringComparison.Ordinal))
+            {
+                result = trimmed[Close.Length..];
+            }
+            else
+            {
+                break;
+            }
+        }
+        return result;
+    }
+
     /// <summary>Стабильный ID сообщения (тот же, что получит сообщение при добавлении в разговор).</summary>
     public int? MsgId { get; set; }
 
@@ -62,6 +92,14 @@ public sealed class StateBlock
 
     /// <summary>Напоминание про sanity_check при долгой работе без самопроверки (nag).</summary>
     public string? Nag { get; set; }
+
+    /// <summary>
+    /// Причина пробуждения heartbeat (heartbeat=): «ты проснулся: …». В режиме
+    /// <c>HeartbeatMode=state_field</c> приложение будит чат собственным assistant-ходом
+    /// (без user-сообщения) и кладёт причину сюда — модель видит её как служебный сигнал
+    /// «тебя разбудили, вот зачем», а не как слова пользователя.
+    /// </summary>
+    public string? Heartbeat { get; set; }
 
     /// <summary>
     /// Свободная «доска сообщений»: произвольные куски, которые разные части приложения
@@ -155,6 +193,7 @@ public sealed class StateBlock
         }
         AppendField("mem_nag", MemoryNag);
         AppendField("nag", Nag);
+        AppendField("heartbeat", Heartbeat);
         // Доска сообщений: свободные заметки после служебных полей (одна строка на заметку).
         foreach (var note in Notes)
         {
@@ -205,6 +244,17 @@ public sealed class StateBlock
     }
 
     /// <summary>
+    /// Добавляет причину пробуждения heartbeat (heartbeat=) в блок. Аналог <see cref="WithNag"/>:
+    /// блок мутируется и возвращается; если блока нет — создаёт новый только с этим полем.
+    /// </summary>
+    public static StateBlock WithHeartbeat(StateBlock? block, string reason)
+    {
+        block ??= new StateBlock();
+        block.Heartbeat = reason;
+        return block;
+    }
+
+    /// <summary>
     /// Выделяет state-блок из начала текста (если он там есть). Возвращает
     /// (объект блока, остаток). Если блока нет — (null, исходный текст). Используется
     /// парсером на случай, если модель всё же повторила блок в ответе, и UI — чтобы
@@ -228,6 +278,16 @@ public sealed class StateBlock
         }
         var block = trimmed[..(end + Close.Length)];
         var rest = trimmed[(end + Close.Length)..].TrimStart();
+        // Галлюцинация модели: после префилла блока она иногда дублирует закрывающий
+        // тег (Close) — второй раз. Дубль остаётся в rest → попадает в Reasoning →
+        // перерисовывается в истории на каждом рендере → модель видит его и повторяет
+        // (самоподкрепляющийся цикл). Выковыриваем ВЕДУЩИЙ дубль: он почти никогда не
+        // бывает реальным контентом (модель редко начинает ответ с закрывающего тега),
+        // так что ложное срабатывание исключено. Дальнейшие вхождения не трогаем.
+        if (rest.StartsWith(Close, StringComparison.Ordinal))
+        {
+            rest = rest[Close.Length..].TrimStart();
+        }
         return (FromBlock(block), rest);
     }
 
@@ -312,6 +372,10 @@ public sealed class StateBlock
                     break;
                 case "nag":
                     state.Nag = value;
+                    any = true;
+                    break;
+                case "heartbeat":
+                    state.Heartbeat = value;
                     any = true;
                     break;
                 case "note":

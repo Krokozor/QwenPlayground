@@ -45,7 +45,6 @@ public interface IChatHost {
 public partial class ChatViewModel : ObservableObject {
     private readonly ChatRuntime _runtime;
     private readonly SessionController _sessions;
-    private readonly HeartbeatController _heartbeat;
     private readonly BackgroundWork _background;
     private readonly Action _scheduleSettingsSave;
     private readonly Action _goToSettings;
@@ -249,7 +248,6 @@ public partial class ChatViewModel : ObservableObject {
     public ChatViewModel(
         ChatRuntime runtime,
         SessionController sessions,
-        HeartbeatController heartbeat,
         BackgroundWork background,
         Action scheduleSettingsSave,
         Action goToSettings,
@@ -257,7 +255,6 @@ public partial class ChatViewModel : ObservableObject {
         SubagentSpawner subagents) {
         _runtime = runtime;
         _sessions = sessions;
-        _heartbeat = heartbeat;
         _background = background;
         _scheduleSettingsSave = scheduleSettingsSave;
         _goToSettings = goToSettings;
@@ -300,6 +297,10 @@ public partial class ChatViewModel : ObservableObject {
     /// через Chat — он уже должен быть достижим (в конструкторе Chat ещё null).
     /// </summary>
     public void Initialize() {
+        // Heartbeat (решение владельца, 2026-10-16: heartbeat доступен для всех чатов
+        // процесса): тик 20 с качает UI-таймер ЭТОГО чата → rt.Heartbeat.Tick().
+        // Пinned-окно останавливает таймер при закрытии (StopHeartbeat).
+        StartHeartbeat();
         if (Pinned) {
             // Закреплённое окно: сессия своя, main/restore не участвуют; драфт не тащим
             // (окно не переживает рестарт — черновик не нужен).
@@ -320,6 +321,25 @@ public partial class ChatViewModel : ObservableObject {
         _runtime.Draft.Restore();
         StartupTrace.Log("ChatViewModel Initialize: RefreshPromptPreview (startup)");
         RefreshPromptPreview();
+    }
+
+    /// <summary>
+    /// UI-таймер тиков heartbeat этого чата (20 с, паттерн NekoBot: DispatcherTimer UI
+    /// качает Core-контроллер). Старт — Initialize, стоп — StopHeartbeat (закрытие окна)
+    /// или смерть диспетчера (выход приложения).
+    /// </summary>
+    private System.Windows.Threading.DispatcherTimer? _heartbeatTimer;
+
+    private void StartHeartbeat() {
+        _heartbeatTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
+        _heartbeatTimer.Tick += (_, _) => _runtime.Heartbeat?.Tick();
+        _heartbeatTimer.Start();
+    }
+
+    /// <summary>Остановить heartbeat этого чата (закрытие pinned-окна; повторный вызов безопасен).</summary>
+    public void StopHeartbeat() {
+        _heartbeatTimer?.Stop();
+        _heartbeatTimer = null;
     }
 
     /// <summary>Каталог сессии рантайма: у каждой сессии своя папка sessions/&lt;id&gt;/ (как у main-агента).</summary>
@@ -542,9 +562,13 @@ public partial class ChatViewModel : ObservableObject {
     [RelayCommand]
     private void ShowCompactionPanel() => _runtime.Compaction.Open();
 
-    /// <summary>Ручной wake (кнопка): если есть сигнал — обработать его, иначе обычный heartbeat.</summary>
+    /// <summary>
+    /// Ручной wake (кнопка): если есть сигнал (wake/ файл, main) — обработать его, иначе
+    /// обычный heartbeat-промпт. Внешний канал — работает независимо от HeartbeatEnabled
+    /// (решение владельца, 2026-10-16) и будит ЭТОТ чат (per-chat контроллер).
+    /// </summary>
     [RelayCommand(CanExecute = nameof(CanInteract))]
-    private void WakeNow() => _heartbeat.WakeNow();
+    private void WakeNow() => _runtime.Heartbeat?.WakeNow();
 
     /// <summary>
     /// Подтверждение опасной команды: КАРТОЧКА в этом чате, а не модалка (фаза 1.5,
@@ -582,18 +606,49 @@ public partial class ChatViewModel : ObservableObject {
         return tcs.Task;
     }
 
-    /// <summary>Ход main-агента по инициативе приложения: всегда агентный режим (иначе бессмысленно).</summary>
+    /// <summary>
+    /// Ход main-агента по инициативе приложения: всегда агентный режим (иначе бессмысленно).
+    /// Режим <see cref="AppSettings.HeartbeatMode"/> (решение владельца, 2026-10-22):
+    /// "state_field" — причина в state-блоке (heartbeat=), ход — собственный assistant-ход
+    /// агента без user-сообщения (честнее: пользователь ничего не говорил); "user_message" —
+    /// прежний путь. Fallback на user_message, если state-блок сессии выключен.
+    /// </summary>
     public async Task RunHeartbeatTurnAsync(string prompt) {
         // Busy-чек ПЕРЕД записью сообщения: ход, который не стартовал, не должен оставлять
         // [heartbeat]/[wake]-зомби в разговоре — модель увидит его в следующем промпте.
         if (IsBusy) {
             return;
         }
-        var userMessage = ChatMessage.User(prompt);
-        _runtime.Log.Add(userMessage);
-        Messages.Add(MessageViewModel.FromMessage("user", userMessage));
-        await TurnView.GenerateAsync();
+        if (S.HeartbeatMode == "state_field" && StateBlockEnabledForSession()) {
+            // State-режим: причина — в скоуп (StateProvider подмешает в heartbeat= на первом
+            // рендере), ход — прямой assistant-ход без user-сообщения.
+            _runtime.Scope.PendingHeartbeatReason = prompt;
+            try {
+                await TurnView.GenerateAsync();
+            } finally {
+                // Страховка: StateProvider сбрасывает причину на первом рендере, но если ход
+                // не отрендерил (бюджет-фейл/ошибка) — не оставляем её зомби-полем в следующем
+                // чужом ходе.
+                _runtime.Scope.PendingHeartbeatReason = null;
+            }
+        } else {
+            // User-режим (или fallback: state-блок сессии выключен — причине некуда деться).
+            var userMessage = ChatMessage.User(prompt);
+            _runtime.Log.Add(userMessage);
+            Messages.Add(MessageViewModel.FromMessage("user", userMessage));
+            await TurnView.GenerateAsync();
+        }
         SaveCurrent();
+    }
+
+    /// <summary>
+    /// Включён ли state-блок для ТЕКУЩЕЙ сессии (та же логика, что в TurnPipeline: main —
+    /// всегда, иначе — профиль сессии). Нужен для heartbeat: в режиме state_field причине
+    /// некуда деться, если блок выключен — тогда fallback на user-сообщение.
+    /// </summary>
+    private bool StateBlockEnabledForSession() {
+        var isMain = _runtime.SessionId() == MainAgent.SessionId;
+        return isMain || ChatProfiles.Get().ResolveStateBlock(_sessions.StateBlockKey).Enabled;
     }
 
     // ── Профили чата: резолверы хода и диалог настройки (шестерёнка) ────────────────

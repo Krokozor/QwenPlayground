@@ -3,11 +3,14 @@ using QwenPlayground.Core.Runtime;
 namespace QwenPlayground.Core.Heartbeat;
 
 /// <summary>
-/// Сердцебиение приложения: на каждом тике опрашивается wake/ (сигналы не ждут расписания),
-/// по истечении интервала планируется плановое пробуждение. Исполнение хода и flush памяти
-/// остаются снаружи (нужны FSM, endpoint, настройки) — контроллер владеет только решением
-/// «когда и чем разбудить» и статусами. Без таймера: качает UI (DispatcherTimer) или тест
-/// (Tick() напрямую); часы подменяются через <paramref name="clock"/>.
+/// Сердцебиение ЧАТА (решение владельца, 2026-10-16: разделение настраиваемого и
+/// внешнего): ДВА независимых канала —
+/// (1) НАСТРАИВАЕМОЕ расписание (HeartbeatEnabled + интервал) — плановые автономные ходы;
+/// (2) ВНЕШНИЕ будильщики — wake/ файлы (только main), pigeon-mention (Wake), кнопка
+/// (WakeNow): работают ВСЕГДА, независимо от HeartbeatEnabled, без ожидания тика.
+/// Исполнение хода и flush памяти остаются снаружи (нужны FSM, endpoint, настройки) —
+/// контроллер владеет только решением «когда и чем разбудить» и статусами. Без таймера:
+/// качает UI (DispatcherTimer) или тест (Tick() напрямую); часы — через <paramref name="clock"/>.
 /// </summary>
 public sealed class HeartbeatController
 {
@@ -18,7 +21,7 @@ public sealed class HeartbeatController
         "application code, finish with rebuild_self. If nothing needs attention, reply with a one-line status and " +
         "stop. Do not start large refactors or risky changes unprompted.";
 
-    private readonly WakeSignalStore _wakeSignals;
+    private readonly WakeSignalStore? _wakeSignals;
     private readonly Func<bool> _isBusy;
     private readonly Func<bool> _heartbeatEnabled;
     private readonly Func<double> _intervalMinutes;
@@ -33,7 +36,7 @@ public sealed class HeartbeatController
     private DateTime _lastTurnAt;
 
     public HeartbeatController(
-        WakeSignalStore wakeSignals,
+        WakeSignalStore? wakeSignals,
         Func<bool> isBusy,
         Func<bool> heartbeatEnabled,
         Func<double> heartbeatIntervalMinutes,
@@ -59,7 +62,11 @@ public sealed class HeartbeatController
 
     private int _tickCount;
 
-    /// <summary>Один тик опроса: busy гасит всё, flush памяти бежит всегда при свободном чате.</summary>
+    /// <summary>
+    /// Один тик опроса (качает UI-таймер, 20 с): busy гасит всё; flush памяти — всегда при
+    /// свободном чате; внешние wake-сигналы (wake/ файлы) — не ждут HeartbeatEnabled;
+    /// плановое расписание — только при включённом heartbeat.
+    /// </summary>
     public void Tick()
     {
         if (++_tickCount <= 3)
@@ -79,60 +86,67 @@ public sealed class HeartbeatController
         // Flush памяти: рано или поздно все факты векторизуются, не забивая активный поток чата.
         _background.Queue("flush памяти", _flushMemory);
 
-        var prompt = ResolveScheduledTurn();
-        if (prompt is not null)
-        {
-            _background.Queue("heartbeat-ход", () => _startTurn(prompt));
-        }
-    }
-
-    /// <summary>
-    /// Ручной wake (кнопка): сигнал или обычный heartbeat вне расписания; плановый отсчёт сбрасывается.
-    /// </summary>
-    public void WakeNow()
-    {
-        // Busy-гвард (как в Tick): во время активного хода wake-ход не планируем —
-        // иначе второй вход в ход попадает в окно «один вход» (бюджет-чех до FSM).
-        // Сигнал НЕ съедаем: следующий тик подхватит (паттерн Disabled_NoScheduledTurn).
-        if (_isBusy())
-        {
-            return;
-        }
-        _lastTurnAt = _utcNow();
-        var signal = _wakeSignals.TakeNext();
-        _setStatus("⏰ ручной wake");
-        _background.Queue("ручной wake-ход",
-            () => _startTurn(signal is { } wake ? $"[wake:{wake.Source}] {wake.Text}" : DefaultPrompt));
-    }
-
-    /// <summary>
-    /// Решение планового пробуждения: wake-сигнал важнее расписания (и сбрасывает его отсчёт
-    /// фактом хода). Возвращает текст промпта или null — ход не нужен.
-    /// </summary>
-    private string? ResolveScheduledTurn()
-    {
-        if (!_heartbeatEnabled())
-        {
-            return null;
-        }
-
-        var signal = _wakeSignals.TakeNext();
-        if (signal is { } wake)
+        // Внешний канал: файл в wake/ — событие извне (shell, другой процесс), а не
+        // расписание: обрабатываем независимо от HeartbeatEnabled (решение владельца,
+        // 2026-10-16: настраиваемое расписание и внешние будильщики разделены).
+        if (_wakeSignals?.TakeNext() is { } wake)
         {
             _lastTurnAt = _utcNow();
             _setStatus($"⏰ wake-сигнал: {wake.Source}");
-            return $"[wake:{wake.Source}] {wake.Text}";
+            _background.Queue("wake-ход", () => _startTurn($"[wake:{wake.Source}] {wake.Text}"));
+            return;
+        }
+
+        // Настраиваемый канал: плановое пробуждение по интервалу.
+        if (!_heartbeatEnabled())
+        {
+            return;
         }
 
         // UtcNow для интервалов: локальное время прыгает при переводе часов/NTP.
         var now = _utcNow();
         if ((now - _lastTurnAt).TotalMinutes < _intervalMinutes())
         {
-            return null;
+            return;
         }
 
         _lastTurnAt = now;
         _setStatus("⏰ heartbeat");
-        return DefaultPrompt;
+        _background.Queue("heartbeat-ход", () => _startTurn(DefaultPrompt));
+    }
+
+    /// <summary>
+    /// Внешний wake с готовым промптом (pigeon-mention и пр.): сразу, без ожидания тика,
+    /// независимо от HeartbeatEnabled. Busy-гвард: во время хода не планируем второй вход
+    /// (окно «один вход»: бюджет-чех до FSM) — вызыватель сам повторит, когда чат освободится.
+    /// </summary>
+    public void Wake(string prompt)
+    {
+        if (_isBusy())
+        {
+            return;
+        }
+        _lastTurnAt = _utcNow();
+        _setStatus("⏰ внешний wake");
+        _background.Queue("внешний wake-ход", () => _startTurn(prompt));
+    }
+
+    /// <summary>
+    /// Ручной wake (кнопка): queued-сигнал (wake/ файл, если есть) или обычный heartbeat-
+    /// промпт; вне расписания, независимо от HeartbeatEnabled; плановый отсчёт сбрасывается.
+    /// </summary>
+    public void WakeNow()
+    {
+        // Busy-гвард (как в Tick): во время активного хода wake-ход не планируем.
+        // Сигнал НЕ съедаем: следующий тик подхватит.
+        if (_isBusy())
+        {
+            return;
+        }
+        _lastTurnAt = _utcNow();
+        var signal = _wakeSignals?.TakeNext();
+        _setStatus(signal is { } s ? $"⏰ wake-сигнал: {s.Source}" : "⏰ ручной wake");
+        _background.Queue("ручной wake-ход",
+            () => _startTurn(signal is { } wake ? $"[wake:{wake.Source}] {wake.Text}" : DefaultPrompt));
     }
 }

@@ -244,4 +244,70 @@ public sealed class StateBlockTests
 
         Assert.DoesNotContain("todo", rendered);
     }
+
+    // ── Heartbeat (режим state_field): причина пробуждения в state-блоке ──────────────
+
+    [Fact]
+    public void Heartbeat_RendersAfterNag()
+    {
+        var state = new StateBlock
+        {
+            MsgId = 3,
+            Nag = "call sanity_check",
+            Heartbeat = "ты проснулся: плановый heartbeat"
+        };
+
+        Assert.Equal(
+            "<state>\n" +
+            "msg_id=3\n" +
+            "nag=call sanity_check\n" +
+            "heartbeat=ты проснулся: плановый heartbeat\n" +
+            "</state>",
+            state.ToString());
+    }
+
+    [Fact]
+    public void Heartbeat_ParsesBack_RoundTrip()
+    {
+        var state = new StateBlock
+        {
+            MsgId = 4,
+            Heartbeat = "ты проснулся: [wake:file] проверь сборку"
+        };
+
+        var parsed = StateBlock.Parse(state.ToString());
+
+        Assert.NotNull(parsed);
+        Assert.Equal(4, parsed!.MsgId);
+        Assert.Equal("ты проснулся: [wake:file] проверь сборку", parsed.Heartbeat);
+        Assert.Equal(state.ToString(), parsed.ToString());
+    }
+
+    [Fact]
+    public void WithHeartbeat_MutatesExistingBlock()
+    {
+        var state = new StateBlock { MsgId = 5 };
+
+        var result = StateBlock.WithHeartbeat(state, "ты проснулся: heartbeat");
+
+        Assert.Same(state, result);
+        Assert.Equal("ты проснулся: heartbeat", state.Heartbeat);
+    }
+
+    [Fact]
+    public void WithHeartbeat_CreatesBlockWhenNull()
+    {
+        var result = StateBlock.WithHeartbeat(null, "ты проснулся: heartbeat");
+
+        Assert.NotNull(result);
+        Assert.Equal("ты проснулся: heartbeat", result.Heartbeat);
+    }
+
+    [Fact]
+    public void Heartbeat_AbsentByDefault_NoFieldRendered()
+    {
+        var rendered = new StateBlock { MsgId = 1 }.ToString();
+
+        Assert.DoesNotContain("heartbeat", rendered);
+    }
 }
