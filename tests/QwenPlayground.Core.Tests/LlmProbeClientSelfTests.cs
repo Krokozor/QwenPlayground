@@ -79,7 +79,7 @@ public sealed class LlmProbeClientSelfTests
     }
 
     [Fact]
-    public void SelfProbe_Live_ReturnsPositions_ProbeSlotOnly()
+    public async Task SelfProbe_Live_ReturnsPositions_ProbeSlotOnly()
     {
         if (!ServerReachable())
         {
@@ -92,8 +92,7 @@ public sealed class LlmProbeClientSelfTests
 
         var mainBefore = SlotTokens(0);
 
-        var positions = LlmProbeClient.SelfProbePositionsAsync(BuildProbePrompt(), nProbs: 20, nPredict: 6)
-            .GetAwaiter().GetResult();
+        var positions = await LlmProbeClient.SelfProbePositionsAsync(BuildProbePrompt(), nProbs: 20, nPredict: 6);
 
         Assert.NotEmpty(positions);
         Assert.All(positions, p => Assert.NotEmpty(p.TopTokens));

@@ -63,7 +63,7 @@ public sealed class IntuitionToolsLiveTests
     private static ToolContext Context() => new(SelfBuildPaths.WorkspaceRoot);
 
     [Fact]
-    public void Choice_Live_ReturnsChosenOptionWithConfidence()
+    public async Task Choice_Live_ReturnsChosenOptionWithConfidence()
     {
         if (!ProbeAvailable())
         {
@@ -75,7 +75,7 @@ public sealed class IntuitionToolsLiveTests
             Options = new[] { "web browser automation", "desktop mouse and keyboard", "C# code analysis" }
         };
 
-        var result = tool.ExecuteAsync(Context(), CancellationToken.None).GetAwaiter().GetResult();
+        var result = await tool.ExecuteAsync(Context(), CancellationToken.None);
 
         Assert.StartsWith("Intuition (choice):", result);
         Assert.Contains("p=", result);
@@ -84,7 +84,7 @@ public sealed class IntuitionToolsLiveTests
     }
 
     [Fact]
-    public void Rating_Live_ReturnsDigitWithDistribution()
+    public async Task Rating_Live_ReturnsDigitWithDistribution()
     {
         if (!ProbeAvailable())
         {
@@ -96,7 +96,7 @@ public sealed class IntuitionToolsLiveTests
             Scale = "0 = strongly disagree, 9 = strongly agree"
         };
 
-        var result = tool.ExecuteAsync(Context(), CancellationToken.None).GetAwaiter().GetResult();
+        var result = await tool.ExecuteAsync(Context(), CancellationToken.None);
 
         Assert.StartsWith("Intuition (rating):", result);
         Assert.Contains("digit", result);
@@ -106,7 +106,7 @@ public sealed class IntuitionToolsLiveTests
     }
 
     [Fact]
-    public void Vibe_Live_ReturnsEmojiSequenceAndDistribution()
+    public async Task Vibe_Live_ReturnsEmojiSequenceAndDistribution()
     {
         if (!ProbeAvailable())
         {
@@ -117,7 +117,7 @@ public sealed class IntuitionToolsLiveTests
             Text = "The build failed at 3am because of a null pointer in the test suite."
         };
 
-        var result = tool.ExecuteAsync(Context(), CancellationToken.None).GetAwaiter().GetResult();
+        var result = await tool.ExecuteAsync(Context(), CancellationToken.None);
 
         Assert.StartsWith("Intuition (vibe):", result);
         Assert.DoesNotContain("Probe failed", result);
@@ -127,7 +127,7 @@ public sealed class IntuitionToolsLiveTests
     }
 
     [Fact]
-    public void Choice_Live_RejectsTooFewOptions()
+    public async Task Choice_Live_RejectsTooFewOptions()
     {
         var tool = new IntuitionChoiceTool
         {
@@ -135,7 +135,7 @@ public sealed class IntuitionToolsLiveTests
             Options = new[] { "only one" }
         };
 
-        var result = tool.ExecuteAsync(Context(), CancellationToken.None).GetAwaiter().GetResult();
+        var result = await tool.ExecuteAsync(Context(), CancellationToken.None);
 
         Assert.Contains("at least 2 options", result);
     }
