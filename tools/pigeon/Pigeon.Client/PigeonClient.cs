@@ -145,26 +145,37 @@ public sealed class PigeonClient : IDisposable
 
     // ── File pool ─────────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Encode a pool-relative path segment by segment. Encoding the whole path with
+    /// Uri.EscapeDataString turns '/' into %2F, and Kestrel does not decode an encoded
+    /// slash back into the {**path} route value — every nested path came back 404.
+    /// Per-segment encoding keeps the separators real and only escapes the names.
+    /// </summary>
+    private static string EncodePath(string path) =>
+        string.Join("/", path.Replace('\\', '/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(Uri.EscapeDataString));
+
     public Task<PigeonFileEntry[]> FilesLsAsync(string path, CancellationToken ct = default)
         => GetJsonAsync<PigeonFileEntry[]>(_http, Req(HttpMethod.Get, $"/api/files?path={Uri.EscapeDataString(path)}"), ct);
 
     public Task<PigeonFileContent> FileReadAsync(string path, CancellationToken ct = default)
-        => GetJsonAsync<PigeonFileContent>(_http, Req(HttpMethod.Get, $"/api/files/{Uri.EscapeDataString(path)}"), ct);
+        => GetJsonAsync<PigeonFileContent>(_http, Req(HttpMethod.Get, $"/api/files/{EncodePath(path)}"), ct);
 
     public async Task<byte[]> FileDownloadAsync(string path, CancellationToken ct = default)
     {
-        using var req = Req(HttpMethod.Get, $"/api/files/{Uri.EscapeDataString(path)}");
+        using var req = Req(HttpMethod.Get, $"/api/files/{EncodePath(path)}");
         using var resp = await _http.SendAsync(req, ct);
         resp.EnsureSuccessStatusCode();
         return await resp.Content.ReadAsByteArrayAsync(ct);
     }
 
     public Task<PigeonFileResult> FileWriteAsync(string path, string content, CancellationToken ct = default)
-        => PostJsonAsync<PigeonFileResult>(Req(HttpMethod.Put, $"/api/files/{Uri.EscapeDataString(path)}"), new PigeonFilePut { Content = content }, ct);
+        => PostJsonAsync<PigeonFileResult>(Req(HttpMethod.Put, $"/api/files/{EncodePath(path)}"), new PigeonFilePut { Content = content }, ct);
 
     public async Task<PigeonFileResult> FileUploadAsync(string path, byte[] data, CancellationToken ct = default)
     {
-        var req = Req(HttpMethod.Put, $"/api/files/{Uri.EscapeDataString(path)}");
+        var req = Req(HttpMethod.Put, $"/api/files/{EncodePath(path)}");
         req.Content = new ByteArrayContent(data);
         req.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
         using var resp = await _http.SendAsync(req, ct);
@@ -175,14 +186,14 @@ public sealed class PigeonClient : IDisposable
 
     public async Task<bool> FileEditAsync(string path, string oldText, string newText, CancellationToken ct = default)
     {
-        var req = Req(new HttpMethod("PATCH"), $"/api/files/{Uri.EscapeDataString(path)}");
+        var req = Req(new HttpMethod("PATCH"), $"/api/files/{EncodePath(path)}");
         req.Content = new StringContent(JsonSerializer.Serialize(new PigeonFileEdit { OldText = oldText, NewText = newText }, Json), System.Text.Encoding.UTF8, "application/json");
         using var resp = await _http.SendAsync(req, ct);
         return resp.StatusCode == System.Net.HttpStatusCode.OK;
     }
 
     public Task FileDeleteAsync(string path, CancellationToken ct = default)
-        => SendNoContentAsync(Req(HttpMethod.Delete, $"/api/files/{Uri.EscapeDataString(path)}"), ct);
+        => SendNoContentAsync(Req(HttpMethod.Delete, $"/api/files/{EncodePath(path)}"), ct);
 
     private async Task SendNoContentAsync(HttpRequestMessage req, CancellationToken ct)
     {

@@ -364,7 +364,11 @@ app.MapGet("/api/files", (HttpContext ctx) =>
     if (id is null) return Unauthorized();
     try
     {
-        return Results.Ok(store.FileLs(""));
+        // Listing is addressed by ?path= (the bare /api/files/{**path} route returns file
+        // content, so a directory needs its own query form). Without reading the query the
+        // endpoint always listed the root — the client's FilesLsAsync for a subdirectory
+        // silently showed the wrong directory.
+        return Results.Ok(store.FileLs(ctx.Request.Query["path"].ToString()));
     }
     catch (KeyNotFoundException) { return Results.NotFound(); }
     catch (ArgumentException ex) { return Results.BadRequest(ex.Message); }
@@ -379,6 +383,9 @@ app.MapGet("/api/files/{**path}", (HttpContext ctx, string path) =>
         var (data, isText) = store.FileGet(path);
         if (isText)
         {
+            // The UI must know whether the body is the JSON text wrapper or raw bytes:
+            // a .json file is text (wrapped), a .gltf is binary-by-extension but also JSON.
+            ctx.Response.Headers["X-Pigeon-Text"] = "1";
             var meta = store.FileLs(path).FirstOrDefault();
             return Results.Ok(new PigeonFileContent
             {
@@ -390,6 +397,7 @@ app.MapGet("/api/files/{**path}", (HttpContext ctx, string path) =>
             });
         }
         // Binary: raw bytes with content type.
+        ctx.Response.Headers["X-Pigeon-Text"] = "0";
         var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
         var ct = ext switch
         {
@@ -419,10 +427,12 @@ app.MapPut("/api/files/{**path}", async (HttpContext ctx, string path) =>
     byte[] data;
     if (contentType.Contains("application/json"))
     {
-        var body = await new System.IO.StreamReader(ctx.Request.Body).ReadToEndAsync();
-        var req = System.Text.Json.JsonSerializer.Deserialize<PigeonFilePut>(body);
+        // ReadFromJsonAsync uses the app's JSON options (camelCase, case-insensitive).
+        // A manual Deserialize with default options leaves Content null for {"content":...},
+        // and GetBytes(null) used to turn the request into a 500.
+        var req = await ctx.Request.ReadFromJsonAsync<PigeonFilePut>();
         if (req is null) return Results.BadRequest("missing body");
-        data = System.Text.Encoding.UTF8.GetBytes(req.Content);
+        data = System.Text.Encoding.UTF8.GetBytes(req.Content ?? "");
     }
     else
     {
@@ -444,7 +454,7 @@ app.MapPatch("/api/files/{**path}", (HttpContext ctx, string path, PigeonFileEdi
     if (id is null) return Unauthorized();
     try
     {
-        return store.FileEdit(path, req.OldText, req.NewText)
+        return store.FileEdit(path, req.OldText ?? "", req.NewText ?? "")
             ? Results.Ok(new { path, edited = true })
             : Results.Conflict("old_text not found exactly once");
     }

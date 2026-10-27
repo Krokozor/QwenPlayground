@@ -170,6 +170,83 @@
                  display: inline-flex; align-items: center; gap: 4px; }
   .gcard .gmem button { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 11px; padding: 0; }
   .gcard .gmem button:hover { color: var(--err); }
+  /* Files view: the shared file pool. Same page, same token, no second admin tool. */
+  #files-view { display: none; flex: 1; min-height: 0; position: relative; }
+  body.files #files-view { display: flex; }
+  body.files #warroom, body.files #admin-view { display: none; }
+  .files-main { flex: 1; min-height: 0; display: flex; flex-direction: column; min-width: 0; }
+  .files-bar { display: flex; gap: 8px; align-items: center; padding: 10px 16px;
+               background: var(--bg2); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .crumbs { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 220px;
+            font-size: 13px; flex-wrap: wrap; }
+  .crumbs button { background: none; border: none; color: var(--acc); cursor: pointer;
+                   font: inherit; padding: 2px 5px; border-radius: 4px; }
+  .crumbs button:hover { background: var(--bg3); }
+  .crumbs .sep { color: var(--dim); }
+  .crumbs .here { color: var(--fg); font-weight: 600; padding: 2px 5px; }
+  .fbtn, .files-bar > button { background: var(--bg3); color: var(--fg); border: 1px solid var(--line);
+                               border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit;
+                               font-size: 12px; white-space: nowrap; }
+  .fbtn:hover, .files-bar > button:hover { border-color: var(--acc); color: var(--acc); }
+  .fbtn input { display: none; }
+  .files-bar input[type=search] { background: var(--bg3); border: 1px solid var(--line); color: var(--fg);
+                                  border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; width: 180px; }
+  .files-note { color: var(--dim); font-size: 11px; min-width: 90px; }
+  .files-wrap { flex: 1; overflow: auto; padding: 0 16px 24px; }
+  .files-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+  .files-table col.c-fname { width: auto; } .files-table col.c-fsize { width: 100px; }
+  .files-table col.c-fmtime { width: 150px; } .files-table col.c-fowner { width: 120px; }
+  .files-table col.c-fact { width: 200px; }
+  .files-table th { position: sticky; top: 0; z-index: 1; background: var(--bg);
+                    text-align: left; color: var(--dim); font-size: 11px; text-transform: uppercase;
+                    letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .files-table td { padding: 6px 10px; border-bottom: 1px solid var(--line);
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .files-table tr:hover td { background: var(--bg3); }
+  .files-table .fname { cursor: pointer; }
+  .files-table .fname:hover { color: var(--acc); }
+  .files-table .ficon { display: inline-block; width: 22px; }
+  .files-table .fdir { color: var(--acc); }
+  .files-table .fmeta { color: var(--dim); font-size: 11px; font-family: Consolas, monospace; }
+  .files-table .fact { display: flex; gap: 4px; }
+  .files-table .fact button { background: none; border: 1px solid var(--line); color: var(--dim);
+                              border-radius: 5px; padding: 1px 8px; cursor: pointer; font-size: 11px; }
+  .files-table .fact button:hover { color: var(--acc); border-color: var(--acc); }
+  .files-table .fact button.del:hover { color: var(--err); border-color: var(--err); }
+  #files-drop { display: none; position: absolute; inset: 0; z-index: 5; pointer-events: none;
+                align-items: center; justify-content: center; font-size: 20px; color: var(--acc);
+                background: rgba(20,22,26,.86); border: 2px dashed var(--acc); }
+  #files-view.dragging #files-drop { display: flex; }
+  #files-empty { color: var(--dim); text-align: center; padding: 40px 0; }
+  /* File viewer / editor: one modal for text and binary, so opening a file never downloads it. */
+  #file-modal { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.55);
+                display: none; align-items: center; justify-content: center; padding: 24px; }
+  #file-modal.open { display: flex; }
+  .fm-box { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px;
+            width: min(1100px, 100%); height: min(820px, 100%); display: flex; flex-direction: column; overflow: hidden; }
+  .fm-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .fm-head .title { font-weight: 600; color: var(--acc); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fm-head .meta { color: var(--dim); font-size: 11px; font-family: Consolas, monospace;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fm-head .spacer { flex: 1; }
+  .fm-head #fm-close { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 18px; }
+  .fm-head #fm-close:hover { color: var(--err); }
+  .fm-body { flex: 1; min-height: 0; display: flex; }
+  #fm-text { flex: 1; display: none; background: var(--bg); color: var(--fg); border: none;
+             padding: 12px 14px; font: 13px/1.5 Consolas, monospace; resize: none; outline: none;
+             white-space: pre; tab-size: 4; }
+  #fm-preview { flex: 1; display: none; align-items: center; justify-content: center;
+                overflow: auto; padding: 14px; color: var(--dim); text-align: center; }
+  #fm-preview img, #fm-preview video { max-width: 100%; max-height: 100%; }
+  #fm-preview audio { width: min(560px, 100%); }
+  #fm-preview iframe { width: 100%; height: 100%; border: none; background: #fff; }
+  .fm-foot { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line); }
+  .fm-foot .status { flex: 1; color: var(--dim); font-size: 12px; }
+  .fm-foot button { background: var(--bg3); color: var(--fg); border: 1px solid var(--line);
+                    border-radius: 6px; padding: 5px 14px; cursor: pointer; font: inherit; font-size: 12px; }
+  .fm-foot button.primary { background: var(--acc); color: #10131a; border-color: var(--acc); font-weight: 600; }
+  .fm-foot button:hover { border-color: var(--acc); }
+  .fm-foot button:disabled { opacity: .45; cursor: default; }
 </style>
 </head>
 <body>
@@ -192,6 +269,7 @@
   <input id="search" type="search" placeholder="search this channel" title="filter the loaded messages">
   <button class="viewtab active" id="tab-war" onclick="setView('war')">war room</button>
   <button class="viewtab" id="tab-admin" onclick="setView('admin')">admin</button>
+  <button class="viewtab" id="tab-files" onclick="setView('files')">files</button>
   <div class="conn" id="conn">…</div>
 </header>
 
@@ -266,6 +344,58 @@
   </div>
 </main>
 
+<!-- Files view: the shared file pool (docs/MESSANGER.md §7). Agents reach the same store
+     through pigeon_ls / pigeon_read_file / pigeon_write / pigeon_upload; this is the owner's
+     window into it: browse, preview, edit text in place, upload, download, delete. -->
+<main id="files-view">
+  <div id="files-drop">drop files to upload into <span id="files-drop-path">/</span></div>
+  <div class="files-main">
+    <div class="files-bar">
+      <div class="crumbs" id="files-crumbs"></div>
+      <input id="files-filter" type="search" placeholder="filter this folder">
+      <button id="files-refresh" title="re-read the current folder">refresh</button>
+      <button id="files-new" title="create a text file here (use / to make folders)">new file</button>
+      <label class="fbtn" title="upload files into the current folder">upload
+        <input id="files-upload" type="file" multiple></label>
+      <label class="fbtn" title="upload a folder tree into the current folder">upload folder
+        <input id="files-upload-dir" type="file" webkitdirectory multiple></label>
+      <span class="files-note" id="files-note"></span>
+    </div>
+    <div class="files-wrap">
+      <table class="files-table">
+        <colgroup>
+          <col class="c-fname"><col class="c-fsize"><col class="c-fmtime"><col class="c-fowner"><col class="c-fact">
+        </colgroup>
+        <thead><tr>
+          <th>name</th><th>size</th><th>modified</th><th>owner</th><th>actions</th>
+        </tr></thead>
+        <tbody id="files-rows"></tbody>
+      </table>
+      <div id="files-empty">this folder is empty — upload something or create a file</div>
+    </div>
+  </div>
+</main>
+
+<div id="file-modal">
+  <div class="fm-box">
+    <div class="fm-head">
+      <span class="title" id="fm-title">—</span>
+      <span class="meta" id="fm-meta"></span>
+      <span class="spacer"></span>
+      <button id="fm-close" title="close (Esc)">✕</button>
+    </div>
+    <div class="fm-body">
+      <textarea id="fm-text" spellcheck="false"></textarea>
+      <div id="fm-preview"></div>
+    </div>
+    <div class="fm-foot">
+      <span class="status" id="fm-status"></span>
+      <button id="fm-download">download</button>
+      <button id="fm-save" class="primary">save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 // pigeon web UI — the meat bag's war room. One static page, no framework.
@@ -281,6 +411,7 @@ const state = {
   pollGen: 0,          // generation counter to cancel stale long-polls
   heartbeat: null,
   search: "",
+  files: { path: "", entries: [], filter: "", loading: false, editor: null },
 };
 
 async function api(path, opts = {}) {
@@ -355,6 +486,9 @@ async function boot() {
   if (myCh.length) selectChannel(myCh[0]);
   state.heartbeat = setInterval(() => api("/api/heartbeat", { method: "POST" }).catch(() => {}), 20000);
   api("/api/heartbeat", { method: "POST" }).catch(() => {});
+  // The saved view may be "files": setView ran before the token existed (401), so
+  // re-read the pool now that the login succeeded.
+  if (document.body.classList.contains("files")) refreshFiles().catch(() => {});
 }
 
 // ── Channels ──────────────────────────────────────────────────────────────────────
@@ -953,7 +1087,14 @@ if (ngBtn) ngBtn.onclick = async () => {
   } catch (e) { alert("create failed: " + e.message); }
 };
 
-setInterval(() => { refreshWho().catch(() => {}); refreshUnread().catch(() => {}); refreshCursors().catch(() => {}); }, 15000);
+setInterval(() => {
+  refreshWho().catch(() => {});
+  refreshUnread().catch(() => {});
+  refreshCursors().catch(() => {});
+  if (document.body.classList.contains("files") && !state.files.editor) {
+    refreshFiles().catch(() => {});
+  }
+}, 15000);
 
 $("search").oninput = e => { state.search = e.target.value.trim(); renderMsgs(); };
 
@@ -972,21 +1113,464 @@ $("h-chdesc").onclick = async () => {
   } catch (e) { alert("could not update the description: " + e.message); }
 };
 
+// ── Files: the shared file pool ───────────────────────────────────────────────────
+// path-addressed store (docs/MESSANGER.md §7). The agent tools and this view hit the
+// same endpoints: ls, text read/write, raw upload/download, recursive delete. Text files
+// are edited in place (PUT JSON) — no download/upload roundtrip.
+
+function authHeaders(extra = {}) {
+  return Object.assign({ "Authorization": "Bearer " + state.token }, extra);
+}
+
+function poolPath(...parts) {
+  return parts.flatMap(p => String(p == null ? "" : p).replace(/\\/g, "/").split("/"))
+    .filter(s => s.length > 0)
+    .join("/");
+}
+
+function encodePoolPath(path) {
+  return path.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+}
+
+function fileApiUrl(path) {
+  const encoded = encodePoolPath(path);
+  return encoded ? "/api/files/" + encoded : "/api/files";
+}
+
+function filesNote(text) {
+  const el = $("files-note");
+  if (el) el.textContent = text;
+}
+
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  if (n < 1024 * 1024 * 1024) return (n / 1048576).toFixed(1) + " MB";
+  return (n / 1073741824).toFixed(2) + " GB";
+}
+
+function fmtFileTime(ts) {
+  const d = new Date(ts);
+  if (!ts || isNaN(d.getTime()) || d.getFullYear() < 2000) return "—";
+  return d.toLocaleDateString([], { year: "2-digit", month: "2-digit", day: "2-digit" }) +
+    " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function fileIcon(name) {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg", "avif"].includes(ext)) return "🖼";
+  if (["mp4", "webm", "mov", "avi", "m4v"].includes(ext)) return "🎬";
+  if (["mp3", "wav", "ogg", "m4a", "flac", "opus"].includes(ext)) return "🎵";
+  if (["zip", "tar", "gz", "7z", "rar"].includes(ext)) return "📦";
+  if (["glb", "gltf", "obj", "fbx", "stl"].includes(ext)) return "🧊";
+  return "📄";
+}
+
+async function fileError(r) {
+  let detail = "";
+  try { detail = (await r.text()).trim(); } catch { /* empty body */ }
+  return r.status + (r.statusText ? " " + r.statusText : "") +
+    (detail ? " — " + detail.slice(0, 300) : "");
+}
+
+async function refreshFiles(path = state.files.path) {
+  const target = poolPath(path || "");
+  state.files.loading = true;
+  filesNote("loading…");
+  try {
+    const entries = await api("/api/files?path=" + encodeURIComponent(target));
+    state.files.path = target;
+    state.files.entries = entries || [];
+    renderFiles();
+    const files = state.files.entries.filter(e => !e.isDir);
+    const bytes = files.reduce((sum, e) => sum + (e.size || 0), 0);
+    filesNote(files.length + " file(s) · " + fmtBytes(bytes));
+  } catch (e) {
+    filesNote("cannot read /" + target + ": " + e.message);
+  } finally {
+    state.files.loading = false;
+  }
+}
+
+function renderCrumbs() {
+  const box = $("files-crumbs");
+  if (!box) return;
+  box.innerHTML = "";
+  const root = document.createElement("button");
+  root.textContent = "🕊 pool";
+  root.title = "the shared file pool root";
+  root.onclick = () => refreshFiles("");
+  box.appendChild(root);
+  const parts = state.files.path ? state.files.path.split("/") : [];
+  parts.forEach((part, i) => {
+    const sep = document.createElement("span");
+    sep.className = "sep";
+    sep.textContent = "/";
+    box.appendChild(sep);
+    if (i === parts.length - 1) {
+      const here = document.createElement("span");
+      here.className = "here";
+      here.textContent = part;
+      box.appendChild(here);
+    } else {
+      const btn = document.createElement("button");
+      btn.textContent = part;
+      btn.onclick = () => refreshFiles(parts.slice(0, i + 1).join("/"));
+      box.appendChild(btn);
+    }
+  });
+  const drop = $("files-drop-path");
+  if (drop) drop.textContent = "/" + (state.files.path || "");
+}
+
+function renderFiles() {
+  renderCrumbs();
+  const tbody = $("files-rows");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const q = state.files.filter.toLowerCase();
+  const list = (state.files.entries || []).filter(e => !q || e.name.toLowerCase().includes(q));
+  for (const entry of list) {
+    const full = poolPath(state.files.path, entry.name);
+    const tr = document.createElement("tr");
+
+    const nameTd = document.createElement("td");
+    nameTd.className = "fname" + (entry.isDir ? " fdir" : "");
+    nameTd.title = "/" + full + (entry.hash ? "\nsha256: " + entry.hash : "");
+    nameTd.innerHTML = '<span class="ficon">' + (entry.isDir ? "📁" : fileIcon(entry.name)) + "</span>" +
+      esc(entry.name);
+    nameTd.onclick = () => entry.isDir ? refreshFiles(full) : openFile(full);
+    tr.appendChild(nameTd);
+
+    const sizeTd = document.createElement("td");
+    sizeTd.className = "fmeta";
+    sizeTd.textContent = entry.isDir ? "—" : fmtBytes(entry.size || 0);
+    tr.appendChild(sizeTd);
+
+    const timeTd = document.createElement("td");
+    timeTd.className = "fmeta";
+    timeTd.textContent = entry.isDir ? "—" : fmtFileTime(entry.mtime);
+    tr.appendChild(timeTd);
+
+    const ownerTd = document.createElement("td");
+    ownerTd.className = "fmeta";
+    ownerTd.textContent = entry.owner ? "@" + entry.owner : "—";
+    ownerTd.title = entry.owner || "";
+    tr.appendChild(ownerTd);
+
+    const actTd = document.createElement("td");
+    actTd.className = "fact";
+
+    const openBtn = document.createElement("button");
+    openBtn.textContent = "open";
+    openBtn.onclick = () => entry.isDir ? refreshFiles(full) : openFile(full);
+    actTd.appendChild(openBtn);
+
+    if (!entry.isDir) {
+      const dlBtn = document.createElement("button");
+      dlBtn.textContent = "download";
+      dlBtn.onclick = () => downloadPoolFile(full).catch(e => alert("download failed: " + e.message));
+      actTd.appendChild(dlBtn);
+    }
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "del";
+    delBtn.textContent = "delete";
+    delBtn.onclick = () => deletePoolPath(full, entry.isDir).catch(e => alert("delete failed: " + e.message));
+    actTd.appendChild(delBtn);
+
+    tr.appendChild(actTd);
+    tbody.appendChild(tr);
+  }
+
+  const empty = $("files-empty");
+  if (list.length === 0) {
+    empty.style.display = "block";
+    empty.textContent = (state.files.entries || []).length === 0
+      ? "this folder is empty — upload something or create a file"
+      : "nothing matches “" + state.files.filter + "”";
+  } else {
+    empty.style.display = "none";
+  }
+}
+
+function setFileStatus(text) {
+  const el = $("fm-status");
+  if (el) el.textContent = text;
+}
+
+function closeFileModal(force = false) {
+  const ed = state.files.editor;
+  if (ed && ed.dirty && !force && !confirm("Discard unsaved changes to " + ed.path + "?")) return;
+  if (ed && ed.objectUrl) URL.revokeObjectURL(ed.objectUrl);
+  state.files.editor = null;
+  $("file-modal").classList.remove("open");
+  $("fm-text").value = "";
+  $("fm-preview").innerHTML = "";
+}
+
+function renderFilePreview(blob, path, ed) {
+  const box = $("fm-preview");
+  box.innerHTML = "";
+  const ext = (path.split(".").pop() || "").toLowerCase();
+  ed.objectUrl = URL.createObjectURL(blob);
+  const url = ed.objectUrl;
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"].includes(ext)) {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = path;
+    box.appendChild(img);
+  } else if (["mp4", "webm", "mov", "m4v"].includes(ext)) {
+    const video = document.createElement("video");
+    video.controls = true;
+    video.src = url;
+    box.appendChild(video);
+  } else if (["mp3", "wav", "ogg", "m4a", "flac", "opus"].includes(ext)) {
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.src = url;
+    box.appendChild(audio);
+  } else if (ext === "pdf") {
+    const frame = document.createElement("iframe");
+    frame.src = url;
+    frame.title = path;
+    box.appendChild(frame);
+  } else {
+    box.innerHTML = "<div>" + esc(path) + " is binary.<br>Use <b>download</b> to open it locally.</div>";
+  }
+}
+
+async function openFile(path, opts = {}) {
+  const ed = {
+    path: poolPath(path),
+    text: "",
+    original: "",
+    binary: false,
+    dirty: !!opts.create,
+    objectUrl: null,
+  };
+  state.files.editor = ed;
+  $("fm-title").textContent = "/" + ed.path;
+  $("fm-meta").textContent = opts.create ? "new file" : "";
+  $("fm-text").value = "";
+  $("fm-text").style.display = "block";
+  $("fm-preview").style.display = "none";
+  $("fm-preview").innerHTML = "";
+  $("fm-save").disabled = false;
+  $("file-modal").classList.add("open");
+  if (opts.create) {
+    setFileStatus("new file — save to create it");
+    $("fm-text").focus();
+    return;
+  }
+  setFileStatus("loading…");
+  try {
+    const r = await fetch(fileApiUrl(ed.path), { headers: authHeaders() });
+    if (!r.ok) throw new Error(await fileError(r));
+    if (r.headers.get("x-pigeon-text") === "1") {
+      const data = await r.json();
+      ed.text = data.content || "";
+      ed.original = ed.text;
+      $("fm-text").value = ed.text;
+      $("fm-meta").textContent = fmtBytes(data.size || 0) + " · @" + (data.owner || "?") +
+        " · sha256:" + String(data.hash || "").slice(0, 12);
+      $("fm-save").disabled = false;
+      setFileStatus("loaded");
+      $("fm-text").focus();
+    } else {
+      ed.binary = true;
+      const blob = await r.blob();
+      $("fm-text").style.display = "none";
+      $("fm-preview").style.display = "flex";
+      renderFilePreview(blob, ed.path, ed);
+      $("fm-meta").textContent = fmtBytes(blob.size) + " · " + (blob.type || "binary");
+      $("fm-save").disabled = true;
+      setFileStatus("binary file — preview or download (edit with pigeon_edit / pigeon_upload)");
+    }
+  } catch (e) {
+    setFileStatus("open failed: " + e.message);
+  }
+}
+
+async function saveOpenFile() {
+  const ed = state.files.editor;
+  if (!ed || ed.binary) return;
+  const text = $("fm-text").value;
+  $("fm-save").disabled = true;
+  setFileStatus("saving…");
+  try {
+    const r = await fetch(fileApiUrl(ed.path), {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ content: text }),
+    });
+    if (!r.ok) throw new Error(await fileError(r));
+    const data = await r.json();
+    ed.text = text;
+    ed.original = text;
+    ed.dirty = false;
+    $("fm-meta").textContent = fmtBytes(data.size || 0) +
+      " · sha256:" + String(data.hash || "").slice(0, 12);
+    setFileStatus("saved");
+    await refreshFiles();
+  } catch (e) {
+    setFileStatus("save failed: " + e.message);
+  } finally {
+    $("fm-save").disabled = false;
+  }
+}
+
+async function downloadPoolFile(path) {
+  const r = await fetch(fileApiUrl(path), { headers: authHeaders() });
+  if (!r.ok) throw new Error(await fileError(r));
+  // Text files come back as the JSON wrapper (content + metadata); binary files are raw
+  // bytes. Saving the wrapper would give the user a .txt full of JSON.
+  const blob = r.headers.get("x-pigeon-text") === "1"
+    ? new Blob([(await r.json()).content || ""], { type: "text/plain;charset=utf-8" })
+    : await r.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = path.split("/").pop() || "file";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 15000);
+}
+
+async function deletePoolPath(path, isDir) {
+  const what = isDir ? "the folder /" + path + " and everything inside it" : "/" + path;
+  if (!confirm("Delete " + what + "? This cannot be undone.")) return;
+  const r = await fetch(fileApiUrl(path), { method: "DELETE", headers: authHeaders() });
+  if (!r.ok) throw new Error(await fileError(r));
+  if (state.files.editor &&
+      (state.files.editor.path === path || state.files.editor.path.startsWith(path + "/"))) {
+    closeFileModal(true);
+  }
+  await refreshFiles();
+}
+
+async function uploadFiles(list, keepRelative) {
+  const all = Array.from(list || []);
+  if (all.length === 0) return;
+  let ok = 0;
+  let failed = 0;
+  let lastError = "";
+  for (let i = 0; i < all.length; i++) {
+    const file = all[i];
+    const rel = keepRelative && file.webkitRelativePath ? file.webkitRelativePath : file.name;
+    const target = poolPath(state.files.path, rel);
+    filesNote("uploading " + (i + 1) + "/" + all.length + ": /" + target);
+    try {
+      const r = await fetch(fileApiUrl(target), {
+        method: "PUT",
+        headers: authHeaders({ "Content-Type": "application/octet-stream" }),
+        body: file,
+      });
+      if (!r.ok) throw new Error(await fileError(r));
+      ok++;
+    } catch (e) {
+      failed++;
+      lastError = e.message;
+    }
+  }
+  const result = failed
+    ? "uploaded " + ok + "/" + all.length + " — " + failed + " failed: " + lastError
+    : "uploaded " + ok + " file(s) into /" + (state.files.path || "");
+  await refreshFiles();
+  // refreshFiles rewrites the note with the folder stats; keep the upload result visible.
+  filesNote(result);
+}
+
+$("files-refresh").onclick = () => refreshFiles();
+$("files-filter").oninput = e => {
+  state.files.filter = e.target.value.trim();
+  renderFiles();
+};
+$("files-new").onclick = () => {
+  const name = prompt("New file name (use / to create folders):", "untitled.md");
+  if (!name) return;
+  if (name.replace(/\\/g, "/").split("/").some(p => p === "." || p === "..")) {
+    alert("the path must stay inside the pool");
+    return;
+  }
+  openFile(poolPath(state.files.path, name), { create: true });
+};
+$("files-upload").onchange = e => {
+  const list = Array.from(e.target.files || []);
+  e.target.value = "";
+  uploadFiles(list, false).catch(err => alert("upload failed: " + err.message));
+};
+$("files-upload-dir").onchange = e => {
+  const list = Array.from(e.target.files || []);
+  e.target.value = "";
+  uploadFiles(list, true).catch(err => alert("upload failed: " + err.message));
+};
+$("fm-close").onclick = () => closeFileModal();
+$("fm-save").onclick = saveOpenFile;
+$("fm-download").onclick = () => {
+  const ed = state.files.editor;
+  if (ed) downloadPoolFile(ed.path).catch(e => alert("download failed: " + e.message));
+};
+$("fm-text").oninput = () => {
+  const ed = state.files.editor;
+  if (!ed) return;
+  ed.dirty = $("fm-text").value !== ed.original;
+  setFileStatus(ed.dirty ? "unsaved changes" : "saved");
+};
+$("fm-text").onkeydown = e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    saveOpenFile();
+  }
+};
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && $("file-modal").classList.contains("open")) closeFileModal();
+});
+
+// Drag and drop upload. dragenter/dragleave fire for every child element; the counter
+// keeps the overlay from flickering while the pointer moves across the table.
+let filesDragDepth = 0;
+const filesView = $("files-view");
+filesView.addEventListener("dragenter", e => {
+  e.preventDefault();
+  filesDragDepth++;
+  filesView.classList.add("dragging");
+});
+filesView.addEventListener("dragover", e => e.preventDefault());
+filesView.addEventListener("dragleave", e => {
+  e.preventDefault();
+  filesDragDepth = Math.max(0, filesDragDepth - 1);
+  if (filesDragDepth === 0) filesView.classList.remove("dragging");
+});
+filesView.addEventListener("drop", e => {
+  e.preventDefault();
+  filesDragDepth = 0;
+  filesView.classList.remove("dragging");
+  const list = Array.from(e.dataTransfer.files || []);
+  if (list.length) uploadFiles(list, false).catch(err => alert("upload failed: " + err.message));
+});
+
 // ── View tabs: war room (default) vs admin (full-screen management) ─────────────
 // The war room is the chat: channels, messages, a clean roster. Admin is a separate
 // full-screen view — participants table (forget / reassign) + groups (assign /
-// unassign / delete / create). Preference persists in localStorage.
+// unassign / delete / create). Files is the shared file pool. Preference persists in
+// localStorage.
 
 function setView(v) {
   const admin = v === "admin";
+  const filesView = v === "files";
   document.body.classList.toggle("admin", admin);
-  $("tab-war").classList.toggle("active", !admin);
+  document.body.classList.toggle("files", filesView);
+  $("tab-war").classList.toggle("active", v === "war");
   $("tab-admin").classList.toggle("active", admin);
+  $("tab-files").classList.toggle("active", filesView);
+  $("search").style.display = filesView ? "none" : "";
   localStorage.setItem("pigeon.view", v);
   if (admin) { renderAdminChannels(); renderAdminTable(); renderAdminGroups(); }
+  if (filesView) refreshFiles().catch(() => {});
 }
 const savedView = localStorage.getItem("pigeon.view");
-if (savedView === "admin") setView("admin");
+if (savedView === "admin" || savedView === "files") setView(savedView);
 
 // ── Auto-login if a token is stored ───────────────────────────────────────────────
 

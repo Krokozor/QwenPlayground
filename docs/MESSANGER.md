@@ -154,8 +154,8 @@ pigeon/
       <channel-id>.jsonl      # append-only message log (one JSON per line)
       <channel-id>.meta.json  # name, description, created, archived
     files/
-      <sha256>.bin
-      <sha256>.meta.json      # owner, size, original name, uploaded_at, tombstoned
+      <pool-relative path>    # mutable bytes; directories mirror the pool paths
+    files.meta.json           # per-path owner, size, mtime, sha256
 ```
 
 - Append-only logs: the server is the **single writer** — the file-contention problem
@@ -176,18 +176,25 @@ pigeon/
   resident client's long-poll *is* the delivery mechanism.
 - Message ids are monotonic per channel; timestamps come from the server.
 
-## 7. Files (shared pool)
+## 7. Files (shared path-addressed pool)
 
-- **Addressed by content hash** (sha256): deduplication and immutability for free.
-  A message references a file by hash.
-- **Append-only, owner = uploader.** Only the owner can delete — and deletion is a
-  **tombstone** in `.meta.json`, not an unlink (references in old messages stay
-  resolvable as "deleted").
-- Size limit: default 100 MB per file, configurable.
-- **Use case — shared code base:** a bare git repo living in the file pool. "Pushed
-  branch X" + the diff as a message; the receiving agent reads the diff and decides
-  whether to port/adopt it into its own copy (each instance keeps its own clone/
-  worktree; rebuild + snapshot + rollback make adoption safe).
+- **Addressed by path, mutable.** A path such as `demos/level1/scene.glb` is the address;
+  a write creates or overwrites it. The server keeps the bytes in `files/` and metadata
+  (owner, size, mtime, sha256) in `files.meta.json`.
+- **Two write modes.** A text file can be written whole (`PUT` with JSON `{content}`) or
+  edited in place (`PATCH` with `{old_text,new_text}` — the edit is refused unless the
+  old text occurs exactly once, so a stale copy cannot silently clobber the file). Binary
+  files use the raw `PUT` form (`application/octet-stream`).
+- **Read before download.** `GET` returns the text wrapper for text files and raw bytes
+  for binary files; the `X-Pigeon-Text` response header says which. The owner web UI's
+  **files** tab browses, previews, edits, uploads and deletes the same pool.
+- **Delete is a real unlink** (a directory delete is recursive) and is available to any
+  authenticated participant; the web UI confirms first. There is no tombstone: old
+  messages that mention a deleted path simply point at nothing.
+- **Use case — shared code base:** the pool is the place for a bare git repo, a GLB, a
+  build artifact or a diff, so another agent can fetch exactly the same bytes instead of
+  receiving them inline in chat. Each instance still keeps its own clone/worktree;
+  rebuild + snapshot + rollback make adoption safe.
 
 ## 8. Anti-loop
 
@@ -263,10 +270,16 @@ persists it). The owner web UI logs in as the human identity.
 | `POST /api/messages` | `{channel, thread?, reply_to?, text, files[]}` → the stored envelope. Mentions live in `text` as @tokens — the server resolves them. |
 | `GET /api/messages?channel=&since=&wait=` | long-poll; advances my cursor for the channel to the max id returned. |
 | `POST /api/status` | update my `status` line. |
-| `GET /` | the web UI (static page served by the server). |
+| `GET /api/files?path=` | list a pool directory (path is pool-relative; empty = root). |
+| `GET /api/files/{path}` | read a file: text → `{path,content,size,owner,hash}` (`X-Pigeon-Text: 1`), binary → raw bytes (`X-Pigeon-Text: 0`). |
+| `PUT /api/files/{path}` | write a file: JSON `{content}` for text, raw `application/octet-stream` for binary. Creates parent directories. |
+| `PATCH /api/files/{path}` | `{old_text,new_text}`: replace exactly one occurrence; `409` if it is not found exactly once. |
+| `DELETE /api/files/{path}` | delete a file, or a directory recursively. |
+| `GET /` | the web UI (static page served by the server): war room, admin, files. |
 
-Phase 1 adds: `POST /api/files` (upload → `{hash}`), `GET /api/files/{hash}`,
-`GET /api/files` (list).
+The file endpoints are path-addressed, not content-hash addressed: the same path is
+readable and editable by every authenticated participant, which is what makes the pool
+usable for a shared worktree / cross-agent handoff.
 
 ## 12. Harness tools — the `pigeon` shelf (Qwen, Phase 0)
 
@@ -282,8 +295,13 @@ as browser/csharp/desktop): hidden from the prompt until activated.
 | `pigeon_send` | send text to my channel / a thread; mentions are @tokens in the text (`@alias` or `@id` — the server resolves them), plus optional `thread` / `reply_to`. |
 | `pigeon_status` | update my public status line ("what I'm doing"). |
 | `pigeon_channels` | list channels; `join <name>` (leaves the current one — Phase 0 limit). |
-
-(`pigeon_put` / `pigeon_get` — Phase 1, with the file pool.)
+| `pigeon_ls` | list a directory of the shared file pool (name, size, mtime, owner). |
+| `pigeon_read_file` | read a text file from the pool with numbered lines (`offset`/`limit`); binary files go through `pigeon_download`. |
+| `pigeon_download` | download pool files or a directory (recursively) into `downloads/pigeon/<path>` and return local paths. |
+| `pigeon_write` | write a UTF-8 text file to the pool (create or overwrite). |
+| `pigeon_edit` | server-side `old_text → new_text` edit; refused unless the old text occurs exactly once. |
+| `pigeon_upload` | upload a local file or directory (binary artifacts, models, textures) to the pool. |
+| `pigeon_delete` | delete a file or a directory recursively from the pool. |
 
 **Connection state is per session** (identity is tied to the chat):
 `sessions/<id>/pigeon.json` — server address, token, alias, channel, status.
@@ -428,8 +446,11 @@ notes for groups / read windows / bridges) is [`docs/MCP.md`](MCP.md).
   instances hand each other a task through a channel.
 
 **Phase 1 — files & the family**
-- File pool (hash-addressed, append-only, tombstones) + `pigeon_put`/`pigeon_get`;
-  bare-repo shared code base.
+- File pool (path-addressed, mutable) + `pigeon_ls` / `pigeon_read_file` /
+  `pigeon_download` / `pigeon_write` / `pigeon_edit` / `pigeon_upload` /
+  `pigeon_delete`; bare-repo shared code base.
+- Owner web UI **files** tab: browse, preview, edit text in place, upload (file or
+  folder), download, delete.
 - GemmaPlayground integration (`Pigeon.Client` + her glue).
 
 **Phase 2 — MCP adapter** (pull clients join).
