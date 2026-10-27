@@ -159,6 +159,14 @@ public sealed class ToolRegistry
                 "A subagent must not spawn subagents or rebuild the application — return the report instead.",
                 null);
         }
+        // Неизвестное имя проверяем ДО авторизации: иначе несуществующий инструмент
+        // получал «registered in the process, but the profile does not advertise it»,
+        // и агент шёл искать проблему в полке/профиле вместо опечатки или незаписанного
+        // класса. Сообщение про профиль имеет смысл только для реально известного тула.
+        if (!_tools.TryGetValue(name, out var entry))
+        {
+            return new ToolExecutionResult($"Error: unknown tool '{name}'", null);
+        }
         // Авторизация скоупа (фаза 2, план 2026-09-28): инструмент, которого нет в
         // рекламируемом множестве хода, не выполняется даже если зарегистрирован
         // (субагент: spawn_subagent/rebuild_self из DeniedTools профиля).
@@ -170,8 +178,7 @@ public sealed class ToolRegistry
             // «ждите следующего хода», а не вводящее в заблуждение «профиль запрещает».
             // Если профиль при этом ещё и whitelist'ит инструменты — подсказка на него.
             if (context.SessionDir is { } sessionDir
-                && _tools.TryGetValue(name, out var deniedEntry)
-                && deniedEntry.Definition.Group is { } group && group != ToolGroup.Core
+                && entry.Definition.Group is { } group && group != ToolGroup.Core
                 && new ShelfState(sessionDir).Load().Contains(group))
             {
                 return new ToolExecutionResult(
@@ -182,12 +189,8 @@ public sealed class ToolRegistry
             }
             return new ToolExecutionResult(
                 $"Error: tool '{name}' is not available in this scope (not in the profile's toolset). " +
-                "It is registered in the process, but the current chat profile does not advertise it — do not call it.",
+                "The tool is registered in the process, but the current chat profile does not advertise it — do not call it.",
                 null);
-        }
-        if (!_tools.TryGetValue(name, out var entry))
-        {
-            return new ToolExecutionResult($"Error: unknown tool '{name}'", null);
         }
         try
         {

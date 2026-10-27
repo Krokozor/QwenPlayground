@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using Pigeon.Client;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Pigeon;
@@ -311,6 +312,419 @@ public sealed class PigeonChannelsTool : AgentTool
         catch (Exception ex)
         {
             return $"pigeon_channels failed: {ex.Message}";
+        }
+    }
+}
+
+// ── File pool tools (docs/MESSANGER.md §7, path-addressed mutable model) ──────────
+// Имена файловых тулов не пересекаются с чатовыми: имя в реестре глобально уникально,
+// а дубликат валит регистрацию (ToolRegistry.Register). Поэтому файловый ридер —
+// pigeon_read_file, а не pigeon_read (pigeon_read уже занят историей канала).
+
+/// <summary>Общее для файловых тулов: подключение сессии, нормализация пула и обход каталога.</summary>
+internal static class PigeonToolHelpers
+{
+    public const string NotConnected = "Not connected — use pigeon_connect <address> first.";
+
+    public static PigeonSession? Connected(ToolContext context)
+    {
+        var session = PigeonSession.For(context.SessionDir);
+        return session is { Connected: true } ? session : null;
+    }
+
+    private static readonly HashSet<string> BinaryExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
+        ".glb", ".gltf", ".obj", ".fbx", ".stl",
+        ".mp4", ".webm", ".avi", ".mov",
+        ".zip", ".tar", ".gz", ".7z", ".rar",
+        ".pdf", ".woff", ".woff2", ".ttf", ".otf",
+        ".bin", ".dat", ".exe", ".dll", ".so",
+    };
+
+    public static bool IsBinaryPath(string path) => BinaryExtensions.Contains(Path.GetExtension(path));
+
+    /// <summary>Pool-relative path → "a/b" (без ведущего '/', без '.', '..' и ':' в сегментах).</summary>
+    public static string NormalizeRemote(string path)
+    {
+        var parts = path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Any(p => p is "." or ".." || p.Contains(':')))
+            throw new InvalidOperationException($"path must stay inside the pool: {path}");
+        return string.Join("/", parts);
+    }
+
+    /// <summary>Все файлы под каталогом (рекурсивно), в pool-relative виде.</summary>
+    public static async Task<List<string>> CollectFilesAsync(PigeonSession session, string path, int depth = 0)
+    {
+        if (depth > 32)
+            throw new InvalidOperationException($"directory nesting is too deep at {path}");
+        var files = new List<string>();
+        foreach (var entry in await session.FilesLsAsync(path))
+        {
+            var child = path.TrimEnd('/') + "/" + entry.Name;
+            if (entry.IsDir)
+                files.AddRange(await CollectFilesAsync(session, child, depth + 1));
+            else
+                files.Add(child);
+        }
+        return files;
+    }
+
+    public static string ShortHash(string hash) => hash.Length > 12 ? hash[..12] + "…" : hash;
+}
+
+[Tool("pigeon_ls", "List files and directories in the pigeon file pool (shared storage for cross-agent work). " +
+    "path is pool-relative (default '/'); a trailing '/' is optional. Shows name, size, mtime and owner. " +
+    "Use it to discover what other agents uploaded before downloading.",
+    group: ToolGroup.Pigeon)]
+public sealed class PigeonLsTool : AgentTool
+{
+    [ToolParameter("Pool-relative directory (default '/')")]
+    public string? Path { get; set; }
+
+    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
+    {
+        var session = PigeonToolHelpers.Connected(context);
+        if (session is null)
+        {
+            return PigeonToolHelpers.NotConnected;
+        }
+        var path = string.IsNullOrWhiteSpace(Path) ? "/" : Path!;
+        try
+        {
+            var entries = await session.FilesLsAsync(path);
+            if (entries.Length == 0)
+            {
+                return $"{path} — empty directory.";
+            }
+            var lines = new List<string> { $"{path} — {entries.Length} entr{(entries.Length == 1 ? "y" : "ies")}:" };
+            foreach (var e in entries)
+            {
+                var kind = e.IsDir ? "[dir]" : $"{e.Size,12:N0} B";
+                var stamp = e.IsDir ? "" : $" {e.Mtime:yyyy-MM-dd HH:mm}Z";
+                var owner = string.IsNullOrWhiteSpace(e.Owner) ? "" : $" by @{e.Owner}";
+                lines.Add($"  {kind}  {e.Name}{stamp}{owner}");
+            }
+            return string.Join("\n", lines);
+        }
+        catch (Exception ex)
+        {
+            return $"pigeon_ls failed: {ex.Message}";
+        }
+    }
+}
+
+[Tool("pigeon_read_file", "Read a text file from the pigeon file pool. Returns numbered lines; pass offset/limit " +
+    "for large files. Binary files (images, models, archives) are not read here — use pigeon_download and open " +
+    "the local copy. To change a text file use pigeon_edit (no download/upload roundtrip).",
+    group: ToolGroup.Pigeon)]
+public sealed class PigeonReadFileTool : AgentTool
+{
+    private const int MaxLineChars = 400;
+    private const int MaxOutputChars = 32000;
+
+    [ToolParameter("Pool-relative path of the text file", Required = true)]
+    public string Path { get; set; } = "";
+
+    [ToolParameter("First line to read (1-based)")]
+    public int? Offset { get; set; }
+
+    [ToolParameter("Maximum number of lines to read")]
+    public int? Limit { get; set; }
+
+    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
+    {
+        var session = PigeonToolHelpers.Connected(context);
+        if (session is null)
+        {
+            return PigeonToolHelpers.NotConnected;
+        }
+        if (PigeonToolHelpers.IsBinaryPath(Path))
+        {
+            return $"{Path} looks binary — use pigeon_download to save it locally, then open the file.";
+        }
+        try
+        {
+            var file = await session.FileReadAsync(Path);
+            var lines = file.Content.Replace("\r\n", "\n").Split('\n');
+            var offset = Math.Clamp(Offset ?? 1, 1, Math.Max(lines.Length, 1));
+            var limit = Math.Max(Limit ?? lines.Length, 1);
+            var end = Math.Min(offset + limit - 1, lines.Length);
+
+            var builder = new StringBuilder();
+            builder.Append(Path).Append(" — lines ").Append(offset).Append('-').Append(end)
+                .Append(" of ").Append(lines.Length)
+                .Append(" (").Append(file.Size.ToString("N0")).Append(" B)\n");
+            var truncated = false;
+            var next = 0;
+            for (var i = offset - 1; i < end; i++)
+            {
+                var line = lines[i];
+                if (builder.Length + line.Length > MaxOutputChars && builder.Length > 0)
+                {
+                    truncated = true;
+                    next = i + 1;
+                    break;
+                }
+                builder.Append(i + 1).Append(": ");
+                builder.Append(line.Length > MaxLineChars
+                    ? line[..MaxLineChars] + "… [+" + (line.Length - MaxLineChars) + " chars]"
+                    : line);
+                builder.Append('\n');
+            }
+            if (truncated)
+            {
+                builder.Append("... (output cap reached — continue via offset=").Append(next).Append(')');
+            }
+            return builder.ToString();
+        }
+        catch (Exception ex)
+        {
+            return $"pigeon_read_file failed: {ex.Message}";
+        }
+    }
+}
+
+[Tool("pigeon_download", "Download files from the pigeon file pool into the local workspace " +
+    "(downloads/pigeon/<path>) and return the local paths. Accepts an array of pool-relative paths; " +
+    "a directory (or a path ending with '/') is downloaded recursively. Use for binary files " +
+    "(images, models, textures) and then open the local copy (load_image).",
+    group: ToolGroup.Pigeon)]
+public sealed class PigeonDownloadTool : AgentTool
+{
+    [ToolParameter("Pool-relative file or directory paths to download", Required = true)]
+    public string[] Paths { get; set; } = [];
+
+    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
+    {
+        var session = PigeonToolHelpers.Connected(context);
+        if (session is null)
+        {
+            return PigeonToolHelpers.NotConnected;
+        }
+        if (Paths is not { Length: > 0 })
+        {
+            return "pigeon_download: pass at least one path.";
+        }
+
+        var lines = new List<string>();
+        foreach (var requested in Paths)
+        {
+            if (string.IsNullOrWhiteSpace(requested))
+            {
+                continue;
+            }
+            try
+            {
+                var remote = PigeonToolHelpers.NormalizeRemote(requested);
+                if (remote.Length == 0)
+                {
+                    lines.Add($"{requested} — skipped (pool root)");
+                    continue;
+                }
+                var files = await ResolveFilesAsync(session, remote, requested.EndsWith("/"));
+                if (files.Count == 0)
+                {
+                    lines.Add($"{requested} — no files");
+                    continue;
+                }
+                foreach (var file in files)
+                {
+                    var data = await session.FileDownloadAsync(file);
+                    var localFull = context.ResolvePath(Path.Combine("downloads", "pigeon", file));
+                    Directory.CreateDirectory(Path.GetDirectoryName(localFull)!);
+                    await File.WriteAllBytesAsync(localFull, data, cancellationToken);
+                    lines.Add($"{file} → {context.ToRelative(localFull)} ({data.Length:N0} B)");
+                }
+            }
+            catch (Exception ex)
+            {
+                lines.Add($"{requested} — FAILED: {ex.Message}");
+            }
+        }
+        return string.Join("\n", lines);
+    }
+
+    /// <summary>Путь — файл или каталог? Store.FileLs файла отдаёт одну запись с его именем.</summary>
+    private static async Task<List<string>> ResolveFilesAsync(PigeonSession session, string remote, bool trailingSlash)
+    {
+        if (trailingSlash)
+        {
+            return await PigeonToolHelpers.CollectFilesAsync(session, remote);
+        }
+        var entries = await session.FilesLsAsync(remote);
+        var lastName = remote.Split('/')[^1];
+        var isFile = entries.Length == 1 && !entries[0].IsDir
+                     && string.Equals(entries[0].Name, lastName, StringComparison.Ordinal);
+        return isFile ? [remote] : await PigeonToolHelpers.CollectFilesAsync(session, remote);
+    }
+}
+
+[Tool("pigeon_write", "Write a UTF-8 text file to the pigeon file pool (create or overwrite). " +
+    "Use pigeon_edit for small changes and pigeon_upload for binary files.",
+    group: ToolGroup.Pigeon)]
+public sealed class PigeonWriteTool : AgentTool
+{
+    [ToolParameter("Pool-relative path to write", Required = true)]
+    public string Path { get; set; } = "";
+
+    [ToolParameter("Full text content (UTF-8)", Required = true)]
+    public string Content { get; set; } = "";
+
+    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
+    {
+        var session = PigeonToolHelpers.Connected(context);
+        if (session is null)
+        {
+            return PigeonToolHelpers.NotConnected;
+        }
+        try
+        {
+            var remote = PigeonToolHelpers.NormalizeRemote(Path);
+            if (remote.Length == 0)
+            {
+                return "pigeon_write: path is empty.";
+            }
+            var result = await session.FileWriteAsync(remote, Content);
+            return $"wrote {result.Path} ({result.Size:N0} B, sha256:{PigeonToolHelpers.ShortHash(result.Hash)})";
+        }
+        catch (Exception ex)
+        {
+            return $"pigeon_write failed: {ex.Message}";
+        }
+    }
+}
+
+[Tool("pigeon_edit", "Edit a text file in the pigeon file pool on the server (old_text → new_text, like edit_file). " +
+    "old_text must occur exactly once; otherwise the edit is refused and the file stays unchanged. " +
+    "No download/upload needed — read the file first with pigeon_read_file.",
+    group: ToolGroup.Pigeon)]
+public sealed class PigeonEditTool : AgentTool
+{
+    [ToolParameter("Pool-relative path of the text file", Required = true)]
+    public string Path { get; set; } = "";
+
+    [ToolParameter("Exact text to replace (must occur exactly once)", Required = true)]
+    public string OldText { get; set; } = "";
+
+    [ToolParameter("Replacement text", Required = true)]
+    public string NewText { get; set; } = "";
+
+    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
+    {
+        var session = PigeonToolHelpers.Connected(context);
+        if (session is null)
+        {
+            return PigeonToolHelpers.NotConnected;
+        }
+        if (string.IsNullOrEmpty(OldText))
+        {
+            return "pigeon_edit: old_text is empty — pass the exact text to replace.";
+        }
+        try
+        {
+            var remote = PigeonToolHelpers.NormalizeRemote(Path);
+            var ok = await session.FileEditAsync(remote, OldText, NewText);
+            return ok
+                ? $"edited {remote}"
+                : $"pigeon_edit: old_text was not found exactly once in {remote} — file unchanged. " +
+                  "Re-read it with pigeon_read_file.";
+        }
+        catch (Exception ex)
+        {
+            return $"pigeon_edit failed: {ex.Message}";
+        }
+    }
+}
+
+[Tool("pigeon_upload", "Upload a local file (or a whole directory) to the pigeon file pool. " +
+    "LocalPath is resolved against the workspace; RemotePath is pool-relative (a file name, or a prefix for a " +
+    "directory). Use for binary files you produced locally (models, textures, video frames).",
+    group: ToolGroup.Pigeon)]
+public sealed class PigeonUploadTool : AgentTool
+{
+    [ToolParameter("Local file or directory path (workspace-relative or absolute)", Required = true)]
+    public string LocalPath { get; set; } = "";
+
+    [ToolParameter("Pool-relative destination path", Required = true)]
+    public string RemotePath { get; set; } = "";
+
+    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
+    {
+        var session = PigeonToolHelpers.Connected(context);
+        if (session is null)
+        {
+            return PigeonToolHelpers.NotConnected;
+        }
+        try
+        {
+            var localFull = context.ResolvePath(LocalPath);
+            var remote = PigeonToolHelpers.NormalizeRemote(RemotePath);
+            if (File.Exists(localFull))
+            {
+                if (remote.Length == 0)
+                {
+                    return "pigeon_upload: remote path is empty.";
+                }
+                var data = await File.ReadAllBytesAsync(localFull, cancellationToken);
+                var result = await session.FileUploadAsync(remote, data);
+                return $"uploaded {context.ToRelative(localFull)} → {result.Path} " +
+                       $"({result.Size:N0} B, sha256:{PigeonToolHelpers.ShortHash(result.Hash)})";
+            }
+            if (Directory.Exists(localFull))
+            {
+                var files = Directory.GetFiles(localFull, "*", SearchOption.AllDirectories);
+                if (files.Length == 0)
+                {
+                    return $"{context.ToRelative(localFull)} — empty directory, nothing to upload.";
+                }
+                var lines = new List<string>();
+                foreach (var file in files)
+                {
+                    var relative = Path.GetRelativePath(localFull, file).Replace('\\', '/');
+                    var target = remote.Length == 0 ? relative : remote + "/" + relative;
+                    var data = await File.ReadAllBytesAsync(file, cancellationToken);
+                    var result = await session.FileUploadAsync(target, data);
+                    lines.Add($"{context.ToRelative(file)} → {result.Path} ({result.Size:N0} B)");
+                }
+                return string.Join("\n", lines);
+            }
+            return $"pigeon_upload: not found: {LocalPath}";
+        }
+        catch (Exception ex)
+        {
+            return $"pigeon_upload failed: {ex.Message}";
+        }
+    }
+}
+
+[Tool("pigeon_delete", "Delete a file, or a directory recursively, from the pigeon file pool.",
+    group: ToolGroup.Pigeon)]
+public sealed class PigeonDeleteTool : AgentTool
+{
+    [ToolParameter("Pool-relative path to delete", Required = true)]
+    public string Path { get; set; } = "";
+
+    public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
+    {
+        var session = PigeonToolHelpers.Connected(context);
+        if (session is null)
+        {
+            return PigeonToolHelpers.NotConnected;
+        }
+        try
+        {
+            var remote = PigeonToolHelpers.NormalizeRemote(Path);
+            if (remote.Length == 0)
+            {
+                return "pigeon_delete: refusing to delete the pool root.";
+            }
+            await session.FileDeleteAsync(remote);
+            return $"deleted {remote}";
+        }
+        catch (Exception ex)
+        {
+            return $"pigeon_delete failed: {ex.Message}";
         }
     }
 }
