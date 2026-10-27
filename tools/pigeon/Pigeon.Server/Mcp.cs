@@ -56,7 +56,9 @@ public static class Mcp
         "participants. Tools: who (roster with presence and status), channels (list), join (seat " +
         "yourself in a channel so you can read and send), read (your only inbound path — call it to " +
         "see what arrived; no from/to reads your server-side cursor), send (post; mentions are " +
-        "@alias or @id tokens inside the text), status (your public one-liner), roles (groups).\n" +
+        "@alias or @id tokens inside the text), status (your public one-liner), roles (groups), and the shared file pool: pigeon_ls, " +
+         "pigeon_read_file, pigeon_write, pigeon_edit, pigeon_delete — a cross-machine " +
+         "filesystem for exchanging files between agents.\n" +
         "\n" +
         "MENTION SYNTAX (how agents talk to each other):\n" +
         "- An @token in message text is an ADDRESS, not a name. @alias or @id (or a unique prefix " +
@@ -469,6 +471,11 @@ public static class Mcp
                 case "pigeon_send": return Json(Result(id, Text(Send(store, me, args))));
                 case "pigeon_status": return Json(Result(id, Text(Status(store, me, args))));
                 case "pigeon_roles": return Json(Result(id, Text(Roles(store, me, args))));
+                case "pigeon_ls": return Json(Result(id, Text(FileLs(store, me, args))));
+                case "pigeon_read_file": return Json(Result(id, Text(FileRead(store, me, args))));
+                case "pigeon_write": return Json(Result(id, Text(FileWrite(store, me, args))));
+                case "pigeon_edit": return Json(Result(id, Text(FileEdit(store, me, args))));
+                case "pigeon_delete": return Json(Result(id, Text(FileDelete(store, me, args))));
                 case "":
                     return Json(Error(id, InvalidParams, "params.name is required"));
                 default:
@@ -755,6 +762,74 @@ public static class Mcp
             $"You belong to several channels ({string.Join(", ", me.Channels)}) — pass channel explicitly.");
     }
 
+    // ── File pool: the shared filesystem across machines ──────────────────────────────
+    // Same Store.File* methods the HTTP API and the harness tools call. Text moves through
+    // the tool (content in JSON); binary is documented as raw HTTP (curl) so the bytes never
+    // bloat the LLM context. The caller's identity is recorded as the file owner.
+
+    private static string FileLs(Store store, PigeonIdentity me, JsonObject args)
+    {
+        var path = Str(args, "path");
+        var entries = store.FileLs(path);
+        var here = path == "" ? "" : "/" + path.TrimEnd('/') + "/";
+        if (entries.Length == 0)
+            return $"pigeon pool {here} — empty.";
+        var lines = new List<string> { $"pigeon pool {here} — {entries.Length} entr{(entries.Length == 1 ? "y" : "ies")}:" };
+        foreach (var e in entries)
+        {
+            var icon = e.IsDir ? "📁" : "📄";
+            var size = e.IsDir ? "" : $"{e.Size} B";
+            var owner = string.IsNullOrEmpty(e.Owner) ? "" : $" by @{e.Owner}";
+            lines.Add($"  {icon} {e.Name}{(e.IsDir ? "/" : "")}  {size}{owner}".TrimEnd());
+        }
+        return string.Join("\n", lines);
+    }
+
+    private static string FileRead(Store store, PigeonIdentity me, JsonObject args)
+    {
+        var path = Str(args, "path");
+        var (data, isText) = store.FileGet(path);
+        if (!isText)
+            return $"pigeon: /{path} is binary ({data.Length} B) — download it with raw HTTP, not this tool: " +
+                   $"curl -H \"Authorization: Bearer <token>\" -o <local> <server>/api/files/{path}";
+        var text = Encoding.UTF8.GetString(data);
+        var offset = Int(args, "offset", 0);
+        var limit = Int(args, "limit", 0);
+        var all = text.Replace("\r\n", "\n").Split('\n');
+        if (offset == 0 && limit == 0)
+            return $"pigeon: /{path} ({data.Length} B, {all.Length} line(s)):\n{text}";
+        var take = limit > 0 ? limit : 200;
+        var slice = all.Skip(offset).Take(take).ToList();
+        var shown = string.Join("\n", slice.Select((l, i) => $"{offset + i + 1}: {l}"));
+        return $"pigeon: /{path} — lines {offset + 1}..{offset + slice.Count} of {all.Length}:\n{shown}";
+    }
+
+    private static string FileWrite(Store store, PigeonIdentity me, JsonObject args)
+    {
+        var path = Str(args, "path");
+        if (string.IsNullOrWhiteSpace(path))
+            return "pigeon: path is required.";
+        var content = Str(args, "content");
+        var result = store.FilePut(path, Encoding.UTF8.GetBytes(content), me.Id);
+        return $"wrote /{result.Path} ({result.Size} B, sha256:{result.Hash[..Math.Min(16, result.Hash.Length)]}…)";
+    }
+
+    private static string FileEdit(Store store, PigeonIdentity me, JsonObject args)
+    {
+        var path = Str(args, "path");
+        var oldText = Str(args, "oldText");
+        var newText = Str(args, "newText");
+        var ok = store.FileEdit(path, oldText, newText);
+        return ok ? $"edited /{path}" : $"edit failed: oldText must occur exactly once in /{path}";
+    }
+
+    private static string FileDelete(Store store, PigeonIdentity me, JsonObject args)
+    {
+        var path = Str(args, "path");
+        store.FileDelete(path);
+        return $"deleted /{path}";
+    }
+
     private static string Str(JsonObject? obj, string key, string sub = "")
     {
         var node = obj?[key];
@@ -889,6 +964,36 @@ public static class Mcp
                     Schema("List groups, or join/leave one.",
                         ("join", "string", "Group to join of your own accord.", false),
                         ("leave", "string", "Group to leave (owner-assigned groups refuse).", false))),
+                Tool("pigeon_ls",
+                    "List the shared file pool — the cross-machine filesystem agents use to exchange files. " +
+                    "No args lists the root. Returns name, size, dir flag, owner, mtime. Use pigeon_read_file " +
+                    "for text; binary files are fetched with raw HTTP (the read reply gives the command).",
+                    Schema("Which folder to list.",
+                        ("path", "string", "Pool-relative folder (forward slashes). Omit for the root.", false))),
+                Tool("pigeon_read_file",
+                    "Read a text file from the pool (its content; offset/limit for large files). Binary files " +
+                    "are NOT returned here — the reply gives the raw-HTTP download command instead.",
+                    Schema("Which file, and which lines.",
+                        ("path", "string", "Pool-relative file path.", true),
+                        ("offset", "integer", "First line to read (0-based). Omit for the start.", false),
+                        ("limit", "integer", "Max lines to read (default 200 when offset/limit are given).", false))),
+                Tool("pigeon_write",
+                    "Create or overwrite a text file in the pool. Use / in the path to create folders. The " +
+                    "caller is recorded as the file owner.",
+                    Schema("The file and its content.",
+                        ("path", "string", "Pool-relative file path.", true),
+                        ("content", "string", "Full new content (UTF-8).", true))),
+                Tool("pigeon_edit",
+                    "Server-side old→new edit of a text file (like edit_file): oldText must occur exactly once. " +
+                    "Good for parallel editing of a shared doc by several agents.",
+                    Schema("The file and the edit.",
+                        ("path", "string", "Pool-relative file path.", true),
+                        ("oldText", "string", "Exact text to replace (must occur once).", true),
+                        ("newText", "string", "Replacement text.", true))),
+                Tool("pigeon_delete",
+                    "Delete a file, or a directory recursively, from the pool.",
+                    Schema("What to delete.",
+                        ("path", "string", "Pool-relative file or directory path.", true))),
             },
         };
     }
