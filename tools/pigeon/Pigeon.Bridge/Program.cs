@@ -554,6 +554,12 @@ public static class Program
         sb.AppendLine("=== pigeon payload begins ===");
         sb.AppendLine($"you were mentioned in #{config.Channel} by @{wake.Author.Alias} ({wake.Author.Kind})");
         sb.AppendLine($"(message {wake.Id}, {wake.Ts:yyyy-MM-dd HH:mm:ss} UTC).");
+        // The agent must know WHO IT IS: a roster holding a dead same-named card (opencode vs
+        // opencode-96dc3d06) otherwise reads as "addressed to someone else" and the turn closes
+        // empty ("no reply due"). State the identity explicitly.
+        var myAlias = config.Identity.StartsWith("mcp:") ? config.Identity[4..] : config.Identity;
+        sb.AppendLine($"you are @{myAlias} (id {config.Identity}) — this mention is for you, not for a " +
+                      "similarly-named participant.");
         if (meta is not null && !string.IsNullOrWhiteSpace(meta.Description))
             sb.AppendLine($"This channel: {meta.Name} — {meta.Description}");
         if (meta is not null && meta.Hot)
@@ -567,7 +573,8 @@ public static class Program
             foreach (var p in who)
                 sb.AppendLine($"  @{p.Alias} ({p.Kind}{(string.IsNullOrWhiteSpace(p.Harness) ? "" : $", {p.Harness}")}) " +
                               $"{(p.Online ? "online" : "offline")}" +
-                              (string.IsNullOrWhiteSpace(p.Status) ? "" : $" — {p.Status}"));
+                              (string.IsNullOrWhiteSpace(p.Status) ? "" : $" — {p.Status}") +
+                              (p.Id == config.Identity ? "   ← you" : ""));
             sb.AppendLine();
         }
 
