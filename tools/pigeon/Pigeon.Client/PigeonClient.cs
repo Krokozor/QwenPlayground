@@ -167,6 +167,14 @@ public sealed class PigeonClient : IDisposable
         using var req = Req(HttpMethod.Get, $"/api/files/{EncodePath(path)}");
         using var resp = await _http.SendAsync(req, ct);
         resp.EnsureSuccessStatusCode();
+        // Text files come back as a JSON wrapper (X-Pigeon-Text: 1) — extract the content.
+        // Binary files come back as raw bytes (X-Pigeon-Text: 0) — pass them through.
+        if (resp.Headers.TryGetValues("X-Pigeon-Text", out var vals) && vals.FirstOrDefault() == "1")
+        {
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            var wrap = JsonSerializer.Deserialize<PigeonFileContent>(body, Json);
+            return System.Text.Encoding.UTF8.GetBytes(wrap?.Content ?? "");
+        }
         return await resp.Content.ReadAsByteArrayAsync(ct);
     }
 
