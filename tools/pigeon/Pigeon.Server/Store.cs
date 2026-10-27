@@ -224,8 +224,9 @@ public sealed class Store
 
     /// <summary>
     /// Join / re-join. Rules (docs/MESSANGER.md §4): a matching token re-authenticates;
-    /// a wrong token is rejected; no token → (re)issue one. A second LIVE client with
-    /// the same id is flagged (duplicate), not rejected.
+    /// a missing or wrong token on an EXISTING id is rejected (never rotates — that path
+    /// used to let anyone hijack a live identity). A NEW id with no token mints one.
+    /// A second LIVE client with the same id is flagged (duplicate), not rejected.
     /// </summary>
     /// <summary>
     /// Join performed with the owner's master token: create the identity if it is absent,
@@ -268,15 +269,14 @@ public sealed class Store
         {
             if (_identities.TryGetValue(req.Id, out var rec))
             {
-                if (req.Token is not null && req.Token != rec.Token)
+                // Re-authenticating an EXISTING identity requires the held token. A missing
+                // or wrong token is rejected — never a rotation. Anonymous join to an
+                // occupied id used to rotate the token and hand the fresh one to the caller:
+                // the victim's live session was hijacked (old bearer → 401, attacker in).
+                // Token recovery is the owner's move (forget the identity, client re-joins).
+                if (req.Token is null || req.Token != rec.Token)
                     return ("", false, true);
                 var duplicate = (DateTimeOffset.UtcNow - rec.LastSeen).TotalSeconds < PresenceWindowSeconds;
-                if (req.Token is null)
-                {
-                    rec.Token = NewToken();
-                    if (string.IsNullOrWhiteSpace(req.Alias))
-                        req.Alias = rec.Alias;
-                }
                 ApplyCard(req.Id, rec, req);
                 rec.LastSeen = DateTimeOffset.UtcNow;
                 SaveIdentities();
