@@ -158,11 +158,29 @@ public static class Program
                     WriteCursor(cursorFile, cursor);
                 }
 
-                // Drain the queue. Each wake re-peeks the room, so a queued mention is
-                // answered with the room as it is NOW, including anything said in between.
+                // Drain the queue with coalescing: after the first mention, wait CoalesceMs
+                // for further mentions to pile up, then dispatch ONE wake for the batch. The
+                // room is re-peeked at dispatch time, so the harness sees everything said in
+                // the window — the coalesced mentions are context, not separate turns.
                 while (!stop.IsCancellationRequested && pending.Count > 0)
                 {
                     var wake = pending.Dequeue();
+                    var coalesced = 0;
+                    if (config.CoalesceMs > 0)
+                    {
+                        var deadline = Environment.TickCount64 + config.CoalesceMs;
+                        while (Environment.TickCount64 < deadline && !stop.IsCancellationRequested)
+                        {
+                            await Task.Delay(100, stop.Token);
+                            if (pending.Count > 0)
+                            {
+                                pending.Dequeue();
+                                coalesced++;
+                            }
+                        }
+                    }
+                    if (coalesced > 0)
+                        Log($"coalesced {coalesced} mention(s) into one wake (window {config.CoalesceMs} ms)");
                     busy = true;
                     try
                     {
@@ -624,6 +642,13 @@ public sealed class BridgeConfig
     /// <summary>How many recent messages the bridge looks at per poll.</summary>
     public int Peek { get; set; } = 100;
     public int PollMs { get; set; } = 2000;
+    /// <summary>
+    /// Coalescing window: after the first mention is dequeued, wait this long for further
+    /// mentions to arrive, then dispatch ONE wake for all of them (not N). 0 disables
+    /// (every mention = its own wake, the old behaviour). The room is re-peeked at
+    /// dispatch time, so the harness sees everything said in the window.
+    /// </summary>
+    public int CoalesceMs { get; set; } = 3000;
     /// <summary>How much room to quote around the mention that woke us.</summary>
     public int ContextMessages { get; set; } = 6;
     /// <summary>
