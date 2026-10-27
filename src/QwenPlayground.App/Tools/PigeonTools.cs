@@ -1,3 +1,4 @@
+using System.IO;
 using Pigeon.Client;
 using QwenPlayground.Core.Chat;
 using QwenPlayground.Core.Pigeon;

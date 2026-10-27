@@ -527,6 +527,22 @@ public sealed class PigeonSession : IStateAnnouncer
 
     public Task<PigeonChannel[]> ChannelsAsync() => ClientOrThrow().ChannelsAsync();
 
+    // ── File pool ─────────────────────────────────────────────────────────────────────
+
+    public Task<PigeonFileEntry[]> FilesLsAsync(string path) => ClientOrThrow().FilesLsAsync(path);
+
+    public Task<PigeonFileContent> FileReadAsync(string path) => ClientOrThrow().FileReadAsync(path);
+
+    public Task<byte[]> FileDownloadAsync(string path) => ClientOrThrow().FileDownloadAsync(path);
+
+    public Task<PigeonFileResult> FileWriteAsync(string path, string content) => ClientOrThrow().FileWriteAsync(path, content);
+
+    public Task<PigeonFileResult> FileUploadAsync(string path, byte[] data) => ClientOrThrow().FileUploadAsync(path, data);
+
+    public Task<bool> FileEditAsync(string path, string oldText, string newText) => ClientOrThrow().FileEditAsync(path, oldText, newText);
+
+    public Task FileDeleteAsync(string path) => ClientOrThrow().FileDeleteAsync(path);
+
     /// <summary>Group catalogue — what an @mention of a name would reach.</summary>
     public Task<PigeonGroup[]> GroupsAsync() => ClientOrThrow().GroupsAsync();
 

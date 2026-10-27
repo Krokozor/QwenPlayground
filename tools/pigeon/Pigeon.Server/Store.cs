@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -93,6 +94,7 @@ public sealed class Store
     private readonly object _gate = new();
     private readonly string _dataDir;
     private readonly string _channelsDir;
+    private readonly string _filesDir;
     private readonly int _hotThreshold;
     private DateTimeOffset _lastIdentitySave = DateTimeOffset.MinValue;
     private readonly Dictionary<string, IdentityRec> _identities = new(StringComparer.Ordinal);
@@ -105,9 +107,12 @@ public sealed class Store
     {
         _dataDir = dataDir;
         _channelsDir = Path.Combine(dataDir, "channels");
+        _filesDir = Path.Combine(dataDir, "files");
         _hotThreshold = hotThreshold;
         Directory.CreateDirectory(_channelsDir);
+        Directory.CreateDirectory(_filesDir);
         Load();
+        LoadFileMeta();
     }
 
     // ── Load / save ─────────────────────────────────────────────────────────────────
@@ -1154,5 +1159,220 @@ public sealed class Store
                 })
                 .ToArray();
         }
+    }
+
+    // ── File pool (docs/MESSANGER.md §7, path-addressed mutable model) ──────────────
+
+    private sealed class FileMeta
+    {
+        public string Owner { get; set; } = "";
+        public long Size { get; set; }
+        public DateTimeOffset Mtime { get; set; }
+        public string Hash { get; set; } = "";
+    }
+
+    private readonly Dictionary<string, FileMeta> _fileMeta = new(StringComparer.Ordinal);
+    private string _fileMetaPath => Path.Combine(_dataDir, "files.meta.json");
+
+    private void LoadFileMeta()
+    {
+        if (File.Exists(_fileMetaPath))
+        {
+            try
+            {
+                _fileMeta.Clear();
+                var recs = JsonSerializer.Deserialize<Dictionary<string, FileMeta>>(
+                    File.ReadAllText(_fileMetaPath), JsonIndented);
+                if (recs is not null)
+                    foreach (var (k, v) in recs)
+                        _fileMeta[k] = v;
+            }
+            catch { /* corrupt meta — start fresh */ }
+        }
+    }
+
+    private void SaveFileMeta()
+    {
+        var tmp = _fileMetaPath + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(_fileMeta, JsonIndented));
+        File.Move(tmp, _fileMetaPath, overwrite: true);
+    }
+
+    /// <summary>
+    /// Validate a pool-relative path: no "..", no absolute, no drive letter, no null bytes.
+    /// Returns the normalized path (forward slashes, no leading "/").
+    /// </summary>
+    private static string ValidatePath(string path)
+    {
+        // "" = root (Path.IsPathRooted("") is true on Windows, so check before rooted).
+        if (string.IsNullOrEmpty(path))
+            return "";
+        if (path.Contains('\0'))
+            throw new ArgumentException("path contains null byte");
+        if (Path.IsPathRooted(path))
+            throw new ArgumentException($"path must be relative, got rooted: {path}");
+        var normalized = path.Replace('\\', '/').TrimStart('/');
+        if (normalized.Contains(".."))
+            throw new ArgumentException($"path must not contain '..': {path}");
+        return normalized;
+    }
+
+    private static bool IsBinaryExt(string path) => path is
+        ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" or ".ico" or
+        ".glb" or ".gltf" or ".obj" or ".fbx" or ".stl" or
+        ".mp4" or ".webm" or ".avi" or ".mov" or
+        ".zip" or ".tar" or ".gz" or ".7z" or ".rar" or
+        ".pdf" or ".woff" or ".woff2" or ".ttf" or ".otf" or
+        ".bin" or ".dat" or ".exe" or ".dll" or ".so";
+
+    private string ResolveFile(string path)
+    {
+        var full = Path.GetFullPath(Path.Combine(_filesDir, path));
+        var root = Path.GetFullPath(_filesDir) + Path.DirectorySeparatorChar;
+        if (!full.StartsWith(root, StringComparison.Ordinal) && full != Path.GetFullPath(_filesDir))
+            throw new ArgumentException($"path escapes the pool: {path}");
+        return full;
+    }
+
+    public PigeonFileEntry[] FileLs(string path)
+    {
+        lock (_gate)
+        {
+            var rel = ValidatePath(path);
+            var full = ResolveFile(rel);
+            if (!Directory.Exists(full) && !File.Exists(full))
+                throw new KeyNotFoundException(path);
+            var entries = new List<PigeonFileEntry>();
+            if (Directory.Exists(full))
+            {
+                foreach (var dir in Directory.GetDirectories(full))
+                    entries.Add(new PigeonFileEntry { Name = Path.GetFileName(dir), IsDir = true });
+                foreach (var f in Directory.GetFiles(full))
+                {
+                    var name = Path.GetFileName(f);
+                    var relPath = rel == "/" ? name : $"{rel.TrimEnd('/')}/{name}";
+                    var meta = _fileMeta.GetValueOrDefault(relPath);
+                    entries.Add(new PigeonFileEntry
+                    {
+                        Name = name,
+                        IsDir = false,
+                        Size = new FileInfo(f).Length,
+                        Owner = meta?.Owner ?? "",
+                        Mtime = meta?.Mtime ?? new FileInfo(f).LastWriteTimeUtc,
+                        Hash = meta?.Hash ?? "",
+                    });
+                }
+                entries.Sort((a, b) => a.IsDir != b.IsDir ? (a.IsDir ? -1 : 1) : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+            }
+            else
+            {
+                var relPath = rel.TrimStart('/');
+                var meta = _fileMeta.GetValueOrDefault(relPath);
+                entries.Add(new PigeonFileEntry
+                {
+                    Name = Path.GetFileName(rel),
+                    IsDir = false,
+                    Size = new FileInfo(full).Length,
+                    Owner = meta?.Owner ?? "",
+                    Mtime = meta?.Mtime ?? new FileInfo(full).LastWriteTimeUtc,
+                    Hash = meta?.Hash ?? "",
+                });
+            }
+            return entries.ToArray();
+        }
+    }
+
+    /// <summary>Returns (bytes, isText). Caller decides how to serialize.</summary>
+    public (byte[] Data, bool IsText) FileGet(string path)
+    {
+        lock (_gate)
+        {
+            var rel = ValidatePath(path).TrimStart('/');
+            var full = ResolveFile(rel);
+            if (!File.Exists(full))
+                throw new KeyNotFoundException(path);
+            var data = File.ReadAllBytes(full);
+            return (data, !IsBinaryExt(Path.GetExtension(full)));
+        }
+    }
+
+    public PigeonFileResult FilePut(string path, byte[] data, string owner)
+    {
+        lock (_gate)
+        {
+            var rel = ValidatePath(path).TrimStart('/');
+            var full = ResolveFile(rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            File.WriteAllBytes(full, data);
+            var hash = Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();
+            _fileMeta[rel] = new FileMeta
+            {
+                Owner = owner,
+                Size = data.Length,
+                Mtime = DateTimeOffset.UtcNow,
+                Hash = hash,
+            };
+            SaveFileMeta();
+            return new PigeonFileResult { Path = rel, Size = data.Length, Hash = hash };
+        }
+    }
+
+    /// <summary>Server-side old→new edit (like edit_file). Returns false if old_text not found exactly once.</summary>
+    public bool FileEdit(string path, string oldText, string newText)
+    {
+        lock (_gate)
+        {
+            var rel = ValidatePath(path).TrimStart('/');
+            var full = ResolveFile(rel);
+            if (!File.Exists(full))
+                throw new KeyNotFoundException(path);
+            var content = File.ReadAllText(full);
+            var count = CountOccurrences(content, oldText);
+            if (count != 1)
+                return false;
+            var updated = content.Replace(oldText, newText);
+            File.WriteAllText(full, updated);
+            var meta = _fileMeta.GetValueOrDefault(rel) ?? new FileMeta();
+            meta.Size = System.Text.Encoding.UTF8.GetByteCount(updated);
+            meta.Mtime = DateTimeOffset.UtcNow;
+            meta.Hash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(updated))).ToLowerInvariant();
+            _fileMeta[rel] = meta;
+            SaveFileMeta();
+            return true;
+        }
+    }
+
+    public void FileDelete(string path)
+    {
+        lock (_gate)
+        {
+            var rel = ValidatePath(path).TrimStart('/');
+            var full = ResolveFile(rel);
+            if (!File.Exists(full) && !Directory.Exists(full))
+                throw new KeyNotFoundException(path);
+            if (Directory.Exists(full))
+                Directory.Delete(full, recursive: true);
+            else
+                File.Delete(full);
+            _fileMeta.Remove(rel);
+            // Remove any sub-paths (for directory delete).
+            var prefix = rel + "/";
+            var toRemove = _fileMeta.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+            foreach (var k in toRemove)
+                _fileMeta.Remove(k);
+            SaveFileMeta();
+        }
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        if (string.IsNullOrEmpty(needle)) return 0;
+        int count = 0, idx = 0;
+        while ((idx = haystack.IndexOf(needle, idx)) >= 0)
+        {
+            count++;
+            idx += needle.Length;
+        }
+        return count;
     }
 }

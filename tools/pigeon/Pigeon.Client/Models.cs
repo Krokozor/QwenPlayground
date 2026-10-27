@@ -159,6 +159,48 @@ public sealed class PigeonChannelRename
     public string? Description { get; set; }
 }
 
+/// <summary>One entry in a file pool directory listing.</summary>
+public sealed class PigeonFileEntry
+{
+    public string Name { get; set; } = "";
+    public bool IsDir { get; set; }
+    public long Size { get; set; }
+    public string Owner { get; set; } = "";
+    public DateTimeOffset Mtime { get; set; }
+    public string Hash { get; set; } = "";
+}
+
+/// <summary>Result of a file put (create/overwrite).</summary>
+public sealed class PigeonFileResult
+{
+    public string Path { get; set; } = "";
+    public long Size { get; set; }
+    public string Hash { get; set; } = "";
+}
+
+/// <summary>Request body for a text file put.</summary>
+public sealed class PigeonFilePut
+{
+    public string Content { get; set; } = "";
+}
+
+/// <summary>Request body for a server-side old→new edit.</summary>
+public sealed class PigeonFileEdit
+{
+    public string OldText { get; set; } = "";
+    public string NewText { get; set; } = "";
+}
+
+/// <summary>Response for a text file get.</summary>
+public sealed class PigeonFileContent
+{
+    public string Path { get; set; } = "";
+    public string Content { get; set; } = "";
+    public long Size { get; set; }
+    public string Owner { get; set; } = "";
+    public string Hash { get; set; } = "";
+}
+
 /// <summary>Join request (idempotent; a persisted token re-authenticates).</summary>
 public sealed class PigeonJoinRequest
 {

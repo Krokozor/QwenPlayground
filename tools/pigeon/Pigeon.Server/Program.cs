@@ -356,6 +356,115 @@ app.MapPost("/api/groups/{groupId}/delete", (HttpContext ctx, string groupId) =>
     return store.DeleteGroup(groupId) ? Results.Ok() : Results.NotFound();
 });
 
+// ── File pool (path-addressed, mutable; docs/MESSANGER.md §7) ─────────────────────
+
+app.MapGet("/api/files", (HttpContext ctx) =>
+{
+    var id = AuthId(ctx);
+    if (id is null) return Unauthorized();
+    try
+    {
+        return Results.Ok(store.FileLs(""));
+    }
+    catch (KeyNotFoundException) { return Results.NotFound(); }
+    catch (ArgumentException ex) { return Results.BadRequest(ex.Message); }
+});
+
+app.MapGet("/api/files/{**path}", (HttpContext ctx, string path) =>
+{
+    var id = AuthId(ctx);
+    if (id is null) return Unauthorized();
+    try
+    {
+        var (data, isText) = store.FileGet(path);
+        if (isText)
+        {
+            var meta = store.FileLs(path).FirstOrDefault();
+            return Results.Ok(new PigeonFileContent
+            {
+                Path = path,
+                Content = System.Text.Encoding.UTF8.GetString(data),
+                Size = data.Length,
+                Owner = meta?.Owner ?? "",
+                Hash = meta?.Hash ?? "",
+            });
+        }
+        // Binary: raw bytes with content type.
+        var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+        var ct = ext switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".pdf" => "application/pdf",
+            ".glb" => "model/gltf-binary",
+            ".gltf" or ".json" => "application/json",
+            ".mp4" => "video/mp4",
+            ".webm" => "video/webm",
+            ".zip" => "application/zip",
+            _ => "application/octet-stream",
+        };
+        return Results.File(data, ct);
+    }
+    catch (KeyNotFoundException) { return Results.NotFound(); }
+    catch (ArgumentException ex) { return Results.BadRequest(ex.Message); }
+});
+
+app.MapPut("/api/files/{**path}", async (HttpContext ctx, string path) =>
+{
+    var id = AuthId(ctx);
+    if (id is null) return Unauthorized();
+    var contentType = ctx.Request.ContentType ?? "";
+    byte[] data;
+    if (contentType.Contains("application/json"))
+    {
+        var body = await new System.IO.StreamReader(ctx.Request.Body).ReadToEndAsync();
+        var req = System.Text.Json.JsonSerializer.Deserialize<PigeonFilePut>(body);
+        if (req is null) return Results.BadRequest("missing body");
+        data = System.Text.Encoding.UTF8.GetBytes(req.Content);
+    }
+    else
+    {
+        using var ms = new MemoryStream();
+        await ctx.Request.Body.CopyToAsync(ms);
+        data = ms.ToArray();
+    }
+    try
+    {
+        var result = store.FilePut(path, data, id);
+        return Results.Ok(result);
+    }
+    catch (ArgumentException ex) { return Results.BadRequest(ex.Message); }
+});
+
+app.MapPatch("/api/files/{**path}", (HttpContext ctx, string path, PigeonFileEdit req) =>
+{
+    var id = AuthId(ctx);
+    if (id is null) return Unauthorized();
+    try
+    {
+        return store.FileEdit(path, req.OldText, req.NewText)
+            ? Results.Ok(new { path, edited = true })
+            : Results.Conflict("old_text not found exactly once");
+    }
+    catch (KeyNotFoundException) { return Results.NotFound(); }
+    catch (ArgumentException ex) { return Results.BadRequest(ex.Message); }
+});
+
+app.MapDelete("/api/files/{**path}", (HttpContext ctx, string path) =>
+{
+    var id = AuthId(ctx);
+    if (id is null) return Unauthorized();
+    try
+    {
+        store.FileDelete(path);
+        return Results.NoContent();
+    }
+    catch (KeyNotFoundException) { return Results.NotFound(); }
+    catch (ArgumentException ex) { return Results.BadRequest(ex.Message); }
+});
+
 app.MapPost("/api/groups/{groupId}/assign", (HttpContext ctx, string groupId, PigeonGroupMember req) =>
 {
     if (AuthId(ctx) is not Store.OwnerId) return Unauthorized();

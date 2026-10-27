@@ -41,21 +41,21 @@ public sealed class PigeonClient : IDisposable
         return req;
     }
 
-    private static async Task<T> GetJsonAsync<T>(HttpClient http, HttpRequestMessage req)
+    private static async Task<T> GetJsonAsync<T>(HttpClient http, HttpRequestMessage req, CancellationToken ct = default)
     {
-        using var resp = await http.SendAsync(req);
+        using var resp = await http.SendAsync(req, ct);
         resp.EnsureSuccessStatusCode();
-        var body = await resp.Content.ReadAsStringAsync();
+        var body = await resp.Content.ReadAsStringAsync(ct);
         return JsonSerializer.Deserialize<T>(body, Json)!;
     }
 
-    private async Task<T> PostJsonAsync<T>(HttpRequestMessage req, object? payload)
+    private async Task<T> PostJsonAsync<T>(HttpRequestMessage req, object? payload, CancellationToken ct = default)
     {
         if (payload is not null)
             req.Content = new StringContent(JsonSerializer.Serialize(payload, Json), Encoding.UTF8, "application/json");
-        using var resp = await _http.SendAsync(req);
+        using var resp = await _http.SendAsync(req, ct);
         resp.EnsureSuccessStatusCode();
-        var body = await resp.Content.ReadAsStringAsync();
+        var body = await resp.Content.ReadAsStringAsync(ct);
         return body.Length == 0 ? default! : JsonSerializer.Deserialize<T>(body, Json)!;
     }
 
@@ -142,6 +142,53 @@ public sealed class PigeonClient : IDisposable
     /// <summary>Reassign a participant to a channel (leaves the old one — Phase 0 limit).</summary>
     public Task ReassignAsync(string identityId, string channelId, CancellationToken ct = default)
         => PostJsonAsync<JsonElement>(Req(HttpMethod.Post, "/api/membership"), new { identity = identityId, channel = channelId });
+
+    // ── File pool ─────────────────────────────────────────────────────────────────────
+
+    public Task<PigeonFileEntry[]> FilesLsAsync(string path, CancellationToken ct = default)
+        => GetJsonAsync<PigeonFileEntry[]>(_http, Req(HttpMethod.Get, $"/api/files?path={Uri.EscapeDataString(path)}"), ct);
+
+    public Task<PigeonFileContent> FileReadAsync(string path, CancellationToken ct = default)
+        => GetJsonAsync<PigeonFileContent>(_http, Req(HttpMethod.Get, $"/api/files/{Uri.EscapeDataString(path)}"), ct);
+
+    public async Task<byte[]> FileDownloadAsync(string path, CancellationToken ct = default)
+    {
+        using var req = Req(HttpMethod.Get, $"/api/files/{Uri.EscapeDataString(path)}");
+        using var resp = await _http.SendAsync(req, ct);
+        resp.EnsureSuccessStatusCode();
+        return await resp.Content.ReadAsByteArrayAsync(ct);
+    }
+
+    public Task<PigeonFileResult> FileWriteAsync(string path, string content, CancellationToken ct = default)
+        => PostJsonAsync<PigeonFileResult>(Req(HttpMethod.Put, $"/api/files/{Uri.EscapeDataString(path)}"), new PigeonFilePut { Content = content }, ct);
+
+    public async Task<PigeonFileResult> FileUploadAsync(string path, byte[] data, CancellationToken ct = default)
+    {
+        var req = Req(HttpMethod.Put, $"/api/files/{Uri.EscapeDataString(path)}");
+        req.Content = new ByteArrayContent(data);
+        req.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var resp = await _http.SendAsync(req, ct);
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        return body.Length == 0 ? default! : JsonSerializer.Deserialize<PigeonFileResult>(body, Json)!;
+    }
+
+    public async Task<bool> FileEditAsync(string path, string oldText, string newText, CancellationToken ct = default)
+    {
+        var req = Req(new HttpMethod("PATCH"), $"/api/files/{Uri.EscapeDataString(path)}");
+        req.Content = new StringContent(JsonSerializer.Serialize(new PigeonFileEdit { OldText = oldText, NewText = newText }, Json), System.Text.Encoding.UTF8, "application/json");
+        using var resp = await _http.SendAsync(req, ct);
+        return resp.StatusCode == System.Net.HttpStatusCode.OK;
+    }
+
+    public Task FileDeleteAsync(string path, CancellationToken ct = default)
+        => SendNoContentAsync(Req(HttpMethod.Delete, $"/api/files/{Uri.EscapeDataString(path)}"), ct);
+
+    private async Task SendNoContentAsync(HttpRequestMessage req, CancellationToken ct)
+    {
+        using var resp = await _http.SendAsync(req, ct);
+        resp.EnsureSuccessStatusCode();
+    }
 
     public void Dispose()
     {
