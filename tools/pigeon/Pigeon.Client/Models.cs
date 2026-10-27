@@ -221,6 +221,38 @@ public sealed class PigeonJoinResult
     public bool Duplicate { get; set; }
 }
 
+/// <summary>
+/// A client key IS a participant identity. The address is "&lt;label&gt;-&lt;key tail&gt;"
+/// (e.g. <c>opencode-d044039a</c>), where the tail is a short, stable prefix of the key the
+/// client presents. Two machines that generate their own keys can never collide, and nobody
+/// can be renamed by a stranger's auto-join: the key on the card has to match. See
+/// docs/MESSANGER.md §4.
+/// </summary>
+public static class PigeonIdentityKey
+{
+    /// <summary>How much of the key is visible in the address.</summary>
+    public const int TailLength = 8;
+
+    /// <summary>The addressable part of a key: lowercase, mention alphabet only.</summary>
+    public static string Tail(string key)
+    {
+        var raw = (key ?? "").Trim().ToLowerInvariant();
+        var sb = new System.Text.StringBuilder(raw.Length);
+        foreach (var c in raw)
+            sb.Append(char.IsAsciiLetterOrDigit(c) ? c : '-');
+        var cleaned = sb.ToString().Trim('-');
+        return cleaned.Length <= TailLength ? cleaned : cleaned[..TailLength];
+    }
+
+    /// <summary>"opencode" + key → "opencode-d044039a"; no key → the bare label.</summary>
+    public static string Address(string label, string key)
+    {
+        var name = (label ?? "").Trim();
+        var tail = Tail(key);
+        return tail.Length == 0 ? name : name + "-" + tail;
+    }
+}
+
 public sealed class PigeonSendRequest
 {
     public string Channel { get; set; } = "";

@@ -494,7 +494,7 @@ app.MapPost("/api/groups/{groupId}/unassign", (HttpContext ctx, string groupId, 
 // docs/MESSANGER.md §14.1: the same participant surface, as MCP tools over JSON-RPC. Mounted
 // last so it never shadows /api. See Mcp.cs for the protocol-revision note.
 
-Mcp.Map(app, store, config, AuthId);
+Mcp.Map(app, store, config, AuthId, BearerToken);
 
 Console.WriteLine($"pigeon: listening on http://{config.Bind}:{config.Port} (data: {dataDir})");
 Console.WriteLine($"pigeon: owner token: {config.OwnerToken}");

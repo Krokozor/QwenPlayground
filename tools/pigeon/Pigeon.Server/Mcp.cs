@@ -78,7 +78,8 @@ public static class Mcp
     /// Mount POST /mcp (plus the 405s for GET/DELETE, which the legacy transport rejects).
     /// </summary>
     /// <param name="authId">Resolve a bearer token to a participant id, or null when unauthenticated.</param>
-    public static void Map(WebApplication app, Store store, ServerConfig config, Func<HttpContext, string?> authId)
+    public static void Map(WebApplication app, Store store, ServerConfig config,
+        Func<HttpContext, string?> authId, Func<HttpContext, string?> bearer)
     {
         app.MapPost("/mcp", async (HttpContext ctx) =>
         {
@@ -118,7 +119,7 @@ public static class Mcp
             var renamed = false;
             if (identityId is null && config.McpAutoJoin)
             {
-                identityId = AutoJoin(ctx, store, parameters, host, out sessionId, out renamed);
+                identityId = AutoJoin(ctx, store, parameters, host, bearer(ctx), out sessionId, out renamed);
                 autoJoined = identityId is not null;
             }
             if (identityId is not null)
@@ -236,14 +237,19 @@ public static class Mcp
     /// and one read cursor, and a mention could no longer tell them apart
     /// (<c>Store.Join</c> does not disambiguate: a known id is re-authenticated in place).
     ///
-    /// The invented id is <c>mcp:&lt;name&gt;@&lt;host&gt;</c>: it is what makes the second
-    /// machine a separate participant rather than a silent duplicate of the first.
-    /// <paramref name="renamed"/> is set when the name had to be invented or disambiguated,
-    /// so <c>initialize</c> can tell the client plainly and recommend the two durable fixes —
-    /// an explicit <c>?client=</c> label, or a token.
+    /// A client that presents a key gets an id derived from it —
+    /// <c>mcp:&lt;label&gt;-&lt;key tail&gt;</c>. That is the durable case: the address is a
+    /// property of the key, not of who connected first, so it survives restarts and cannot be
+    /// taken over by an anonymous client (the key on the card has to match).
+    ///
+    /// For a keyless client the invented id is <c>mcp:&lt;name&gt;@&lt;host&gt;</c>: it is what
+    /// makes the second machine a separate participant rather than a silent duplicate of the
+    /// first. <paramref name="renamed"/> is set when the name had to be invented or
+    /// disambiguated, so <c>initialize</c> can tell the client plainly and recommend the two
+    /// durable fixes — an explicit <c>?client=</c> label, or a key.
     /// </summary>
     private static string? AutoJoin(
-        HttpContext ctx, Store store, JsonObject? parameters, string host,
+        HttpContext ctx, Store store, JsonObject? parameters, string host, string? key,
         out string? sessionId, out bool renamed)
     {
         sessionId = null;
@@ -256,7 +262,19 @@ public static class Mcp
         if (string.IsNullOrWhiteSpace(alias))
             alias = HostOfClient(host); // introduced nothing and named no host: make one up
 
-        var id = ResolveId(store, alias, host, ref renamed);
+        string? id;
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            // A presented key names its own participant: "<label>-<key tail>". The address is
+            // derived, not assigned, so two machines cannot collide and an anonymous client
+            // cannot take over a keyed one — Store.Join rejects a key that is not on the card.
+            // Store.Join adopts the key when the identity is new (the client minted it).
+            id = $"mcp:{PigeonIdentityKey.Address(alias, key)}";
+        }
+        else
+        {
+            id = ResolveId(store, alias, host, ref renamed);
+        }
         if (id is null)
             return null;
         // The alias is derived from the resolved id, not from the client's self-claimed
@@ -283,7 +301,7 @@ public static class Mcp
             // Status is deliberately not touched here: a bridge that observes this client
             // may have written a rich status, and a bare MCP handshake must not wipe it.
             Wake = "none", // pull client (§5)
-            Token = knownToken,
+            Token = string.IsNullOrWhiteSpace(key) ? knownToken : key,
         });
         if (unauthorized)
             return null;
@@ -314,13 +332,15 @@ public static class Mcp
     private static string? ResolveId(Store store, string alias, string host, ref bool renamed)
     {
         var bare = "mcp:" + alias;
-        if (Claimable(store, bare))
-            return bare;
-        if (string.IsNullOrEmpty(host) || string.IsNullOrEmpty(store.ConnectionOf(bare)))
+        // A label owned by a key is not available to a keyless client at all: the address is
+        // earned by presenting the key, or the client gets a host-qualified name.
+        var keyed = store.LabelOwnedByKey(alias);
+        if (!keyed && Claimable(store, bare) &&
+            (string.IsNullOrEmpty(host) || string.IsNullOrEmpty(store.ConnectionOf(bare))))
             return bare; // no host to tell them apart, or we have never seen where it connects from
 
         renamed = true;
-        var qualified = $"mcp:{alias}@{host}";
+        var qualified = $"mcp:{alias}@{(string.IsNullOrEmpty(host) ? "local" : host)}";
         if (Claimable(store, qualified))
             return qualified;
         for (var n = 2; ; n++)

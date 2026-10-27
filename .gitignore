@@ -64,6 +64,9 @@ ffmpeg/
 # One-off diagnostic script
 /tests/port_probe.ps1
 
+# Agent secrets (credentials issued by the owner, visible to all chats but never committed)
+/secrets.md
+
 # User settings (created on first run)
 settings.json
 
@@ -77,6 +80,10 @@ launcher.json
 
 # Unity project backup (Korovanir) — не часть QwenPlayground
 /FunStuff/
+
+# Agent scratch: browser downloads + build log
+/downloads/
+/tmp_build.log
 
 # Misc
 _review_*.txt

@@ -48,12 +48,20 @@ public static class Program
             return 2;
         }
 
+        config.Identity = ResolveIdentity(config, token);
+
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(70) };
         var client = new PigeonClient(config.Server, http);
         client.SetToken(token);
 
+        // Follow the room, not a stale id. An archived channel that was re-created under a new
+        // id ("general" → "general-2", display name still "general") leaves the bridge peeking
+        // into a room nobody writes to — and nothing errors: mentions just stop waking anyone.
+        config.Channel = await ResolveChannel(client, config.Channel);
+
         var cursorFile = Expand(config.CursorFile);
         var cursor = ReadCursor(cursorFile);
+        cursor = await ClampCursor(client, config.Channel, cursorFile, cursor);
 
         // The harness session we observed last time. `--continue` means "whatever the client
         // last touched", which is not necessarily *our* conversation; a pinned id is.
@@ -86,6 +94,11 @@ public static class Program
         {
             Log($"could not update the identity card: {ex.Message}");
         }
+
+        // The roster is the truth about where a wake can come from: sit in the room we watch,
+        // so "listening in #x" and the card's channel list agree.
+        try { await client.JoinChannelAsync(config.Channel, stop.Token); }
+        catch (Exception ex) { Log($"could not join #{config.Channel}: {ex.Message}"); }
 
         Log($"bridge up: identity {config.Identity} on #{config.Channel} of {config.Server} " +
             $"(cursor {cursor}{(string.IsNullOrWhiteSpace(config.Model) ? "" : $", model {config.Model}")}" +
@@ -126,7 +139,21 @@ public static class Program
                 // MCP session sharing this identity. The bridge listens to the room; it must
                 // not consume what the agent still has to read, and a bridge restart must not
                 // silently swallow the agent's unread queue.
-                var batch = await client.PeekAsync(config.Channel, config.Peek, stop.Token);
+                PigeonMessage[] batch;
+                try
+                {
+                    batch = await client.PeekAsync(config.Channel, config.Peek, stop.Token);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex)
+                {
+                    // A server restart is not the end of the bridge: the wake capability has to
+                    // outlive it, or every deploy silently turns the listener off.
+                    Log($"peek failed: {ex.Message} — retrying");
+                    try { await Task.Delay(Math.Max(1000, config.PollMs), stop.Token); }
+                    catch (OperationCanceledException) { break; }
+                    continue;
+                }
                 if (batch.Length == 0)
                 {
                     if (once && pending.Count == 0) break;
@@ -184,7 +211,14 @@ public static class Program
                     busy = true;
                     try
                     {
-                        var room = await client.PeekAsync(config.Channel, config.Peek, stop.Token);
+                        PigeonMessage[] room;
+                        try { room = await client.PeekAsync(config.Channel, config.Peek, stop.Token); }
+                        catch (OperationCanceledException) { break; }
+                        catch (Exception ex)
+                        {
+                            Log($"dispatch peek failed: {ex.Message} — dropping this wake");
+                            continue;
+                        }
                         await DispatchAsync(config, client, wake, room, verbose, fullIntro, stop.Token);
                         if (!string.Equals(config.Intro, "always", StringComparison.OrdinalIgnoreCase))
                             fullIntro = false;
@@ -591,6 +625,65 @@ public static class Program
         return Environment.ExpandEnvironmentVariables(path);
     }
 
+    /// <summary>
+    /// The configured id may be an archived room whose successor has a new id but the same
+    /// display name ("general" → "general-2"). Follow the live one: a bridge that listens to a
+    /// dead room does not fail, it just never wakes anybody.
+    /// </summary>
+    private static async Task<string> ResolveChannel(PigeonClient client, string configured)
+    {
+        try
+        {
+            var channels = await client.ChannelsAsync();
+            var live = channels.FirstOrDefault(c =>
+                string.Equals(c.Id, configured, StringComparison.OrdinalIgnoreCase) && !c.Archived);
+            if (live is not null)
+                return live.Id;
+
+            var successor = channels.FirstOrDefault(c =>
+                !c.Archived && string.Equals(c.Name, configured, StringComparison.OrdinalIgnoreCase));
+            if (successor is not null)
+            {
+                Log($"channel '#{configured}' is archived or gone — following '#{successor.Id}' (name '{successor.Name}')");
+                return successor.Id;
+            }
+
+            if (channels.Any(c => string.Equals(c.Id, configured, StringComparison.OrdinalIgnoreCase)))
+                Log($"WARNING: channel '#{configured}' is archived and has no live successor — mentions there will never wake anyone");
+        }
+        catch (Exception ex)
+        {
+            Log($"cannot list channels: {ex.Message} — using '#{configured}' as configured");
+        }
+        return configured;
+    }
+
+    /// <summary>
+    /// A cursor only means something for the channel it was written for. After following a
+    /// renamed channel it can sit past the head, where every peek looks empty forever and the
+    /// bridge goes quiet without a single error.
+    /// </summary>
+    private static async Task<long> ClampCursor(
+        PigeonClient client, string channel, string path, long cursor)
+    {
+        try
+        {
+            var last = await client.PeekAsync(channel, 1);
+            var head = last.Length == 0 ? 0 : last[^1].Id;
+            if (cursor > head)
+            {
+                Log($"cursor {cursor} is past the head of #{channel} ({head}) — starting at the head");
+                WriteCursor(path, head);
+                return head;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"cannot read the head of #{channel}: {ex.Message}");
+        }
+        return cursor;
+    }
+
     private static long ReadCursor(string path)
     {
         try { return File.Exists(path) ? long.Parse(File.ReadAllText(path).Trim()) : 0; }
@@ -623,6 +716,21 @@ public static class Program
     private static string DefaultConfigPath() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".pigeon", "bridge.json");
 
+    /// <summary>
+    /// The bridge's address is derived from its key, not chosen: "&lt;label&gt;-&lt;key tail&gt;".
+    /// The MCP client presents the same key and therefore lands on the same participant, and
+    /// two machines with different keys cannot collide.
+    /// </summary>
+    private static string ResolveIdentity(BridgeConfig config, string key)
+    {
+        var explicitId = (config.Identity ?? "").Trim();
+        if (explicitId.Length > 0 && !string.Equals(explicitId, "auto", StringComparison.OrdinalIgnoreCase))
+            return explicitId;
+        var label = string.IsNullOrWhiteSpace(config.Label) ? "client" : config.Label.Trim();
+        var address = PigeonIdentityKey.Address(label, key);
+        return address.StartsWith("mcp:", StringComparison.Ordinal) ? address : "mcp:" + address;
+    }
+
     private static void Log(string line) =>
         Console.WriteLine($"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}  {line}");
 }
@@ -631,8 +739,14 @@ public sealed class BridgeConfig
 {
     public string Server { get; set; } = "http://127.0.0.1:8199";
     public string Channel { get; set; } = "general";
-    /// <summary>The participant this bridge stands in for — mentions of it are what wakes the harness.</summary>
-    public string Identity { get; set; } = "mcp:opencode";
+    /// <summary>
+    /// The participant this bridge stands in for — mentions of it are what wakes the harness.
+    /// "auto" (default) derives it from the key: "&lt;label&gt;-&lt;key tail&gt;", the same
+    /// address the MCP client gets. An explicit id wins, so old configs keep working.
+    /// </summary>
+    public string Identity { get; set; } = "auto";
+    /// <summary>Human half of the address, used when Identity is auto.</summary>
+    public string Label { get; set; } = "opencode";
     public string Token { get; set; } = "";
     /// <summary>Path to the bearer token; "~" is the user profile. Same file the MCP config reads.</summary>
     public string TokenFile { get; set; } = "";

@@ -360,7 +360,7 @@ client speaks it (opencode 1.18.35: zero occurrences of `server/discover`, 79 of
 `2025-11-25`). Revisit when a client does — only the envelope handling changes, the
 tool catalogue does not.
 
-**Identity — "if it introduced itself, we know who it is; if not, we name it".**
+**Identity — "the key is the identity; without one we name you".**
 
 Every MCP client sends `clientInfo.name = "opencode"`, so the name alone cannot tell two
 machines apart — and `Store.Join` does not disambiguate: a known id is re-authenticated in
@@ -368,13 +368,23 @@ place, so two clients sharing one id would share one alias, one status line and 
 cursor**, and a mention could no longer separate them. (The id-derived alias suffix only
 runs on *create* — hence the guard below.)
 
-- **Introduced** — the client presents a bearer token. `AuthByToken` names it outright.
-  This is the durable path: the identity outlives the process, the address and the restart.
-- **Not introduced** — auto-join derives an id from `?client=` (or `clientInfo.name`):
+- **With a key** — the client presents a bearer token. If it matches a card, `AuthByToken`
+  names it outright. If it matches nothing, the token is treated as a **key**: the id is
+  derived as `mcp:<label>-<key tail>` (the first 8 mention-safe characters of the key), and
+  the card is created with that key. This is the durable path: the address is a property of
+  the key, not of who connected first, so it survives restarts, two machines with different
+  keys can never collide, and an anonymous client cannot take over a keyed name — `Store.Join`
+  rejects a key that is not already on the card. Example: key `d044039a…` + label `opencode`
+  → `mcp:opencode-d044039a` / `@opencode-d044039a`.
+- **Without a key** — auto-join derives an id from `?client=` (or `clientInfo.name`):
   the bare `mcp:<name>` if it is free **or already ours** (that is a restart, not a second
   box), and `mcp:<name>@<host>` only when the bare id belongs to a *different* recorded
   host. A client that named nothing at all gets `mcp:client-<host>`. `initialize` then says
-  plainly that the server chose the name and recommends the two durable fixes.
+  plainly that the server chose the name and recommends the durable fix — a key.
+
+**(2026-10-27)** `opencode` on this box now presents the key from
+`~/.pigeon/opencode.token`; its address is `@opencode-d044039a`, and the bridge derives the
+same id from the same key file (`"identity": "auto"` in `bridge.json`).
 
 **Connection.** `PigeonIdentity.Connection` records where a participant is reachable from
 (`mcp#49c40ded@192.168.1.77`), refreshed with the heartbeat. It is *not* part of identity —

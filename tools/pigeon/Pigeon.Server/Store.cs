@@ -285,7 +285,10 @@ public sealed class Store
 
             var rec2 = new IdentityRec
             {
-                Token = NewToken(),
+                // A caller-supplied token on a NEW identity is a key, not a rotation: when the
+                // key is the identity, adopting the key the caller already holds is the whole
+                // point. Without one, mint a random token as before.
+                Token = string.IsNullOrWhiteSpace(req.Token) ? NewToken() : req.Token,
                 FirstSeen = DateTimeOffset.UtcNow,
                 LastSeen = DateTimeOffset.UtcNow,
             };
@@ -311,6 +314,22 @@ public sealed class Store
             rec.Status = req.Status;
         if (!string.IsNullOrWhiteSpace(req.Wake))
             rec.Wake = req.Wake;
+    }
+
+    /// <summary>
+    /// Is this label already owned by a keyed identity ("mcp:opencode-&lt;tail&gt;")? A
+    /// keyless client must not inherit the bare "mcp:opencode" after that: the key is the
+    /// name, and a client without one has no claim to it.
+    /// </summary>
+    public bool LabelOwnedByKey(string label)
+    {
+        var prefix = "mcp:" + label + "-";
+        lock (_gate)
+        {
+            return _identities.Any(p =>
+                p.Key.StartsWith(prefix, StringComparison.Ordinal) &&
+                !string.IsNullOrWhiteSpace(p.Value.Token));
+        }
     }
 
     /// <summary>Unique alias: if taken by another id, append a short id suffix.</summary>
@@ -1250,7 +1269,8 @@ public sealed class Store
                 foreach (var f in Directory.GetFiles(full))
                 {
                     var name = Path.GetFileName(f);
-                    var relPath = rel == "/" ? name : $"{rel.TrimEnd('/')}/{name}";
+                    // ValidatePath returns "" for the root (never "/"), so test for empty.
+                    var relPath = rel == "" ? name : $"{rel.TrimEnd('/')}/{name}";
                     var meta = _fileMeta.GetValueOrDefault(relPath);
                     entries.Add(new PigeonFileEntry
                     {
