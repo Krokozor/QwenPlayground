@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -53,6 +54,7 @@ public static class Program
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(70) };
         var client = new PigeonClient(config.Server, http);
         client.SetToken(token);
+        MonitorClient = client;
 
         // Follow the room, not a stale id. An archived channel that was re-created under a new
         // id ("general" → "general-2", display name still "general") leaves the bridge peeking
@@ -105,6 +107,21 @@ public static class Program
             $", harness log: {(config.Harness.Log is null ? "none" : Expand(config.Harness.Log))}" +
             $", pinned session: {(string.IsNullOrWhiteSpace(config.Harness.Session) ? "none" : config.Harness.Session)})");
 
+        // Start the local monitor (status + log for the local user, localhost only).
+        MonitorConfig = config;
+        if (config.MonitorPort > 0)
+        {
+            try
+            {
+                StartMonitorServer(config.MonitorPort);
+                Log($"monitor: http://localhost:{config.MonitorPort}/ (local user only)");
+            }
+            catch (Exception ex)
+            {
+                Log($"monitor failed to start on port {config.MonitorPort}: {ex.Message}");
+            }
+        }
+
         // One turn at a time. Two concurrent invocations of the same harness session would
         // fight over it, and the mention that caused the second one is already being handled.
         var busy = false;
@@ -154,6 +171,62 @@ public static class Program
                     catch (OperationCanceledException) { break; }
                     continue;
                 }
+                // Process manual commands (wake, reconnect) from the monitor.
+                while (MonitorCommands.TryDequeue(out var cmd))
+                {
+                    if (cmd.StartsWith("wake:", StringComparison.Ordinal))
+                    {
+                        var wakeText = cmd[5..];
+                        Log($"manual wake: {wakeText.Length} chars");
+                        busy = true;
+                        MonitorState = "generating";
+                        try
+                        {
+                            PigeonMessage[] room;
+                            try { room = await client.PeekAsync(config.Channel, config.Peek, stop.Token); }
+                            catch (OperationCanceledException) { break; }
+                            catch (Exception ex) { Log($"manual wake peek failed: {ex.Message}"); continue; }
+                            var fakeWake = new PigeonMessage
+                            {
+                                Id = -1,
+                                Channel = config.Channel,
+                                Author = new PigeonAuthor { Id = "monitor", Alias = "monitor", Kind = "bridge" },
+                                Text = wakeText,
+                                Ts = DateTimeOffset.UtcNow,
+                                Mentions = [config.Identity],
+                            };
+                            await DispatchAsync(config, client, fakeWake, room, verbose, true, stop.Token);
+                        }
+                        finally { busy = false; MonitorState = "idle"; }
+                    }
+                    else if (cmd == "reconnect")
+                    {
+                        Log("reconnecting to pigeon server…");
+                        MonitorConnected = false;
+                        try
+                        {
+                            var newClient = new PigeonClient(config.Server, http);
+                            newClient.SetToken(token);
+                            await newClient.JoinAsync(new PigeonJoinRequest
+                            {
+                                Id = config.Identity,
+                                Alias = config.Identity.StartsWith("mcp:") ? config.Identity[4..] : config.Identity,
+                                Kind = "agent", Harness = "mcp", Model = config.Model, Wake = "none", Token = token,
+                            }, stop.Token);
+                            await newClient.JoinChannelAsync(config.Channel, stop.Token);
+                            client = newClient;
+                            MonitorClient = newClient;
+                            MonitorConnected = true;
+                            Log($"reconnected to #{config.Channel}");
+                        }
+                        catch (Exception ex)
+                        {
+                            MonitorConnected = true;
+                            Log($"reconnect failed: {ex.Message}");
+                        }
+                    }
+                }
+
                 if (batch.Length == 0)
                 {
                     if (once && pending.Count == 0) break;
@@ -209,6 +282,7 @@ public static class Program
                     if (coalesced > 0)
                         Log($"coalesced {coalesced} mention(s) into one wake (window {config.CoalesceMs} ms)");
                     busy = true;
+                    MonitorState = "generating";
                     try
                     {
                         PigeonMessage[] room;
@@ -226,6 +300,7 @@ public static class Program
                     finally
                     {
                         busy = false;
+                        MonitorState = "idle";
                     }
                 }
 
@@ -515,6 +590,15 @@ public static class Program
                 cost = obs.Cost,
             };
             File.AppendAllText(path, JsonSerializer.Serialize(record) + "\n");
+            MonitorLastWake = new MonitorWake
+            {
+                Id = (int)wake.Id,
+                Exit = obs.Exit,
+                DurationMs = obs.DurationMs,
+                Hung = obs.Exit != 0,
+                Note = obs.ToolsUsed.Length == 0 ? "" : $"tools: {string.Join(",", obs.ToolsUsed)}",
+                At = DateTime.Now,
+            };
         }
         catch { /* the log is a bonus, not a requirement */ }
     }
@@ -758,8 +842,323 @@ public static class Program
         return address.StartsWith("mcp:", StringComparison.Ordinal) ? address : "mcp:" + address;
     }
 
-    private static void Log(string line) =>
-        Console.WriteLine($"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}  {line}");
+    private static void Log(string line)
+    {
+        var ts = $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}  {line}";
+        Console.WriteLine(ts);
+        MonitorLogAdd(ts);
+    }
+
+    // ── Local monitor: status + log for the local user (localhost only) ───────────────
+    // The bridge is a local component; the local user needs to see what it is doing (is
+    // it alive? what is it dispatching? what did the harness say?). A localhost-only HTTP
+    // server serves a JSON API + a web page. Not for the pigeon server, not for the network.
+
+    private static readonly object MonitorGate = new();
+    private static readonly Queue<string> MonitorLog = new();
+    private const int MonitorMaxLog = 500;
+    private static volatile string MonitorState = "idle";
+    private static volatile MonitorWake? MonitorLastWake;
+    private static volatile BridgeConfig? MonitorConfig;
+    private static volatile PigeonClient? MonitorClient;
+    private static volatile bool MonitorConnected = true;
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<string> MonitorCommands = new();
+    private static readonly DateTime MonitorStartedAt = DateTime.Now;
+
+    private sealed class MonitorWake
+    {
+        public int Id { get; set; }
+        public int Exit { get; set; }
+        public long DurationMs { get; set; }
+        public bool Hung { get; set; }
+        public string Note { get; set; } = "";
+        public DateTime At { get; set; }
+    }
+
+    private static void MonitorLogAdd(string line)
+    {
+        lock (MonitorGate)
+        {
+            MonitorLog.Enqueue(line);
+            if (MonitorLog.Count > MonitorMaxLog) MonitorLog.Dequeue();
+        }
+    }
+
+    private static string[] MonitorLogGet()
+    {
+        lock (MonitorGate) return MonitorLog.ToArray();
+    }
+
+    private static void StartMonitorServer(int port)
+    {
+        var listener = new HttpListener();
+        listener.Prefixes.Add($"http://localhost:{port}/");
+        listener.Start();
+        _ = Task.Run(async () =>
+        {
+            while (true)
+            {
+                HttpListenerContext ctx;
+                try { ctx = await listener.GetContextAsync(); }
+                catch { break; }
+                _ = Task.Run(() => HandleMonitorRequest(ctx));
+            }
+        });
+    }
+
+    private static async Task HandleMonitorRequest(HttpListenerContext ctx)
+    {
+        var path = ctx.Request.Url?.AbsolutePath ?? "/";
+        try
+        {
+            if (path == "/api/status")
+            {
+                var cfg = MonitorConfig;
+                WriteJsonResponse(ctx, new
+                {
+                    alive = true,
+                    state = MonitorState,
+                    connected = MonitorConnected,
+                    channel = cfg?.Channel,
+                    identity = cfg?.Identity,
+                    model = cfg?.Model,
+                    server = cfg?.Server,
+                    uptimeSec = (DateTime.Now - MonitorStartedAt).TotalSeconds,
+                    pid = Environment.ProcessId,
+                    lastWake = MonitorLastWake,
+                });
+            }
+            else if (path == "/api/log")
+            {
+                WriteJsonResponse(ctx, new { lines = MonitorLogGet() });
+            }
+            else if (path == "/api/channels")
+            {
+                var mc = MonitorClient;
+                if (mc is null)
+                {
+                    WriteJsonResponse(ctx, Array.Empty<object>());
+                }
+                else
+                {
+                    var channels = await mc.ChannelsAsync();
+                    WriteJsonResponse(ctx, channels.Select(c => new { id = c.Id, name = c.Name, description = c.Description }));
+                }
+            }
+            else if (path == "/api/send" && ctx.Request.HttpMethod == "POST")
+            {
+                var mc = MonitorClient;
+                var cfg = MonitorConfig;
+                if (mc is null || cfg is null)
+                {
+                    ctx.Response.StatusCode = 503;
+                    ctx.Response.Close();
+                    return;
+                }
+                using var reader = new StreamReader(ctx.Request.InputStream);
+                var body = JsonSerializer.Deserialize<JsonElement>(reader.ReadToEnd());
+                var text = body.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                var channel = body.TryGetProperty("channel", out var ch) ? ch.GetString() ?? cfg.Channel : cfg.Channel;
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    ctx.Response.StatusCode = 400;
+                    ctx.Response.Close();
+                    return;
+                }
+                var msg = await mc.SendAsync(new PigeonSendRequest { Channel = channel, Text = text });
+                Log($"manual send to #{channel}: {text.Length} chars (msg #{msg.Id})");
+                WriteJsonResponse(ctx, new { ok = true, id = msg.Id });
+            }
+            else if (path == "/api/wake" && ctx.Request.HttpMethod == "POST")
+            {
+                using var reader = new StreamReader(ctx.Request.InputStream);
+                var body = JsonSerializer.Deserialize<JsonElement>(reader.ReadToEnd());
+                var text = body.TryGetProperty("text", out var t) ? t.GetString() ?? "manual wake" : "manual wake";
+                MonitorCommands.Enqueue($"wake:{text}");
+                Log($"manual wake queued: {text.Length} chars");
+                WriteJsonResponse(ctx, new { ok = true, message = "wake queued" });
+            }
+            else if (path == "/api/reconnect" && ctx.Request.HttpMethod == "POST")
+            {
+                MonitorCommands.Enqueue("reconnect");
+                Log("manual reconnect queued");
+                WriteJsonResponse(ctx, new { ok = true, message = "reconnect queued" });
+            }
+            else if (path == "/api/settings")
+            {
+                if (ctx.Request.HttpMethod == "GET")
+                {
+                    WriteJsonResponse(ctx, MonitorConfig);
+                }
+                else if (ctx.Request.HttpMethod == "POST")
+                {
+                    using var reader = new StreamReader(ctx.Request.InputStream);
+                    var json = reader.ReadToEnd();
+                    var newConfig = JsonSerializer.Deserialize<BridgeConfig>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (newConfig is not null)
+                    {
+                        var configPath = Expand("~/.pigeon/bridge.json");
+                        File.WriteAllText(configPath, JsonSerializer.Serialize(newConfig, new JsonSerializerOptions { WriteIndented = true }));
+                        MonitorConfig = newConfig;
+                        Log($"settings saved to {configPath} (restart the bridge to apply)");
+                        WriteJsonResponse(ctx, new { ok = true, message = "saved (restart the bridge to apply)" });
+                    }
+                    else
+                    {
+                        ctx.Response.StatusCode = 400;
+                        ctx.Response.Close();
+                    }
+                }
+                else
+                {
+                    ctx.Response.StatusCode = 405;
+                    ctx.Response.Close();
+                }
+            }
+            else if (path == "/" || path == "/index.html")
+            {
+                ctx.Response.ContentType = "text/html; charset=utf-8";
+                var bytes = Encoding.UTF8.GetBytes(MonitorPage);
+                ctx.Response.OutputStream.Write(bytes);
+                ctx.Response.Close();
+            }
+            else
+            {
+                ctx.Response.StatusCode = 404;
+                ctx.Response.Close();
+            }
+        }
+        catch
+        {
+            try { ctx.Response.StatusCode = 500; ctx.Response.Close(); } catch { }
+        }
+    }
+
+    private static void WriteJsonResponse(HttpListenerContext ctx, object payload)
+    {
+        ctx.Response.ContentType = "application/json; charset=utf-8";
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload));
+        ctx.Response.OutputStream.Write(bytes);
+        ctx.Response.Close();
+    }
+
+    private const string MonitorPage = """
+        <!DOCTYPE html>
+        <html><head><meta charset="utf-8"><title>Pigeon Bridge</title>
+        <style>
+        body{font-family:ui-monospace,Consolas,monospace;background:#111;color:#ddd;margin:0;padding:16px}
+        h1{font-size:1.1em;margin:0 0 12px}
+        h2{font-size:.95em;margin:16px 0 8px;color:#888}
+        .row{margin:4px 0;word-break:break-all}
+        .st{display:inline-block;padding:2px 8px;border-radius:4px;font-weight:bold}
+        .idle{background:#1e4;color:#0a2}
+        .generating{background:#542;color:#fa0}
+        .hung{background:#522;color:#f66}
+        .log{background:#000;border:1px solid #333;padding:8px;height:40vh;overflow-y:auto;font-size:.85em;white-space:pre-wrap}
+        .cfg{display:grid;grid-template-columns:140px 1fr;gap:6px 10px;align-items:center}
+        .cfg label{color:#888;text-align:right}
+        .cfg input{background:#000;color:#ddd;border:1px solid #333;padding:4px 6px;font-family:inherit;font-size:.85em}
+        .btn{background:#2a5;color:#0a2;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-family:inherit;margin-top:8px}
+        .btn:hover{background:#3b6}
+        .msg{font-size:.8em;color:#888;margin-top:4px}
+        </style></head>
+        <body>
+        <h1>Pigeon Bridge Monitor</h1>
+        <div class="row" id="s">loading…</div>
+        <div class="log" id="l"></div>
+        <h2>Settings (saved to bridge.json — restart bridge to apply)</h2>
+        <div class="cfg">
+          <label>Server</label><input id="f-server" size="40">
+          <label>Channel</label><select id="f-channel"><option>loading…</option></select>
+          <label>Identity</label><input id="f-identity" size="40">
+          <label>Model</label><input id="f-model" size="40">
+          <label>Monitor port</label><input id="f-port" size="10">
+        </div>
+        <button class="btn" onclick="saveSettings()">Save settings</button>
+        <div class="msg" id="msg"></div>
+        <h2>Manual send (as the bridge identity)</h2>
+        <div class="cfg">
+          <label>Message</label><input id="f-send" size="60" placeholder="type a message…">
+        </div>
+        <button class="btn" onclick="sendMsg()">Send to channel</button>
+        <div class="msg" id="sendmsg"></div>
+        <h2>Controls</h2>
+        <div class="cfg">
+          <label>Wake prompt</label><input id="f-wake" size="60" placeholder="prompt to send to the harness…">
+        </div>
+        <button class="btn" onclick="doWake()">Wake harness</button>
+        <button class="btn" style="background:#a52;color:#fa0" onclick="doReconnect()">Reconnect</button>
+        <div class="msg" id="ctrlmsg"></div>
+        <script>
+        const F={server:'f-server',channel:'f-channel',identity:'f-identity',model:'f-model',port:'f-port'};
+        function loadSettings(){
+          fetch('/api/settings').then(r=>r.json()).then(c=>{
+            document.getElementById(F.server).value=c.Server||'';
+            document.getElementById(F.identity).value=c.Identity||'';
+            document.getElementById(F.model).value=c.Model||'';
+            document.getElementById(F.port).value=c.MonitorPort??8198;
+            fetch('/api/channels').then(r=>r.json()).then(chs=>{
+              const sel=document.getElementById(F.channel);
+              sel.innerHTML='';
+              chs.forEach(ch=>{
+                const o=document.createElement('option');
+                o.value=ch.id; o.textContent=ch.name+(ch.description?' — '+ch.description:'');
+                sel.appendChild(o);
+              });
+              sel.value=c.Channel||'';
+            }).catch(()=>{document.getElementById(F.channel).innerHTML='<option>error</option>'});
+          }).catch(()=>{});
+        }
+        async function saveSettings(){
+          const c={server:document.getElementById(F.server).value,
+            channel:document.getElementById(F.channel).value,
+            identity:document.getElementById(F.identity).value,
+            model:document.getElementById(F.model).value,
+            monitorPort:parseInt(document.getElementById(F.port).value)||0};
+          const r=await fetch('/api/settings',{method:'POST',body:JSON.stringify(c)});
+          const j=await r.json();
+          document.getElementById('msg').textContent=j.ok?j.message:'save failed';
+        }
+        async function sendMsg(){
+          const text=document.getElementById('f-send').value;
+          if(!text.trim())return;
+          const r=await fetch('/api/send',{method:'POST',body:JSON.stringify({text})});
+          const j=await r.json();
+          document.getElementById('sendmsg').textContent=j.ok?`sent (msg #${j.id})`:'send failed';
+          if(j.ok)document.getElementById('f-send').value='';
+        }
+        async function doWake(){
+          const text=document.getElementById('f-wake').value||'manual wake';
+          const r=await fetch('/api/wake',{method:'POST',body:JSON.stringify({text})});
+          const j=await r.json();
+          document.getElementById('ctrlmsg').textContent=j.ok?j.message:'wake failed';
+        }
+        async function doReconnect(){
+          const r=await fetch('/api/reconnect',{method:'POST'});
+          const j=await r.json();
+          document.getElementById('ctrlmsg').textContent=j.ok?j.message:'reconnect failed';
+        }
+        async function poll(){
+          try{
+            const [st,lg]=await Promise.all([fetch('/api/status').then(r=>r.json()),fetch('/api/log').then(r=>r.json())]);
+            const cls=st.state||'idle';
+            const lw=st.lastWake?`#${st.lastWake.id} exit=${st.lastWake.exit} ${st.lastWake.durationMs}ms${st.lastWake.hung?' HUNG':''}${st.lastWake.note?' '+st.lastWake.note:''}`:'none';
+            const conn=st.connected?'<span class="st idle">conn</span>':'<span class="st hung">disconn</span>';
+            document.getElementById('s').innerHTML=
+              `<span class="st ${cls}">${cls}</span> ${conn} `+
+              `ch=${st.channel} id=${st.identity} up=${st.uptimeSec.toFixed(0)}s pid=${st.pid} `+
+              `last: ${lw}`;
+            const l=document.getElementById('l');
+            l.textContent=lg.lines.join('\n');
+            l.scrollTop=l.scrollHeight;
+          }catch(e){document.getElementById('s').textContent='poll error: '+e}
+          setTimeout(poll,1500);
+        }
+        loadSettings();
+        poll();
+        </script>
+        </body></html>
+        """;
 }
 
 public sealed class BridgeConfig
@@ -783,6 +1182,11 @@ public sealed class BridgeConfig
     /// <summary>How many recent messages the bridge looks at per poll.</summary>
     public int Peek { get; set; } = 100;
     public int PollMs { get; set; } = 2000;
+    /// <summary>
+    /// Port for the local monitor (status + log for the local user, localhost only). 0
+    /// disables the monitor. The local user opens http://localhost:&lt;port&gt;/ in their browser.
+    /// </summary>
+    public int MonitorPort { get; set; } = 8198;
     /// <summary>
     /// Coalescing window: after the first mention is dequeued, wait this long for further
     /// mentions to arrive, then dispatch ONE wake for all of them (not N). 0 disables
