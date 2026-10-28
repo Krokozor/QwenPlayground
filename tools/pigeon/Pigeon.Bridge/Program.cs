@@ -293,12 +293,32 @@ public static class Program
             WorkingDirectory = Expand(config.Harness.WorkDir ?? Directory.GetCurrentDirectory()),
             RedirectStandardOutput = !verbose,
             RedirectStandardError = !verbose,
+            // The prompt is handed to the harness on stdin (UTF-8, no BOM): .NET on Windows
+            // quotes argv entries with spaces/newlines, and the harness (bun) keeps the quotes
+            // literally, so an argv-carried prompt reaches the model as a quoted string. stdin
+            // sidesteps the quoting. A bare {prompt} arg is dropped from the argv (see above);
+            // any other {prompt} usage keeps the argv copy as a fallback for harnesses that do
+            // not read stdin.
+            RedirectStandardInput = true,
+            StandardInputEncoding = new System.Text.UTF8Encoding(false),
             UseShellExecute = false,
         };
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("cannot start the harness");
+        // Hand the prompt to the harness on stdin, then close the stream (EOF). A failed write
+        // is logged, not fatal: the harness may still have the argv fallback (see above).
+        try
+        {
+            proc.StandardInput.Write(prompt);
+            proc.StandardInput.Flush();
+            proc.StandardInput.Close();
+        }
+        catch (Exception ex)
+        {
+            Log($"failed to write prompt to stdin: {ex.Message}");
+        }
         using var kill = CancellationTokenSource.CreateLinkedTokenSource(ct);
         kill.CancelAfter(TimeSpan.FromSeconds(config.Harness.TimeoutSeconds));
 
