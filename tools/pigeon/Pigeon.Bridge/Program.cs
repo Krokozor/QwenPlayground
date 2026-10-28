@@ -1044,53 +1044,102 @@ public static class Program
 
     private const string MonitorPage = """
         <!DOCTYPE html>
-        <html><head><meta charset="utf-8"><title>Pigeon Bridge</title>
+        <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pigeon Bridge</title>
         <style>
-        body{font-family:ui-monospace,Consolas,monospace;background:#111;color:#ddd;margin:0;padding:16px}
-        h1{font-size:1.1em;margin:0 0 12px}
-        h2{font-size:.95em;margin:16px 0 8px;color:#888}
-        .row{margin:4px 0;word-break:break-all}
-        .st{display:inline-block;padding:2px 8px;border-radius:4px;font-weight:bold}
-        .idle{background:#1e4;color:#0a2}
-        .generating{background:#542;color:#fa0}
-        .hung{background:#522;color:#f66}
-        .log{background:#000;border:1px solid #333;padding:8px;height:40vh;overflow-y:auto;font-size:.85em;white-space:pre-wrap}
-        .cfg{display:grid;grid-template-columns:140px 1fr;gap:6px 10px;align-items:center}
-        .cfg label{color:#888;text-align:right}
-        .cfg input{background:#000;color:#ddd;border:1px solid #333;padding:4px 6px;font-family:inherit;font-size:.85em}
-        .btn{background:#2a5;color:#0a2;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-family:inherit;margin-top:8px}
-        .btn:hover{background:#3b6}
-        .msg{font-size:.8em;color:#888;margin-top:4px}
+        :root{
+          --bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;
+          --accent:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;--orange:#db6d28;
+        }
+        *{box-sizing:border-box}
+        body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:24px;max-width:960px;margin-left:auto;margin-right:auto}
+        h1{font-size:1.3em;font-weight:600;margin:0 0 4px}
+        .subtitle{color:var(--muted);font-size:.85em;margin-bottom:20px}
+        .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px}
+        .card h2{font-size:.9em;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:0 0 12px}
+        .status-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+        .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:12px;font-size:.8em;font-weight:500}
+        .badge .dot{width:8px;height:8px;border-radius:50%}
+        .b-idle{background:#21262d}.b-idle .dot{background:var(--muted)}
+        .b-gen{background:#2e2a1a}.b-gen .dot{background:var(--yellow);animation:pulse 1.2s infinite}
+        .b-conn{background:#1a2e1a}.b-conn .dot{background:var(--green)}
+        .b-disconn{background:#2e1a1a}.b-disconn .dot{background:var(--red)}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+        .meta{color:var(--muted);font-size:.82em;line-height:1.6}
+        .meta b{color:var(--text);font-weight:500}
+        .log{background:#010409;border:1px solid var(--border);border-radius:6px;padding:10px 12px;height:260px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.78em;line-height:1.55;white-space:pre-wrap;word-break:break-all}
+        .log .ln{opacity:.75}.log .ln.warn{color:var(--yellow);opacity:1}.log .ln.err{color:var(--red);opacity:1}
+        .form{display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center}
+        .form label{color:var(--muted);font-size:.85em;text-align:right}
+        .form input,.form select{background:#0d1117;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:.85em;width:100%;font-family:inherit}
+        .form input:focus,.form select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(88,166,255,.15)}
+        .btn-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+        .btn{border:none;border-radius:6px;padding:7px 16px;font-size:.85em;font-weight:500;cursor:pointer;transition:opacity .15s;display:inline-flex;align-items:center;gap:6px}
+        .btn:hover{opacity:.85}.btn:active{opacity:.7}
+        .btn-primary{background:var(--accent);color:#0d1117}
+        .btn-green{background:var(--green);color:#0d1117}
+        .btn-orange{background:var(--orange);color:#0d1117}
+        .btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+        .btn-ghost:hover{color:var(--text);border-color:var(--muted)}
+        .msg{font-size:.8em;color:var(--muted);margin-top:8px;min-height:1.2em}
+        .msg.ok{color:var(--green)}.msg.err{color:var(--red)}
+        .full{grid-column:1/-1}
         </style></head>
         <body>
-        <h1>Pigeon Bridge Monitor</h1>
-        <div class="row" id="s">loading…</div>
-        <div class="log" id="l"></div>
-        <h2>Settings (saved to bridge.json — restart bridge to apply)</h2>
-        <div class="cfg">
-          <label>Server</label><input id="f-server" size="40">
-          <label>Channel</label><select id="f-channel"><option>loading…</option></select>
-          <label>Identity</label><input id="f-identity" size="40">
-          <label>Model</label><input id="f-model" size="40">
-          <label>Monitor port</label><input id="f-port" size="10">
+        <h1>🐦 Pigeon Bridge</h1>
+        <div class="subtitle">local bridge monitor — <span id="sub-url"></span></div>
+
+        <div class="card">
+          <div class="status-row" id="s"><span class="badge b-idle"><span class="dot"></span>loading…</span></div>
+          <div class="meta" id="meta"></div>
         </div>
-        <button class="btn" onclick="saveSettings()">Save settings</button>
-        <div class="msg" id="msg"></div>
-        <h2>Manual send (as the bridge identity)</h2>
-        <div class="cfg">
-          <label>Message</label><input id="f-send" size="60" placeholder="type a message…">
+
+        <div class="card">
+          <h2>Log</h2>
+          <div class="log" id="l"></div>
         </div>
-        <button class="btn" onclick="sendMsg()">Send to channel</button>
-        <div class="msg" id="sendmsg"></div>
-        <h2>Controls</h2>
-        <div class="cfg">
-          <label>Wake prompt</label><input id="f-wake" size="60" placeholder="prompt to send to the harness…">
+
+        <div class="card">
+          <h2>Settings <span style="text-transform:none;font-weight:400">— saved to bridge.json, restart to apply</span></h2>
+          <div class="form">
+            <label>Server</label><input id="f-server">
+            <label>Channel</label><select id="f-channel"><option>loading…</option></select>
+            <label>Identity</label><input id="f-identity">
+            <label>Model</label><input id="f-model">
+            <label>Monitor port</label><input id="f-port" type="number" min="0" max="65535">
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" onclick="saveSettings()">💾 Save</button>
+          </div>
+          <div class="msg" id="msg"></div>
         </div>
-        <button class="btn" onclick="doWake()">Wake harness</button>
-        <button class="btn" style="background:#a52;color:#fa0" onclick="doReconnect()">Reconnect</button>
-        <div class="msg" id="ctrlmsg"></div>
+
+        <div class="card">
+          <h2>Manual send <span style="text-transform:none;font-weight:400">— as bridge identity</span></h2>
+          <div class="form">
+            <label>Message</label><input id="f-send" placeholder="type a message…">
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-ghost" onclick="sendMsg()">📨 Send to channel</button>
+          </div>
+          <div class="msg" id="sendmsg"></div>
+        </div>
+
+        <div class="card">
+          <h2>Controls</h2>
+          <div class="form">
+            <label>Wake prompt</label><input id="f-wake" placeholder="prompt to send to the harness…">
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" onclick="doWake()">▶ Wake harness</button>
+            <button class="btn btn-orange" onclick="doReconnect()">↻ Reconnect</button>
+          </div>
+          <div class="msg" id="ctrlmsg"></div>
+        </div>
+
         <script>
         const F={server:'f-server',channel:'f-channel',identity:'f-identity',model:'f-model',port:'f-port'};
+        document.getElementById('sub-url').textContent=location.origin;
+        function setMsg(id,text,ok){const e=document.getElementById(id);e.textContent=text;e.className='msg '+(ok?'ok':'err');if(!text)e.className='msg';}
         function loadSettings(){
           fetch('/api/settings').then(r=>r.json()).then(c=>{
             document.getElementById(F.server).value=c.Server||'';
@@ -1098,64 +1147,65 @@ public static class Program
             document.getElementById(F.model).value=c.Model||'';
             document.getElementById(F.port).value=c.MonitorPort??8198;
             fetch('/api/channels').then(r=>r.json()).then(chs=>{
-              const sel=document.getElementById(F.channel);
-              sel.innerHTML='';
-              chs.forEach(ch=>{
-                const o=document.createElement('option');
-                o.value=ch.id; o.textContent=ch.name+(ch.description?' — '+ch.description:'');
-                sel.appendChild(o);
-              });
+              const sel=document.getElementById(F.channel);sel.innerHTML='';
+              chs.forEach(ch=>{const o=document.createElement('option');o.value=ch.id;o.textContent='#'+ch.name+(ch.description?' — '+ch.description:'');sel.appendChild(o);});
               sel.value=c.Channel||'';
             }).catch(()=>{document.getElementById(F.channel).innerHTML='<option>error</option>'});
           }).catch(()=>{});
         }
         async function saveSettings(){
-          const c={server:document.getElementById(F.server).value,
-            channel:document.getElementById(F.channel).value,
-            identity:document.getElementById(F.identity).value,
-            model:document.getElementById(F.model).value,
+          const c={server:document.getElementById(F.server).value,channel:document.getElementById(F.channel).value,
+            identity:document.getElementById(F.identity).value,model:document.getElementById(F.model).value,
             monitorPort:parseInt(document.getElementById(F.port).value)||0};
-          const r=await fetch('/api/settings',{method:'POST',body:JSON.stringify(c)});
-          const j=await r.json();
-          document.getElementById('msg').textContent=j.ok?j.message:'save failed';
+          const r=await fetch('/api/settings',{method:'POST',body:JSON.stringify(c)});const j=await r.json();
+          setMsg('msg',j.ok?j.message:'save failed',j.ok);
         }
         async function sendMsg(){
-          const text=document.getElementById('f-send').value;
-          if(!text.trim())return;
-          const r=await fetch('/api/send',{method:'POST',body:JSON.stringify({text})});
-          const j=await r.json();
-          document.getElementById('sendmsg').textContent=j.ok?`sent (msg #${j.id})`:'send failed';
+          const text=document.getElementById('f-send').value;if(!text.trim())return;
+          const r=await fetch('/api/send',{method:'POST',body:JSON.stringify({text})});const j=await r.json();
+          setMsg('sendmsg',j.ok?`sent (msg #${j.id})`:'send failed',j.ok);
           if(j.ok)document.getElementById('f-send').value='';
         }
         async function doWake(){
           const text=document.getElementById('f-wake').value||'manual wake';
-          const r=await fetch('/api/wake',{method:'POST',body:JSON.stringify({text})});
-          const j=await r.json();
-          document.getElementById('ctrlmsg').textContent=j.ok?j.message:'wake failed';
+          const r=await fetch('/api/wake',{method:'POST',body:JSON.stringify({text})});const j=await r.json();
+          setMsg('ctrlmsg',j.ok?j.message:'wake failed',j.ok);
         }
         async function doReconnect(){
-          const r=await fetch('/api/reconnect',{method:'POST'});
-          const j=await r.json();
-          document.getElementById('ctrlmsg').textContent=j.ok?j.message:'reconnect failed';
+          const r=await fetch('/api/reconnect',{method:'POST'});const j=await r.json();
+          setMsg('ctrlmsg',j.ok?j.message:'reconnect failed',j.ok);
+        }
+        function fmtLog(lines){
+          return lines.map(l=>{
+            let cls='ln';
+            if(/fail|error|warning|hung/i.test(l))cls+=' err';
+            else if(/retry|warn|dropping/i.test(l))cls+=' warn';
+            return `<div class="${cls}">${l.replace(/</g,'&lt;')}</div>`;
+          }).join('');
         }
         async function poll(){
           try{
             const [st,lg]=await Promise.all([fetch('/api/status').then(r=>r.json()),fetch('/api/log').then(r=>r.json())]);
-            const cls=st.state||'idle';
-            const lw=st.lastWake?`#${st.lastWake.id} exit=${st.lastWake.exit} ${st.lastWake.durationMs}ms${st.lastWake.hung?' HUNG':''}${st.lastWake.note?' '+st.lastWake.note:''}`:'none';
-            const conn=st.connected?'<span class="st idle">conn</span>':'<span class="st hung">disconn</span>';
+            const state=st.state||'idle';
+            const stateCls=state==='generating'?'b-gen':'b-idle';
+            const stateLabel=state==='generating'?'generating':'idle';
+            const connCls=st.connected?'b-conn':'b-disconn';
+            const connLabel=st.connected?'connected':'disconnected';
+            const lw=st.lastWake?`#${st.lastWake.id} exit=${st.lastWake.exit} ${st.lastWake.durationMs}ms${st.lastWake.hung?' HUNG':''}${st.lastWake.note?' · '+st.lastWake.note:''}`:'none';
             document.getElementById('s').innerHTML=
-              `<span class="st ${cls}">${cls}</span> ${conn} `+
-              `ch=${st.channel} id=${st.identity} up=${st.uptimeSec.toFixed(0)}s pid=${st.pid} `+
-              `last: ${lw}`;
+              `<span class="badge ${stateCls}"><span class="dot"></span>${stateLabel}</span>`+
+              `<span class="badge ${connCls}"><span class="dot"></span>${connLabel}</span>`;
+            document.getElementById('meta').innerHTML=
+              `channel <b>#${st.channel}</b> · identity <b>${st.identity}</b> · model <b>${st.model}</b><br>`+
+              `server <b>${st.server}</b> · uptime <b>${Math.floor(st.uptimeSec/60)}m ${Math.floor(st.uptimeSec%60)}s</b> · pid <b>${st.pid}</b><br>`+
+              `last wake: <b>${lw}</b>`;
             const l=document.getElementById('l');
-            l.textContent=lg.lines.join('\n');
+            l.innerHTML=fmtLog(lg.lines);
             l.scrollTop=l.scrollHeight;
-          }catch(e){document.getElementById('s').textContent='poll error: '+e}
+          }catch(e){document.getElementById('s').innerHTML='<span class="badge b-disconn"><span class="dot"></span>poll error</span>'}
           setTimeout(poll,1500);
         }
-        loadSettings();
-        poll();
+        loadSettings();poll();
         </script>
         </body></html>
         """;
