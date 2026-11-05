@@ -166,7 +166,7 @@
                        AllowsTransparency="True" PopupAnimation="Fade" Closed="CSharpPopup_Closed">
                     <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
                             BorderThickness="1" CornerRadius="4" Padding="3" Margin="8">
-                        <views:CSharpMenu />
+                        <views:CSharpMenu DataContext="{Binding SessionList}" />
                     </Border>
                 </Popup>
                 <Button Content="&#215;" Command="{Binding SessionList.ClearCSharpProjectCommand}" Padding="8,0" Margin="0,0,12,0"

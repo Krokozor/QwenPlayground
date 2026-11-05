@@ -5,14 +5,14 @@
     <!-- Меню C#-трека чата (фаза 2, 2026-11-05): история проектов (csharp.json, recent)
          + активный трек (отметка) + «Добавить…» (пикер) + «Сбросить» (к дефолту).
          Одна активная запись (radio-семантика): модель — один трек на чат (один
-         Roslyn-воркспейс). DataContext — MainViewModel (наследуется из Popup),
-         состояние и команды — SessionList. -->
+         Roslyn-воркспейс). DataContext задаётся явно в ChatView ({Binding SessionList}) —
+         паттерн ShelfMenu: прямые биндинги команд, без цепочек через MainViewModel. -->
     <StackPanel>
-        <ItemsControl ItemsSource="{Binding SessionList.CSharpMenuItems}">
+        <ItemsControl ItemsSource="{Binding CSharpMenuItems}">
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
                     <MenuItem IsCheckable="True" IsChecked="{Binding IsCurrent, Mode=OneWay}"
-                              Command="{Binding DataContext.SessionList.TrackCSharpMenuItemCommand,
+                              Command="{Binding DataContext.TrackCSharpMenuItemCommand,
                                        RelativeSource={RelativeSource AncestorType=UserControl}}"
                               CommandParameter="{Binding}"
                               ToolTip="{Binding Path}">
@@ -24,10 +24,10 @@
             </ItemsControl.ItemTemplate>
         </ItemsControl>
         <Separator />
-        <MenuItem Command="{Binding SessionList.AddCSharpProjectCommand}">
+        <MenuItem Command="{Binding BrowseCSharpProjectCommand}">
             <MenuItem.Header><TextBlock Text="+ Добавить…" /></MenuItem.Header>
         </MenuItem>
-        <MenuItem Command="{Binding SessionList.ClearCSharpProjectCommand}">
+        <MenuItem Command="{Binding ClearCSharpProjectCommand}">
             <MenuItem.Header><TextBlock Text="&#215; Сбросить (к дефолту)" /></MenuItem.Header>
         </MenuItem>
     </StackPanel>

@@ -413,6 +413,7 @@ public sealed partial class SessionListViewModel : ObservableObject {
         if (track is null)
         {
             _status("трекаемого C#-проекта нет (действует преднастройка)");
+            CloseCSharpMenu?.Invoke();
             return;
         }
         QwenPlayground.Core.Roslyn.CSharpSessionTrack.Clear(sessionDir);
