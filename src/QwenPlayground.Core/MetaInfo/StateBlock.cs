@@ -81,6 +81,13 @@ public sealed class StateBlock
     /// <summary>Статус сборки (success / pending / ...).</summary>
     public string? BuildStatus { get; set; }
 
+    /// <summary>
+    /// C#-трек сессии (фаза 2): на каком проекте работают csharp_*-тулы. Выводится
+    /// не каждый рендер, а когда сработал CSharpStateLine (полка активна, 10 рендеров
+    /// или изменение) — см. <see cref="CSharpStateLine"/>.
+    /// </summary>
+    public string? CSharp { get; set; }
+
     /// <summary>Всплывшие воспоминания (ассоциативный реколл).</summary>
     public List<MemoryRef> Memories { get; set; } = new();
 
@@ -177,6 +184,7 @@ public sealed class StateBlock
         AppendField("context",
             ContextUsed is null || ContextMax is null ? null : $"{ContextUsed}/{ContextMax}");
         AppendField("build", BuildId is null && BuildStatus is null ? null : $"{BuildId}:{BuildStatus}");
+        AppendField("csharp", CSharp);
         foreach (var memory in Memories)
         {
             // Без Id/Relevance строка не разбирается ParseMemory — не рендерим её вовсе,
@@ -348,6 +356,10 @@ public sealed class StateBlock
                     {
                         state.BuildId = value;
                     }
+                    any = true;
+                    break;
+                case "csharp":
+                    state.CSharp = value;
                     any = true;
                     break;
                 case "mem":

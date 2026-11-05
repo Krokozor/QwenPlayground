@@ -194,6 +194,18 @@ public partial class ChatView : UserControl
         }
     }
 
+    // C#-проект сессии (фаза 2): Enter в поле — применить (валидация в VM). Текст
+    // коммитим явно: биндинг LostFocus на Enter не срабатывает.
+    private void CSharpTargetBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && sender is TextBox box && DataContext is ChatViewModel chat && chat.SessionList is { } list)
+        {
+            list.CSharpTarget = box.Text;
+            list.ApplyCSharpTargetCommand.Execute(null);
+            e.Handled = true;
+        }
+    }
+
     /// <summary>Ctrl+V: если в буфере картинка — вкладываем её (текстовую вставку не трогаем).</summary>
     private void OnInputPreviewKeyDown(object sender, KeyEventArgs e)
     {

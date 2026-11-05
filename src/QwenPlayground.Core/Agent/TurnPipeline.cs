@@ -39,6 +39,8 @@ public sealed class TurnPipeline
     private readonly Action _shutdownApp;
     // Напоминатель TODO: OnRendered — только после реального рендера (как MemorySurfacer).
     private readonly TodoReminder? _todo;
+    // csharp-строка state-блока: тот же паттерн Peek/OnRendered, что и TODO.
+    private readonly CSharpStateLine? _csharpState;
     // Скоуп агента рантайма (фаза 2, план 2026-09-28): ход идёт в скоупе СВОЕГО рантайма
     // (main — AgentRuntime.Main, pinned — собственный), интерактив — через ToolContext.Scope.
     private readonly AgentRuntime _scope;
@@ -67,7 +69,8 @@ public sealed class TurnPipeline
         Func<AgentLoopRequest, IAsyncEnumerable<AgentEvent>>? runLoop = null,
         TodoReminder? todo = null,
         AgentRuntime? scope = null,
-        Func<ChatMessage?>? queuedMessage = null)
+        Func<ChatMessage?>? queuedMessage = null,
+        CSharpStateLine? csharpState = null)
     {
         _log = log;
         _chatState = chatState;
@@ -82,6 +85,7 @@ public sealed class TurnPipeline
         _onGeneratingChanged = onGeneratingChanged;
         _shutdownApp = shutdownApp;
         _todo = todo;
+        _csharpState = csharpState;
         // null (тесты/старые точки сборки) — main-скоуп: поведение прежнее.
         _scope = scope ?? AgentRuntime.Main;
         _queuedMessage = queuedMessage;
@@ -243,6 +247,7 @@ public sealed class TurnPipeline
                     }
                     _memorySurfacer.OnRendered();
                     _todo?.OnRendered();
+                    _csharpState?.OnRendered();
                     return state;
                 } : null,
                 SystemPromptProvider = _ => _promptAssembler.ResolveSystemPrompt(),

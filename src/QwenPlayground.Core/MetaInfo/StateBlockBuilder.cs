@@ -40,6 +40,7 @@ public sealed class StateBlockBuilder
     private readonly IReadOnlyList<IStateAnnouncer> _announcers;
     private readonly Func<IReadOnlyList<PendingPair>> _pendingPairs;
     private readonly Func<TodoSnapshot?>? _todo;
+    private readonly Func<string?>? _csharp;
 
     public StateBlockBuilder(
         Action assignPendingIds,
@@ -50,7 +51,8 @@ public sealed class StateBlockBuilder
         Func<IReadOnlyList<SurfacedMemory>> surfaced,
         IReadOnlyList<IStateAnnouncer> announcers,
         Func<IReadOnlyList<PendingPair>>? pendingPairs = null,
-        Func<TodoSnapshot?>? todo = null)
+        Func<TodoSnapshot?>? todo = null,
+        Func<string?>? csharp = null)
     {
         _assignPendingIds = assignPendingIds;
         _nextMessageId = nextMessageId;
@@ -61,6 +63,7 @@ public sealed class StateBlockBuilder
         _announcers = announcers;
         _pendingPairs = pendingPairs ?? (() => []);
         _todo = todo;
+        _csharp = csharp;
     }
 
     /// <summary>
@@ -140,6 +143,10 @@ public sealed class StateBlockBuilder
             state.TodoLines.AddRange(todo.Lines);
             state.TodoSource = todo.Source;
         }
+
+        // C#-трек: строка из CSharpStateLine (полка активна + 10 рендеров/изменение).
+        // Peek чистый — как у TODO; OnRendered — в TurnPipeline.
+        state.CSharp = _csharp?.Invoke();
 
         return state;
     }

@@ -47,6 +47,13 @@ public sealed class ChatRuntime {
     public TodoReminder Todo { get; internal set; } = null!;
 
     /// <summary>
+    /// csharp-строка state-блока (фаза 2): активная полка + каждые 10 рендеров / при
+    /// изменении трека. Тот же паттерн Peek/OnRendered, что и <see cref="Todo"/>.
+    /// null — контекст без проводки (тесты).
+    /// </summary>
+    public CSharpStateLine? CSharpState { get; internal set; }
+
+    /// <summary>
     /// Сердцебиение ЭТОГО чата (решение владельца, 2026-10-16: heartbeat доступен для всех
     /// чатов в процессе; настраиваемое расписание и внешние будильщики разделены):
     /// Tick — качает таймер окна, Wake/WakeNow — внешние события (pigeon-mention, кнопка).

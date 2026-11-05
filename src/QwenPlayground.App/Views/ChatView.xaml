@@ -150,9 +150,13 @@
                      для рабочей папки — home-преднастройка или пометка (тот же store, что и
                      csharp_track). «…» — пикер проекта, «✕» — оттрекинг. -->
                 <TextBlock Text="C#:" VerticalAlignment="Center" Margin="0,0,4,0" />
-                <TextBlock Text="{Binding SessionList.CSharpTarget}" VerticalAlignment="Center" Margin="0,0,4,0"
-                           MaxWidth="170" TextTrimming="CharacterEllipsis"
-                           ToolTip="{Binding SessionList.CSharpTarget}" />
+                <TextBox x:Name="CSharpTargetBox" Width="170" Margin="0,0,4,0" VerticalContentAlignment="Center"
+                         Text="{Binding SessionList.CSharpTarget, UpdateSourceTrigger=LostFocus}"
+                         KeyDown="CSharpTargetBox_KeyDown"
+                         ToolTip="C#-проект этого чата (slnx/sln/csproj): на что смотрят csharp_*-тулы. Трек хранится в сессии (csharp.json), независим от рабочей папки. Enter — применить (файл должен существовать)." />
+                <TextBlock Text="{Binding SessionList.CSharpTargetError}" Foreground="#FF5555" FontSize="11"
+                           VerticalAlignment="Center" Margin="0,0,4,0"
+                           Visibility="{Binding SessionList.HasCSharpTargetError, Converter={StaticResource BoolToVis}}" />
                 <Button Content="…" Command="{Binding SessionList.BrowseCSharpProjectCommand}" Padding="8,0" Margin="0,0,4,0"
                         ToolTip="Выбрать C#-проект (slnx/sln/csproj) для отслеживания рабочей папки" />
                 <Button Content="&#215;" Command="{Binding SessionList.ClearCSharpProjectCommand}" Padding="8,0" Margin="0,0,12,0"

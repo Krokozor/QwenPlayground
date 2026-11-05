@@ -24,7 +24,7 @@ public sealed class CSharpDefinitionTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
-        if (CSharpProjects.Resolve(context.ProjectRoot, out var error) is not { } csharp)
+        if (CSharpProjects.Resolve(context.ProjectRoot, out var error, context.SessionDir) is not { } csharp)
         {
             return error!;
         }

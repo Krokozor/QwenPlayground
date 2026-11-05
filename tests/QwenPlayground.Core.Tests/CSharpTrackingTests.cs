@@ -5,60 +5,82 @@ using QwenPlayground.Core.Tools;
 namespace QwenPlayground.Core.Tests;
 
 /// <summary>
-/// Трекинг C#-проектов (2026-11-04): хранилище пометок (C1), резолвер
-/// «рабочая папка → проект» (C3), кандидаты csharp_track (C4).
+/// Трекинг C#-проектов (фаза 2, 2026-11-05): per-chat трек (CSharpSessionTrack,
+/// csharp.json в папке сессии), резолвер «трек → home-преднастройка → честная ошибка»,
+/// кандидаты csharp_track, статичная строка полки.
 /// </summary>
 public sealed class CSharpTrackingTests
 {
-    // ─────────────────────────── CSharpProjectStore ───────────────────────────
+    // ─────────────────────────── CSharpSessionTrack (per-chat) ───────────────────────────
 
     [Fact]
-    public void Store_SetGetRemove_RoundTrip()
+    public void SessionTrack_SaveLoadClear_RoundTrip()
     {
-        var store = NewStore();
-        store.Set("V:\\Projects\\Game", "V:\\Projects\\Game\\Game.sln");
+        var dir = TempDir("track-");
+        try
+        {
+            Assert.Null(CSharpSessionTrack.Load(dir)); // пустая папка — трека нет
 
-        Assert.Equal("V:\\Projects\\Game\\Game.sln", store.Get("V:\\Projects\\Game"));
-        // Регистр и хвостовой сепаратор — одна и та же папка.
-        Assert.Equal("V:\\Projects\\Game\\Game.sln", store.Get(@"v:\projects\game\"));
+            CSharpSessionTrack.Save(dir, "V:\\Projects\\Game\\Game.sln", new[] { "Game", "Game.Editor" });
+            var track = CSharpSessionTrack.Load(dir);
+            Assert.NotNull(track);
+            Assert.Equal("V:\\Projects\\Game\\Game.sln", track!.ProjectFile);
+            Assert.Equal(new[] { "Game", "Game.Editor" }, track.Projects);
 
-        Assert.True(store.Remove("V:\\Projects\\Game"));
-        Assert.Null(store.Get("V:\\Projects\\Game"));
-        Assert.False(store.Remove("V:\\Projects\\Game")); // второй раз — её уже нет
+            CSharpSessionTrack.Clear(dir);
+            Assert.Null(CSharpSessionTrack.Load(dir));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 
     [Fact]
-    public void Store_PersistsAcrossInstances()
+    public void SessionTrack_CorruptedFile_NoTrack()
     {
-        var file = TempFile("store.json");
-        var store = new CSharpProjectStore(file);
-        store.Set("D:\\Work", "D:\\Work\\Work.csproj");
-
-        var reloaded = new CSharpProjectStore(file);
-        Assert.Equal("D:\\Work\\Work.csproj", reloaded.Get("D:\\Work"));
+        var dir = TempDir("track-corrupt-");
+        try
+        {
+            File.WriteAllText(CSharpSessionTrack.FilePath(dir), "{ это не JSON");
+            Assert.Null(CSharpSessionTrack.Load(dir));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 
     [Fact]
-    public void Store_CorruptedFile_StartsEmpty()
+    public void SessionTrack_ParseProjects_SlnxSlnCsproj()
     {
-        var file = TempFile("store-corrupt.json");
-        File.WriteAllText(file, "{ это не JSON");
+        var dir = TempDir("parse-");
+        try
+        {
+            var slnx = Path.Combine(dir, "Game.slnx");
+            File.WriteAllText(slnx,
+                "<Solution>\n  <Folder Name=\"/src/\">\n" +
+                "    <Project Path=\"src/Game/Game.csproj\" Name=\"Game\" />\n" +
+                "    <Project Path=\"src/Game.Editor/Game.Editor.csproj\" Name=\"Game.Editor\" />\n" +
+                "  </Folder>\n</Solution>");
+            Assert.Equal(new[] { "Game", "Game.Editor" }, CSharpSessionTrack.ParseProjects(slnx));
 
-        var store = new CSharpProjectStore(file);
-        Assert.Empty(store.All());
-    }
+            var sln = Path.Combine(dir, "Game2.sln");
+            File.WriteAllText(sln,
+                "Microsoft Visual Studio Solution File, format version 12.00\n" +
+                "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"Core\", \"src\\Core\\Core.csproj\", " +
+                "\"{11111111-1111-1111-1111-111111111111}\"\n" +
+                "EndProject\n");
+            Assert.Equal(new[] { "Core" }, CSharpSessionTrack.ParseProjects(sln));
 
-    [Fact]
-    public void Store_All_OrderedAndComplete()
-    {
-        var store = NewStore();
-        store.Set("B:\\Second", "B:\\Second\\s.slnx");
-        store.Set("A:\\First", "A:\\First\\s.sln");
-
-        var all = store.All();
-        Assert.Equal(2, all.Count);
-        Assert.Equal("A:\\First", all[0].Root);
-        Assert.Equal("B:\\Second", all[1].Root);
+            var csproj = Path.Combine(dir, "Solo.csproj");
+            File.WriteAllText(csproj, "<Project />");
+            Assert.Equal(new[] { "Solo" }, CSharpSessionTrack.ParseProjects(csproj));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 
     // ─────────────────────────── CSharpProjects (резолвер) ───────────────────────────
@@ -87,8 +109,7 @@ public sealed class CSharpTrackingTests
     [Fact]
     public void Resolve_UntrackedRoot_HonestError()
     {
-        var root = Path.Combine(Path.GetTempPath(), "qpw-untracked-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
+        var root = TempDir("untracked-");
         try
         {
             var context = CSharpProjects.Resolve(root, out var error);
@@ -102,17 +123,16 @@ public sealed class CSharpTrackingTests
     }
 
     [Fact]
-    public void Resolve_TrackedRoot_ReturnsTrackedProject()
+    public void Resolve_TrackedSession_ReturnsTrackedProject()
     {
-        // Уникальный root + dummy-файл проекта: Shared-хранилище не трогаем чужими ключами.
-        var root = Path.Combine(Path.GetTempPath(), "qpw-tracked-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
+        var root = TempDir("tracked-root-");
+        var sessionDir = TempDir("tracked-session-");
         var projectFile = Path.Combine(root, "Game.csproj");
         File.WriteAllText(projectFile, "<Project />");
         try
         {
-            CSharpProjectStore.Shared.Set(root, projectFile);
-            var context = CSharpProjects.Resolve(root, out var error);
+            CSharpSessionTrack.Save(sessionDir, projectFile, Array.Empty<string>());
+            var context = CSharpProjects.Resolve(root, out var error, sessionDir);
             Assert.Null(error);
             Assert.NotNull(context);
             Assert.False(context!.IsHome);
@@ -120,27 +140,50 @@ public sealed class CSharpTrackingTests
         }
         finally
         {
-            CSharpProjectStore.Shared.Remove(root);
             Directory.Delete(root, recursive: true);
+            Directory.Delete(sessionDir, recursive: true);
         }
     }
 
     [Fact]
     public void Resolve_TrackedFileMissing_HonestError()
     {
-        var root = Path.Combine(Path.GetTempPath(), "qpw-missing-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
+        var root = TempDir("missing-root-");
+        var sessionDir = TempDir("missing-session-");
         try
         {
-            CSharpProjectStore.Shared.Set(root, Path.Combine(root, "gone.csproj"));
-            var context = CSharpProjects.Resolve(root, out var error);
+            CSharpSessionTrack.Save(sessionDir, Path.Combine(root, "gone.csproj"), Array.Empty<string>());
+            var context = CSharpProjects.Resolve(root, out var error, sessionDir);
             Assert.Null(context);
             Assert.Contains("no longer exists", error);
         }
         finally
         {
-            CSharpProjectStore.Shared.Remove(root);
             Directory.Delete(root, recursive: true);
+            Directory.Delete(sessionDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Resolve_SessionTrack_BeatsHomePreset()
+    {
+        // Решение владельца (2026-11-05): явный трек выигрывает у home-преднастройки —
+        // даже в чате с root'ом харнесса можно оттрекать внешний проект.
+        var sessionDir = TempDir("home-track-");
+        var projectFile = Path.Combine(sessionDir, "External.csproj");
+        File.WriteAllText(projectFile, "<Project />");
+        try
+        {
+            CSharpSessionTrack.Save(sessionDir, projectFile, Array.Empty<string>());
+            var context = CSharpProjects.Resolve(SelfBuildPaths.WorkspaceRoot, out var error, sessionDir);
+            Assert.Null(error);
+            Assert.NotNull(context);
+            Assert.False(context!.IsHome);
+            Assert.Equal(Path.GetFullPath(projectFile), context.ProjectFile);
+        }
+        finally
+        {
+            Directory.Delete(sessionDir, recursive: true);
         }
     }
 
@@ -151,8 +194,7 @@ public sealed class CSharpTrackingTests
     [Fact]
     public void Track_ResolveProjectFile_SingleCandidateInFolder()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "qpw-track-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        var dir = TempDir("track-");
         var sln = Path.Combine(dir, "Game.sln");
         File.WriteAllText(sln, "");
         File.WriteAllText(Path.Combine(dir, "README.md"), "not a candidate");
@@ -171,8 +213,7 @@ public sealed class CSharpTrackingTests
     [Fact]
     public void Track_ResolveProjectFile_MultipleCandidates_Listed()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "qpw-track-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        var dir = TempDir("track-");
         File.WriteAllText(Path.Combine(dir, "a.sln"), "");
         File.WriteAllText(Path.Combine(dir, "b.csproj"), "");
         try
@@ -191,8 +232,7 @@ public sealed class CSharpTrackingTests
     [Fact]
     public void Track_ResolveProjectFile_NoCandidates_Error()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "qpw-track-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        var dir = TempDir("track-");
         try
         {
             var (file, error) = CSharpTrackTool.ResolveProjectFile(TempContext(), dir);
@@ -208,8 +248,7 @@ public sealed class CSharpTrackingTests
     [Fact]
     public void Track_ResolveProjectFile_FileWithWrongExtension_Error()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "qpw-track-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        var dir = TempDir("track-");
         var md = Path.Combine(dir, "notes.md");
         File.WriteAllText(md, "");
         try
@@ -227,8 +266,7 @@ public sealed class CSharpTrackingTests
     [Fact]
     public void Track_ResolveProjectFile_RelativePath_ResolvesAgainstRoot()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "qpw-track-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        var dir = TempDir("track-");
         var csproj = Path.Combine(dir, "Game.csproj");
         File.WriteAllText(csproj, "");
         try
@@ -282,7 +320,10 @@ public sealed class CSharpTrackingTests
 
     // ─────────────────────────── helpers ───────────────────────────
 
-    private static CSharpProjectStore NewStore() => new(TempFile("store-" + Guid.NewGuid().ToString("N") + ".json"));
-
-    private static string TempFile(string name) => Path.Combine(Path.GetTempPath(), "qpw-" + name);
+    private static string TempDir(string prefix)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "qpw-" + prefix + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
 }

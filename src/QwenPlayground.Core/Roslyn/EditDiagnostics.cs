@@ -25,7 +25,7 @@ public static class EditDiagnostics
         }
         try
         {
-            if (CSharpProjects.Resolve(context.ProjectRoot, out _) is not { } csharp)
+            if (CSharpProjects.Resolve(context.ProjectRoot, out _, context.SessionDir) is not { } csharp)
             {
                 return toolResult; // нет трекаемого проекта — диагностика недоступна
             }

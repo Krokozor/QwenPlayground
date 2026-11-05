@@ -369,6 +369,13 @@ public sealed class Main
             watchdogGuard: w.WatchdogGuard);
         // Доска сообщений state-блока: pull-анонсеры (состояние на момент рендера) +
         // BoardAnnouncer — дрейн статичной мусорки (push из кода без интерфейса).
+        // csharp-строка state-блока (фаза 2, 2026-11-05): только при активной полке,
+        // каждые 10 рендеров или при изменении трека. Peek — в билдере (чистый),
+        // OnRendered — в Turns (после реального рендера).
+        rt.CSharpState = new CSharpStateLine(
+            w.SessionDirectory,
+            w.Root,
+            () => rt.PromptAssembler.EffectiveShelves().Any(s => s == QwenPlayground.Core.Chat.ToolGroup.CSharp));
         rt.StateBlocks = new StateBlockBuilder(
             rt.Log.AssignPendingIds,
             () => rt.Log.NextMessageId,
@@ -378,7 +385,8 @@ public sealed class Main
             () => rt.MemorySurfacer.GetSurfacedForStateBlock(),
             [rt.MemorySurfacer, new PigeonStateAnnouncer(w.SessionDirectory), new QwenPlayground.Core.Mail.MailStateAnnouncer(), new BoardAnnouncer()],
             () => PairsStore.Pending,
-            () => rt.Todo.Peek());
+            () => rt.Todo.Peek(),
+            () => rt.CSharpState?.Peek());
         rt.Pipeline = new PromptPipeline(
             () => rt.Log,
             () => rt.PromptAssembler.ResolveSystemPrompt(),
@@ -449,6 +457,7 @@ public sealed class Main
             hooks.ShutdownApp,
             todo: rt.Todo,
             scope: rt.Scope,
-            queuedMessage: hooks.QueuedMessage);
+            queuedMessage: hooks.QueuedMessage,
+            csharpState: rt.CSharpState);
     }
 }
