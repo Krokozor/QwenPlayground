@@ -101,6 +101,24 @@ public sealed class ContextMaintenance
             // Точный размер следующего промпта уже посчитан гвардой — передаём:
             // граница компакции строится на серверных счётчиках (см. MessageTokenWeights).
             await RunAsync(fromAgentLoop: true, nextPromptTokens: estimated, cancellationToken);
+            // Компакция изменила разговор — кэш /tokenize устарел (счёт ДО компактации).
+            // Без пересчёта state-блок этой же итерации покажет до-компакционное значение
+            // (баг 2026-11-05: 262144/262144 вместо ~144k на первом ходу после компактации).
+            // Пересчитываем точный размер следующего промпта: state-блок увидит свежий счёт.
+            try
+            {
+                await _countNextTokens(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                // Сервер недоступен — не критично: state-блок покажет последний счёт,
+                // гварда следующей итерации пересчитает.
+                DiagnosticsLog.Log($"compaction: post-compact recount unavailable: {exception.Message}");
+            }
         }
     }
 
