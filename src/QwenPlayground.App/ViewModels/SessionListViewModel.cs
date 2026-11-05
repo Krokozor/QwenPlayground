@@ -67,6 +67,19 @@ public sealed partial class SessionListViewModel : ObservableObject {
 
     partial void OnSessionRootErrorChanged(string? value) => OnPropertyChanged(nameof(HasSessionRootError));
 
+    // C#-проект сессии (трекинг C#-тулов, 2026-11-04): что смотрят Roslyn-тулы для текущей
+    // рабочей папки — home-преднастройка или пометка (CSharpProjectStore, тот же файл, что
+    // и у csharp_track/csharp_untrack). «…» — пикер проекта (пометка), «✕» — оттрекинг.
+    // Пометка пишется БЕЗ загрузки воркспейса (тяжёлая — воркспейс поднимется на первом
+    // запросе C#-тула).
+    [ObservableProperty]
+    private string _cSharpTarget = string.Empty;
+
+    private void SyncCSharpTarget()
+    {
+        CSharpTarget = QwenPlayground.Core.Roslyn.CSharpProjects.DescribeTarget(_sessions.Root);
+    }
+
     /// <summary>
     /// Кнопка «×» (удаление сессии) видна только для не-main сессий: main удалить нельзя,
     /// поэтому нажимать на кнопку у main незачем.
@@ -226,6 +239,7 @@ public sealed partial class SessionListViewModel : ObservableObject {
     {
         SessionRoot = _sessions.Root ?? string.Empty;
         SessionRootError = null;
+        SyncCSharpTarget();
     }
 
     /// <summary>
@@ -262,6 +276,56 @@ public sealed partial class SessionListViewModel : ObservableObject {
     {
         _sessions.ClearRoot();
         SyncSessionRootField();
+    }
+
+    /// <summary>
+    /// «…»: пикер C#-проекта (slnx/sln/csproj) — пометка «рабочая папка → проект» в
+    /// CSharpProjectStore (тот же источник, что и у csharp_track). Воркспейс НЕ грузим:
+    /// тяжёлая операция, поднимется на первом запросе C#-тула (или на csharp_track).
+    /// </summary>
+    [RelayCommand]
+    private void BrowseCSharpProject()
+    {
+        var root = _sessions.Root;
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            _status("сначала задайте рабочую папку (пометка привязана к папке)");
+            return;
+        }
+        if (QwenPlayground.Core.Roslyn.CSharpProjects.IsHomeRoot(root))
+        {
+            _status("папка харнесса — действует преднастройка (QwenPlayground solution), трек не нужен");
+            return;
+        }
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "C#-проект для рабочей папки",
+            Filter = "C#-проект|*.slnx;*.sln;*.csproj|Все файлы|*.*"
+        };
+        if (dialog.ShowDialog() != true)
+            return;
+        QwenPlayground.Core.Roslyn.CSharpProjectStore.Shared.Set(root, dialog.FileName);
+        SyncCSharpTarget();
+        _status("C#-проект: " + dialog.FileName);
+    }
+
+    /// <summary>«✕»: оттрекинг C#-проекта (та же семантика, что и csharp_untrack).</summary>
+    [RelayCommand]
+    private void ClearCSharpProject()
+    {
+        var root = _sessions.Root;
+        if (string.IsNullOrWhiteSpace(root))
+            return;
+        var file = QwenPlayground.Core.Roslyn.CSharpProjectStore.Shared.Get(root);
+        if (file is null)
+        {
+            _status("трекаемого C#-проекта нет (действует преднастройка)");
+            return;
+        }
+        QwenPlayground.Core.Roslyn.CSharpProjectStore.Shared.Remove(root);
+        QwenPlayground.Core.Roslyn.RoslynService.ForgetProjectFile(file);
+        SyncCSharpTarget();
+        _status("C#-трек снят: " + file);
     }
 
     /// <summary>

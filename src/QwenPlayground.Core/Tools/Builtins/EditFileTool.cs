@@ -30,7 +30,7 @@ public sealed class EditFileTool : AgentTool
             // Точное совпадение — обычная замена.
             AtomicFile.WriteAllText(fullPath, content.Replace(OldString, NewString, StringComparison.Ordinal));
             var result = $"edited {context.ToRelative(fullPath)}";
-            return await EditDiagnostics.AppendRoslynErrorsAsync(fullPath, result, cancellationToken);
+            return await EditDiagnostics.AppendRoslynErrorsAsync(context, fullPath, result, cancellationToken);
         }
         if (matches > 1)
         {
@@ -63,7 +63,7 @@ public sealed class EditFileTool : AgentTool
         // Атомарная запись (как в write_file): сбой не оставляет полудокумент.
         AtomicFile.WriteAllText(fullPath, replaced);
         var editResult = $"edited {context.ToRelative(fullPath)}";
-        return await EditDiagnostics.AppendRoslynErrorsAsync(fullPath, editResult, cancellationToken);
+        return await EditDiagnostics.AppendRoslynErrorsAsync(context, fullPath, editResult, cancellationToken);
     }
 
     /// <summary>Доминирующее окончание строки файла: CRLF, если CRLF-строк не меньше одиночных LF.</summary>

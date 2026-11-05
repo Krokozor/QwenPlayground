@@ -435,7 +435,42 @@ public sealed class RebuildSelfTool : AgentTool
     {
         var solution = Service.GetSolutionAsync(cancellationToken).GetAwaiter().GetResult();
         var errors = new List<string>();
-        foreach (var project in solution.Projects)
+
+        // Граф билда (фаза 2, 2026-11-04): pre-check гоняет ТОЛЬКО проекты, которые
+        // компилирует `dotnet build <AppProject>` — App + транзитивные ProjectReferences
+        // (Core, Pigeon.Client). Остальные проекты солюшена (Pigeon.Server/Bridge,
+        // Launcher, Watchdog, Harness, тесты) в билд приложения НЕ входят: их ошибки
+        // не должны блокировать rebuild (противоречие, найденное аудитом 2026-11-04),
+        // а их чистота — не гарантия. Граф строим по ссылкам, а не хардкодом имён:
+        // владелец добавит ProjectReference — pre-check сам подхватит новый проект.
+        var appProject = solution.Projects.FirstOrDefault(p =>
+            string.Equals(p.FilePath, SelfBuildPaths.AppProject, StringComparison.OrdinalIgnoreCase));
+        IEnumerable<Microsoft.CodeAnalysis.Project> targets;
+        if (appProject is null)
+        {
+            targets = solution.Projects; // консервативно: App в солюшене не найден — всё
+        }
+        else
+        {
+            var graph = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { appProject.FilePath };
+            var queue = new Queue<Microsoft.CodeAnalysis.Project>();
+            queue.Enqueue(appProject);
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                foreach (var reference in current.ProjectReferences)
+                {
+                    var referenced = solution.GetProject(reference.ProjectId);
+                    if (referenced is not null && graph.Add(referenced.FilePath))
+                    {
+                        queue.Enqueue(referenced);
+                    }
+                }
+            }
+            targets = solution.Projects.Where(p => graph.Contains(p.FilePath));
+        }
+
+        foreach (var project in targets)
         {
             var compilation = project.GetCompilationAsync(cancellationToken).GetAwaiter().GetResult();
             if (compilation is null)

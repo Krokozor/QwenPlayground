@@ -299,6 +299,10 @@ public sealed class Main
         _pigeonRegisteredDir = dir;
         // Внешний wake: сразу, без ожидания тика, независимо от HeartbeatEnabled.
         PigeonSession.Register(dir, () => rt.ChatState.IsBusy, reason => rt.Heartbeat!.Wake(reason));
+        // Почта: main-окно — единственный wake-приёмник (почта процессный ресурс, не per-session).
+        QwenPlayground.Core.Mail.MailMonitor.RegisterMain(
+            () => rt.ChatState.IsBusy,
+            reason => rt.Heartbeat!.Wake(reason));
     }
 
     /// <summary>
@@ -372,7 +376,7 @@ public sealed class Main
             ServerProps,
             () => rt.Log,
             () => rt.MemorySurfacer.GetSurfacedForStateBlock(),
-            [rt.MemorySurfacer, new PigeonStateAnnouncer(w.SessionDirectory), new BoardAnnouncer()],
+            [rt.MemorySurfacer, new PigeonStateAnnouncer(w.SessionDirectory), new QwenPlayground.Core.Mail.MailStateAnnouncer(), new BoardAnnouncer()],
             () => PairsStore.Pending,
             () => rt.Todo.Peek());
         rt.Pipeline = new PromptPipeline(

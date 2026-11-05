@@ -124,11 +124,12 @@ public sealed class TurnPipeline
             {
                 try
                 {
-                    await _maintenance.EnsureBudgetAsync(CancellationToken.None);
+                    await _maintenance.EnsureBudgetAsync(_cancellation.Token);
                 }
                 catch (OperationCanceledException)
                 {
-                    throw;
+                    _session.SaveCurrent();
+                    return new TurnOutcome { Canceled = true };
                 }
                 catch (Exception exception)
                 {

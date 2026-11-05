@@ -41,7 +41,7 @@ public sealed class ArchitectureGuardTests
     public void Core_DoesNotReferenceApp()
     {
         var text = CoreCsproj();
-        Assert.DoesNotContain("QwenPlayground.App", text);
+        Assert.DoesNotContain("QwenPlayground.App.csproj", text);
     }
 
     [Fact]

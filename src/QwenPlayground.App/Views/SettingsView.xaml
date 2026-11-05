@@ -303,6 +303,9 @@
 
             <views:MemorySettingsView />
 
+            <!-- ── Почта ────────────────────────────────────────────────────────── -->
+            <views:MailSettingsView />
+
             <!-- ── MCP-серверы ──────────────────────────────────────────────────── -->
             <Expander Header="MCP-серверы (внешние инструменты)" IsExpanded="True" Margin="0,4,0,0">
                 <views:McpSettingsView Margin="0,4,0,2" />

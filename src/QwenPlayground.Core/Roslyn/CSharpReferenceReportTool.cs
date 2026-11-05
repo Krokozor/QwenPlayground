@@ -24,10 +24,12 @@ namespace QwenPlayground.Core.Roslyn;
 /// индирекция (f = x => M(x)) и строковые lookup'ы не видны — честный кавек в футере.
 /// </summary>
 [Tool("csharp_reference_report",
-    "Batch reference-count report (code-health diagnostics), like VS CodeLens but in one call. " +
+    "Batch reference-count report (code-health diagnostics) for the tracked C# project (the " +
+    "QwenPlayground solution when the working folder is the harness root; otherwise the project set " +
+    "via csharp_track), like VS CodeLens but in one call. Paths are relative to the working folder. " +
     "Modes: 'members' (default) — per-member reference counts of a type (find dead API with 0 refs, " +
     "single-use abstractions with 1 ref); 'types' — per-type reference counts for a namespace or the " +
-    "whole solution (find heavy classes referenced by one element). " +
+    "whole project (find heavy classes referenced by one element). " +
     "Every row carries the 'declaration' column — where the element is declared (line range, e.g. " +
     "file:12-45 for a multi-line one) and the first line of the comment above it, so a dead member " +
     "comes with its location and meaning instead of a bare name. " +
@@ -44,8 +46,6 @@ namespace QwenPlayground.Core.Roslyn;
     "summary + path (attach the file to a message to read it).", ToolGroup.CSharp)]
 public sealed class CSharpReferenceReportTool : AgentTool
 {
-    private static readonly RoslynService Service = RoslynService.Shared;
-
     [ToolParameter("Type name to report on (required in 'members' mode)", Required = false)]
     public string? Type { get; set; }
 
@@ -55,7 +55,7 @@ public sealed class CSharpReferenceReportTool : AgentTool
     [ToolParameter("Namespace for 'types' mode (default: all types of the solution)", Required = false)]
     public string? Namespace { get; set; }
 
-    [ToolParameter("File filter for 'types' mode: only types declared in this file (relative to workspace root)", Required = false)]
+    [ToolParameter("File filter for 'types' mode: only types declared in this file (relative to the working folder)", Required = false)]
     public string? File { get; set; }
 
     [ToolParameter("Access filter: 'all' (default, includes private) or 'public'", Required = false)]
@@ -81,26 +81,33 @@ public sealed class CSharpReferenceReportTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
-        var solution = await Service.GetSolutionAsync(cancellationToken);
-        // XAML-индекс строится ОДИН раз на прогон: имя → (сколько строк XAML под src/
-        // его упоминают, первое совпадение file:line).
-        var xamlIndex = await BuildXamlIndexAsync(cancellationToken);
+        if (CSharpProjects.Resolve(context.ProjectRoot, out var error) is not { } csharp)
+        {
+            return error!;
+        }
+        var solution = await csharp.Service.GetSolutionAsync(cancellationToken);
+        var root = context.ProjectRoot;
+        // XAML-индекс — фича харнесса (WPF, *.xaml под src/): строится ОДИН раз на прогон,
+        // для внешних проектов — пуст (XAML-референсы там не считаются).
+        var xamlIndex = csharp.IsHome
+            ? await BuildXamlIndexAsync(cancellationToken)
+            : new Dictionary<string, XamlUse>(StringComparer.Ordinal);
         if (Mode.Trim().Equals("types", StringComparison.OrdinalIgnoreCase))
         {
-            return await TypesModeAsync(solution, xamlIndex, cancellationToken);
+            return await TypesModeAsync(solution, xamlIndex, root, cancellationToken);
         }
         if (string.IsNullOrWhiteSpace(Type))
         {
             return "Error: 'type' is required in members mode.";
         }
-        return await MembersModeAsync(solution, Type.Trim(), xamlIndex, cancellationToken);
+        return await MembersModeAsync(solution, Type.Trim(), xamlIndex, root, cancellationToken);
     }
 
     // ─────────────────────────── members ───────────────────────────
 
-    private async Task<string> MembersModeAsync(Solution solution, string typeName, IReadOnlyDictionary<string, XamlUse> xaml, CancellationToken ct)
+    private async Task<string> MembersModeAsync(Solution solution, string typeName, IReadOnlyDictionary<string, XamlUse> xaml, string root, CancellationToken ct)
     {
-        var (type, error) = await FindTypeAsync(solution, typeName, ct);
+        var (type, error) = await FindTypeAsync(solution, typeName, root, ct);
         if (error is not null)
         {
             return error;
@@ -120,7 +127,7 @@ public sealed class CSharpReferenceReportTool : AgentTool
         {
             var locations = await FindSourceLocationsAsync(member, solution, ct);
             var xamlUse = xaml.TryGetValue(member.Name, out var x) ? x : default;
-            var element = await LocationFormatter.ElementAsync(member, ct);
+            var element = await LocationFormatter.ElementAsync(member, root, ct);
             var row = new ReportRow
             {
                 Name = member.Name,
@@ -130,7 +137,7 @@ public sealed class CSharpReferenceReportTool : AgentTool
                 Decl = element.File is null ? "—" : element.Reference,
                 Doc = element.Doc,
                 FirstUse = locations.Count > 0
-                    ? FormatLocation(locations.FirstOrDefault())
+                    ? FormatLocation(locations.FirstOrDefault(), root)
                     : (xamlUse.Count > 0 ? xamlUse.First : "—"),
                 Note = BuildNote(member),
             };
@@ -145,12 +152,13 @@ public sealed class CSharpReferenceReportTool : AgentTool
             $"{typeName} — {rows.Count} members (access={Access}, kinds={Kinds}, accessors/backing fields folded)",
             rows,
             typeName,
-            SaveDetail);
+            SaveDetail,
+            root);
     }
 
     // ─────────────────────────── types ───────────────────────────
 
-    private async Task<string> TypesModeAsync(Solution solution, IReadOnlyDictionary<string, XamlUse> xaml, CancellationToken ct)
+    private async Task<string> TypesModeAsync(Solution solution, IReadOnlyDictionary<string, XamlUse> xaml, string root, CancellationToken ct)
     {
         var rows = new List<ReportRow>();
         var typeByKey = new Dictionary<string, ITypeSymbol>();
@@ -159,13 +167,13 @@ public sealed class CSharpReferenceReportTool : AgentTool
             var allTypes = await CollectTypesAsync(project, ct);
             var types = allTypes
                 .Where(t => Namespace is null || t.ContainingNamespace.ToString() == Namespace)
-                .Where(t => File is null || SameFile(t, File))
+                .Where(t => File is null || SameFile(t, File, root))
                 .ToList();
             foreach (var type in types)
             {
                 var locations = await FindSourceLocationsAsync(type, solution, ct);
                 var xamlUse = xaml.TryGetValue(type.Name, out var x) ? x : default;
-                var element = await LocationFormatter.ElementAsync(type, ct);
+                var element = await LocationFormatter.ElementAsync(type, root, ct);
                 var row = new ReportRow
                 {
                     Name = type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
@@ -174,7 +182,7 @@ public sealed class CSharpReferenceReportTool : AgentTool
                     Decl = element.File is null ? "—" : element.Reference,
                     Doc = element.Doc,
                     FirstUse = locations.Count > 0
-                        ? FormatLocation(locations.FirstOrDefault())
+                        ? FormatLocation(locations.FirstOrDefault(), root)
                         : (xamlUse.Count > 0 ? xamlUse.First : "—"),
                     Note = BuildNote(type),
                 };
@@ -210,7 +218,8 @@ public sealed class CSharpReferenceReportTool : AgentTool
             $"types — {rows.Count} types (namespace={Namespace ?? "<all>"}{(File is null ? "" : $", file={File}")})",
             rows,
             Namespace ?? "solution",
-            SaveDetail);
+            SaveDetail,
+            root);
     }
 
     /// <summary>Доля мёртвых членов у типа (0 C# + 0 XAML) — «rot ratio».</summary>
@@ -232,7 +241,7 @@ public sealed class CSharpReferenceReportTool : AgentTool
         return (dead, total);
     }
 
-    private static bool SameFile(ITypeSymbol type, string file)
+    private static bool SameFile(ITypeSymbol type, string file, string root)
     {
         var declaration = type.Locations.FirstOrDefault(l => l.IsInSource);
         if (declaration is null)
@@ -244,9 +253,10 @@ public sealed class CSharpReferenceReportTool : AgentTool
         {
             return false;
         }
+        // Без проверки границ: трекаемый проект может жить вне рабочей папки.
         var expected = Path.IsPathRooted(file)
             ? file
-            : Path.Combine(SelfBuildPaths.WorkspaceRoot, file);
+            : Path.Combine(root, file);
         // Сепараторы: file-параметр приходит со слешами, span.Path — с бэкслашами.
         return string.Equals(
             (path ?? "").Replace('\\', '/'),
@@ -384,7 +394,7 @@ public sealed class CSharpReferenceReportTool : AgentTool
         };
     }
 
-    private static async Task<(ITypeSymbol? Type, string? Error)> FindTypeAsync(Solution solution, string typeName, CancellationToken ct)
+    private static async Task<(ITypeSymbol? Type, string? Error)> FindTypeAsync(Solution solution, string typeName, string root, CancellationToken ct)
     {
         var candidates = new List<ITypeSymbol>();
         var seenDeclarations = new HashSet<string>();
@@ -421,7 +431,7 @@ public sealed class CSharpReferenceReportTool : AgentTool
         if (candidates.Count > 1)
         {
             var list = string.Join("\n", candidates.Select(t =>
-                $"  {t.ToDisplayString()} — {FormatLocation(t.Locations.FirstOrDefault(l => l.IsInSource))}"));
+                $"  {t.ToDisplayString()} — {FormatLocation(t.Locations.FirstOrDefault(l => l.IsInSource), root)}"));
             return (null, $"Ambiguous — {candidates.Count} types named '{typeName}':\n{list}");
         }
         return (candidates[0], null);
@@ -452,14 +462,14 @@ public sealed class CSharpReferenceReportTool : AgentTool
         return locations;
     }
 
-    private static string FormatLocation(Location? location)
+    private static string FormatLocation(Location? location, string root)
     {
         if (location is null || !location.IsInSource)
         {
             return "—";
         }
         var span = location.GetLineSpan();
-        var path = Path.GetRelativePath(SelfBuildPaths.WorkspaceRoot, span.Path ?? "?");
+        var path = LocationFormatter.Relative(span.Path ?? "?", root);
         return $"{path.Replace('\\', '/')}:{LocationFormatter.Lines(span)}";
     }
 
@@ -518,7 +528,7 @@ public sealed class CSharpReferenceReportTool : AgentTool
         "[Tool] members are marked 'via reflection', test-project types 'test framework', delegate " +
         "indirection (f = x => M(x)) and string-based lookups are not visible.";
 
-    private string FormatReport(string title, List<ReportRow> allRows, string reportName, bool saveDetail)
+    private string FormatReport(string title, List<ReportRow> allRows, string reportName, bool saveDetail, string root)
     {
         var filtered = allRows
             .Where(r => MaxRefs < 0 || r.Refs <= MaxRefs)
@@ -565,12 +575,13 @@ public sealed class CSharpReferenceReportTool : AgentTool
         detail.AppendLine();
         detail.AppendLine(Caveats.Replace('\n', ' '));
 
-        var directory = Path.Combine(SelfBuildPaths.WorkspaceRoot, "reports");
+        // Отчёт пишется в рабочую папку сессии — рядом с тем, с чем работали.
+        var directory = Path.Combine(root, "reports");
         Directory.CreateDirectory(directory);
         var file = Path.Combine(directory, $"reference_report_{Sanitize(reportName)}.md");
         // System.IO.File явно: File без префикса резолвится в свойство тула.
         System.IO.File.WriteAllText(file, detail.ToString());
-        var relative = Path.GetRelativePath(SelfBuildPaths.WorkspaceRoot, file).Replace('\\', '/');
+        var relative = LocationFormatter.Relative(file, root).Replace('\\', '/');
 
         builder.AppendLine();
         builder.AppendLine($"full report: {relative} ({allRows.Count} rows) — attach the file to read it");

@@ -242,7 +242,9 @@ public sealed class StateBlockTests
     {
         var rendered = new StateBlock { MsgId = 1 }.ToString();
 
-        Assert.DoesNotContain("todo", rendered);
+        // «todo=» (с равертом), а не «todo»: слово может встретиться в другом поле блока
+        // (контент памяти, note) — проверяем именно отсутствие поля.
+        Assert.DoesNotContain("todo=", rendered);
     }
 
     // ── Heartbeat (режим state_field): причина пробуждения в state-блоке ──────────────

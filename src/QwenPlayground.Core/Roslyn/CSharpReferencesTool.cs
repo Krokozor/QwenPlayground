@@ -14,15 +14,15 @@ namespace QwenPlayground.Core.Roslyn;
 /// а без заголовка неясно, к какому из одноимённых символов относится использование.
 /// </summary>
 [Tool("csharp_references",
-    "Find all references (usages) of a C# symbol by name in the QwenPlayground solution, " +
-    "grouped by the declaration they belong to. Each group header shows the declaration " +
-    "(kind, signature, file:12-45 and the comment above it); each usage line shows " +
-    "file:line and a code snippet. Semantic search — no false positives from text grep.",
+    "Find all references (usages) of a C# symbol by name in the tracked C# project " +
+    "(the QwenPlayground solution when the working folder is the harness root; otherwise the " +
+    "project set via csharp_track), grouped by the declaration they belong to. Each group " +
+    "header shows the declaration (kind, signature, file:12-45 and the comment above it); " +
+    "each usage line shows file:line and a code snippet. Paths are relative to the working " +
+    "folder. Semantic search — no false positives from text grep.",
     ToolGroup.CSharp)]
 public sealed class CSharpReferencesTool : AgentTool
 {
-    private static readonly RoslynService Service = RoslynService.Shared;
-
     private const int MaxReferences = 50;
     private const int MaxGroups = 20;
     private const int MaxSnippetLength = 120;
@@ -32,7 +32,12 @@ public sealed class CSharpReferencesTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
-        var solution = await Service.GetSolutionAsync(cancellationToken);
+        if (CSharpProjects.Resolve(context.ProjectRoot, out var error) is not { } csharp)
+        {
+            return error!;
+        }
+        var solution = await csharp.Service.GetSolutionAsync(cancellationToken);
+        var root = context.ProjectRoot;
         // Два множества намеренно: ключ декларации («path:12-45») и ключ использования
         // («path:12») в одном множестве склеились бы на однострочных декларациях.
         var seenDeclarations = new HashSet<string>(StringComparer.Ordinal);
@@ -58,7 +63,7 @@ public sealed class CSharpReferencesTool : AgentTool
                 }
                 // Перегрузка (ISymbol, Solution): ищем ссылки по всему солюшену,
                 // в том числе в других проектах.
-                var element = await LocationFormatter.ElementAsync(symbol, cancellationToken);
+                var element = await LocationFormatter.ElementAsync(symbol, root, cancellationToken);
                 if (element.File is null || !seenDeclarations.Add(element.Reference))
                 {
                     // Один и тот же символ находится столько раз, сколько проектов
@@ -71,7 +76,7 @@ public sealed class CSharpReferencesTool : AgentTool
                 {
                     foreach (var referenceLocation in reference.Locations)
                     {
-                        var where = LocationFormatter.Usage(referenceLocation.Location);
+                        var where = LocationFormatter.Usage(referenceLocation.Location, root);
                         if (where is null || !seenUsages.Add(where))
                         {
                             continue;

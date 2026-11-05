@@ -44,5 +44,6 @@ public sealed class MemoryLayerStore
     }
 
     public void Save(LayerMemory memory) =>
-        AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(memory, JsonOptions));
+        AtomicFile.WriteAllText(FilePath,
+            Security.SecretRedactor.Redact(JsonSerializer.Serialize(memory, JsonOptions)));
 }

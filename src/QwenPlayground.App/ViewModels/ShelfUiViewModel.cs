@@ -26,6 +26,7 @@ public sealed partial class ShelfUiViewModel : ObservableObject {
         new(ToolGroup.Mcp, "Инструменты управления MCP (mcp_status, mcp_reload) и тулы подключённых MCP-серверов"),
         new(ToolGroup.Intuition, "Интуиция: логит-пробы собственной модели (choice/rating/vibe) — быстрый gut check без полного хода"),
         new(ToolGroup.Pigeon, "Pigeon — мессенджер для Qwen'ов: канал, сообщения, @-упоминания, статус (pigeon_connect <адрес> [канал])"),
+        new(ToolGroup.Mail, "Почта IMAP/SMTP: проверка и чтение входящих, отправка, ответы, перемещение и скачивание вложений"),
     };
 
     public ShelfUiState BrowserShelf => _shelfUi[0];
@@ -34,6 +35,7 @@ public sealed partial class ShelfUiViewModel : ObservableObject {
     public ShelfUiState McpShelf => _shelfUi[3];
     public ShelfUiState IntuitionShelf => _shelfUi[4];
     public ShelfUiState PigeonShelf => _shelfUi[5];
+    public ShelfUiState MailShelf => _shelfUi[6];
 
     private int _shelfCount;
     /// <summary>Сколько полок реально в промпте (on + pending) — счётчик на кнопке «🗄 N».</summary>
@@ -66,6 +68,7 @@ public sealed partial class ShelfUiViewModel : ObservableObject {
         var state = new ShelfState(_sessionDir());
         var isOn = state.Load().Contains(g) && !state.LoadPending().Contains(g);
         var result = isOn ? state.Deactivate(g) : state.Activate(g);
+        ShelfAnnounce.Push(ShelfAnnounce.Owner, result, g);
         Debug.WriteLine($"[shelf-cache] UI: {g} → {result}");
         Refresh();
     }

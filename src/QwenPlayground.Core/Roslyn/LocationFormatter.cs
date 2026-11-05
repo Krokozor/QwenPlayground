@@ -39,25 +39,27 @@ internal static class LocationFormatter
     /// <summary>
     /// Координаты декларации символа по исходному узлу документа. Fallback — Location
     /// символа, если исходного узла нет (тогда Lines — строка идентификатора).
+    /// root — корень, от которого форматируется путь (рабочая папка сессии; вывод
+    /// должен совпадать с путями файловых тулов).
     /// </summary>
-    public static async Task<Element> ElementAsync(ISymbol symbol, CancellationToken cancellationToken = default)
+    public static async Task<Element> ElementAsync(ISymbol symbol, string root, CancellationToken cancellationToken = default)
     {
         var reference = symbol.DeclaringSyntaxReferences.FirstOrDefault();
         if (reference is not null)
         {
-            var root = await reference.SyntaxTree.GetRootAsync(cancellationToken);
-            var node = root.FindNode(reference.Span, getInnermostNodeForTie: false);
+            var syntaxRoot = await reference.SyntaxTree.GetRootAsync(cancellationToken);
+            var node = syntaxRoot.FindNode(reference.Span, getInnermostNodeForTie: false);
             // Спан во весь файл/неймспейс: FindNode отдаёт CompilationUnit — описание
             // элемента из него бесполезно, берём родителя токена по началу спана.
             if (node is null or CompilationUnitSyntax)
             {
-                node = root.FindToken(reference.Span.Start).Parent;
+                node = syntaxRoot.FindToken(reference.Span.Start).Parent;
             }
             if (node is not null)
             {
                 var span = node.GetLocation().GetLineSpan();
                 return new Element(
-                    string.IsNullOrEmpty(span.Path) ? null : Relative(span.Path),
+                    string.IsNullOrEmpty(span.Path) ? null : Relative(span.Path, root),
                     Lines(span),
                     Doc(node));
             }
@@ -70,14 +72,14 @@ internal static class LocationFormatter
         }
         var fallback = location.GetLineSpan();
         return new Element(
-            string.IsNullOrEmpty(fallback.Path) ? null : Relative(fallback.Path),
+            string.IsNullOrEmpty(fallback.Path) ? null : Relative(fallback.Path, root),
             Lines(fallback),
             null);
     }
 
     /// <summary>Описание декларации символа одной строкой: `kind signature — path:12-45  // doc`.</summary>
-    public static async Task<string> DeclarationAsync(ISymbol symbol, CancellationToken cancellationToken = default)
-        => Declaration(await ElementAsync(symbol, cancellationToken), symbol);
+    public static async Task<string> DeclarationAsync(ISymbol symbol, string root, CancellationToken cancellationToken = default)
+        => Declaration(await ElementAsync(symbol, root, cancellationToken), symbol);
 
     /// <summary>То же по уже вычисленным координатам (декларация не ищется дважды).</summary>
     public static string Declaration(Element element, ISymbol symbol)
@@ -89,14 +91,14 @@ internal static class LocationFormatter
     }
 
     /// <summary>Только описание символа (без координат) — для строк «кто вызывает».</summary>
-    public static async Task<string?> DocAsync(ISymbol symbol, CancellationToken cancellationToken = default)
-        => (await ElementAsync(symbol, cancellationToken)).Doc;
+    public static async Task<string?> DocAsync(ISymbol symbol, string root, CancellationToken cancellationToken = default)
+        => (await ElementAsync(symbol, root, cancellationToken)).Doc;
 
     /// <summary>
     /// Позиция ИСПОЛЬЗОВАНИЯ: «path:12». Без диапазона намеренно — ссылка это точка
     /// (идентификатор), а не многострочный элемент; «12-45» тут было бы враньём.
     /// </summary>
-    public static string? Usage(Location? location)
+    public static string? Usage(Location? location, string root)
     {
         if (location is null || !location.IsInSource)
         {
@@ -105,7 +107,7 @@ internal static class LocationFormatter
         var span = location.GetLineSpan();
         return string.IsNullOrEmpty(span.Path)
             ? null
-            : $"{Relative(span.Path)}:{span.StartLinePosition.Line + 1}";
+            : $"{Relative(span.Path, root)}:{span.StartLinePosition.Line + 1}";
     }
 
     /// <summary>Диапазон строк узла: «12» или «12-45».</summary>
@@ -159,7 +161,22 @@ internal static class LocationFormatter
 
     private static string Kind(ISymbol symbol) => symbol.Kind.ToString().ToLowerInvariant();
 
-    private static string Relative(string path) => Path.GetRelativePath(SelfBuildPaths.WorkspaceRoot, path);
+    /// <summary>
+    /// Путь относительно корня (рабочая папка сессии) — совпадает с путями файловых
+    /// тулов. Разные диски (root и проект на разных томах) — GetRelativePath бросает:
+    /// отдаём абсолютный путь, честно. Общий для всех C#-тулов.
+    /// </summary>
+    public static string Relative(string path, string root)
+    {
+        try
+        {
+            return Path.GetRelativePath(root, path);
+        }
+        catch
+        {
+            return path;
+        }
+    }
 
     /// <summary>
     /// Комментарий → текст описания: снимаем маркеры («///», «//», «/*», «*/») и теги

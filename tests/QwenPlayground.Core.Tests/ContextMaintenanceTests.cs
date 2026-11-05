@@ -152,6 +152,34 @@ public sealed class ContextMaintenanceTests : IDisposable
         Assert.Equal(ChatState.Idle, _chat.Current);
     }
 
+    [Fact]
+    public async Task ForceFailure_Throws_LogIntact_FsmStaysGenerating()
+    {
+        Fill(12);
+        Persist();
+        var maintenance = Create(complete: (user, system, onChunk, ct) =>
+            throw new InvalidOperationException("сервер недоступен"));
+        _chat.Transition(ChatState.Generating);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            maintenance.ForceCompactAsync(CancellationToken.None));
+
+        Assert.Equal(12, _log.Count);
+        Assert.Equal(ChatState.Generating, _chat.Current);
+        Assert.Contains(_statuses, s => s.Contains("ошибка сжатия"));
+    }
+
+    [Fact]
+    public async Task ForceCancelledDuringTokenCount_ThrowsInsteadOfFallingBack()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var maintenance = Create(countTokens: ct => Task.FromCanceled<int>(ct));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            maintenance.ForceCompactAsync(cts.Token));
+    }
+
     public void Dispose()
     {
         try

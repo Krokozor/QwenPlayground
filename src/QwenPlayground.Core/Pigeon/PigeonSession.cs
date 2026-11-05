@@ -66,6 +66,14 @@ public sealed class PigeonSession : IStateAnnouncer
     /// сервер не ждёт 45 с heartbeat-таймаута — идентичности уходят в оффлайн сразу.
     /// pigeon.json сохраняется (reconnect после рестарта мгновенный).
     /// </summary>
+    public static void Disconnect(string sessionDir)
+    {
+        if (BySessionDir.TryRemove(Path.GetFullPath(sessionDir), out var session))
+        {
+            session.Disconnect();
+        }
+    }
+
     public static void DisconnectAll()
     {
         foreach (var session in BySessionDir.Values)
@@ -230,8 +238,10 @@ public sealed class PigeonSession : IStateAnnouncer
             session._cursor = 0;
             session.StartLoop();
 
-            // Авто-активация полки: подключён → тулзы в промпте (docs §12).
-            new ShelfState(dir).Activate(ToolGroup.Pigeon);
+            // Авто-активация полки: подключён → тулзы в промпте (docs §12). Анонс — как
+            // действие модели (pigeon_connect вызвал агент).
+            var pigeonShelf = new ShelfState(dir).Activate(ToolGroup.Pigeon);
+            ShelfAnnounce.Push(ShelfAnnounce.Agent, pigeonShelf, ToolGroup.Pigeon);
             var seated = string.IsNullOrWhiteSpace(file.Channel)
                 ? " — not seated in a channel yet (the owner seats you in the web UI, or use pigeon_channels join)."
                 : $" — channel #{file.Channel}.";
@@ -654,6 +664,17 @@ public sealed class PigeonSession : IStateAnnouncer
         var file = LoadFile(dir) ?? new ConnectionFile();
         file.Status = status;
         SaveFile(dir, file);
+    }
+
+    /// <summary>После смены SessionId новая личность получает token при следующем join.</summary>
+    public static void ResetToken(string sessionDir)
+    {
+        var file = LoadFile(sessionDir);
+        if (file is not null)
+        {
+            file.Token = string.Empty;
+            SaveFile(sessionDir, file);
+        }
     }
 
     private static void SaveFile(string dir, ConnectionFile file)

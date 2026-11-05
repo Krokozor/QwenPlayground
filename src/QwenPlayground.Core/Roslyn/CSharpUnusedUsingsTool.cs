@@ -17,18 +17,24 @@ namespace QwenPlayground.Core.Roslyn;
 ///    действительно можно удалить; возможны пропуски (тип используется только qualified).
 /// </summary>
 [Tool("csharp_unused_usings",
-    "Find unused using directives (IDE0005) across the solution via Roslyn — this diagnostic is IDE-only and invisible in the build. Returns file:line per unused using. Conservative: every reported using is safely removable; fully-qualified-only usages may be missed. Optional 'project' filter (name substring, e.g. 'Core').",
+    "Find unused using directives (IDE0005) across the tracked C# project via Roslyn — this " +
+    "diagnostic is IDE-only and invisible in the build. Returns file:line (relative to the " +
+    "working folder) per unused using. Conservative: every reported using is safely removable; " +
+    "fully-qualified-only usages may be missed. Optional 'project' filter (name substring, e.g. 'Core').",
     ToolGroup.CSharp)]
 public sealed class CSharpUnusedUsingsTool : AgentTool
 {
-    private static readonly RoslynService Service = RoslynService.Shared;
-
     [ToolParameter("Optional: only projects whose name contains this substring (e.g. 'Core').")]
     public string Project { get; set; } = "";
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
-        var solution = await Service.GetSolutionAsync(cancellationToken);
+        if (CSharpProjects.Resolve(context.ProjectRoot, out var error) is not { } csharp)
+        {
+            return error!;
+        }
+        var solution = await csharp.Service.GetSolutionAsync(cancellationToken);
+        var root = context.ProjectRoot;
         var results = new List<string>();
 
         foreach (var project in solution.Projects)
@@ -58,15 +64,15 @@ public sealed class CSharpUnusedUsingsTool : AgentTool
                 }
 
                 var model = compilation.GetSemanticModel(tree);
-                var root = tree.GetRoot(cancellationToken);
-                var path = Path.GetRelativePath(SelfBuild.SelfBuildPaths.WorkspaceRoot, tree.FilePath);
+                var syntaxRoot = tree.GetRoot(cancellationToken);
+                var path = LocationFormatter.Relative(tree.FilePath, root);
 
                 // 1) Все реально используемые символы файла (комментарии — trivia,
                 //    в DescendantNodes не попадают). SymbolEqualityComparer: namespace-
                 //    символы сравнивать по ссылке нельзя (merged-namespace из нескольких
                 //    сборок — разные инстансы, например System.Windows в WPF).
                 var used = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
-                foreach (var id in root.DescendantNodes().OfType<IdentifierNameSyntax>())
+                foreach (var id in syntaxRoot.DescendantNodes().OfType<IdentifierNameSyntax>())
                 {
                     var sym = model.GetSymbolInfo(id, cancellationToken).Symbol;
                     if (sym is not null)
@@ -76,7 +82,7 @@ public sealed class CSharpUnusedUsingsTool : AgentTool
                 }
 
                 // 2) Каждая using-директива: используется?
-                foreach (var usingDirective in root.DescendantNodes().OfType<UsingDirectiveSyntax>())
+                foreach (var usingDirective in syntaxRoot.DescendantNodes().OfType<UsingDirectiveSyntax>())
                 {
                     // global using (ImplicitUsings / GlobalUsings.g.cs) — отдельный механизм.
                     if (usingDirective.GetLeadingTrivia().Any(t => t.IsKind(SyntaxKind.GlobalKeyword)))

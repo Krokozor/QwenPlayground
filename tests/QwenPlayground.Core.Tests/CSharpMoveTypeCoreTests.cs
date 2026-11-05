@@ -13,6 +13,10 @@ namespace QwenPlayground.Core.Tests;
 /// </summary>
 public sealed class CSharpMoveTypeCoreTests
 {
+    // In-memory-документы не имеют реальных путей: root — любая папка,
+    // используется только для резолва/форматирования путей в ядре.
+    private static readonly string TestRoot = Path.GetTempPath();
+
     private static (AdhocWorkspace Workspace, Solution Solution) CreateWorkspace(params (string Name, string Source)[] files)
     {
         var workspace = new AdhocWorkspace();
@@ -66,7 +70,7 @@ public sealed class CSharpMoveTypeCoreTests
         const string b = "using Ns1;\n\npublic class Consumer\n{\n    public Foo Make() { return new Foo(); }\n}";
         var (_, solution) = CreateWorkspace(("A.cs", a), ("B.cs", b));
 
-        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "C.cs", "Ns2", CancellationToken.None);
+        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "C.cs", "Ns2", TestRoot, CancellationToken.None);
 
         Assert.Null(outcome.Error);
         var textA = await DocumentTextAsync(outcome.Modified!, "A.cs");
@@ -85,7 +89,7 @@ public sealed class CSharpMoveTypeCoreTests
         const string b = "public class Consumer\n{\n    public Ns1.Foo Make() { return new Ns1.Foo(); }\n}";
         var (_, solution) = CreateWorkspace(("A.cs", a), ("B.cs", b));
 
-        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "C.cs", "Ns2", CancellationToken.None);
+        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "C.cs", "Ns2", TestRoot, CancellationToken.None);
 
         Assert.Null(outcome.Error);
         var textB = await DocumentTextAsync(outcome.Modified!, "B.cs");
@@ -100,7 +104,7 @@ public sealed class CSharpMoveTypeCoreTests
         const string a = "namespace Ns1\n{\n    public class Foo\n    {\n    }\n\n    public class Baz\n    {\n        public Foo F { get; set; } = null!;\n    }\n}";
         var (_, solution) = CreateWorkspace(("A.cs", a));
 
-        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "C.cs", "Ns2", CancellationToken.None);
+        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "C.cs", "Ns2", TestRoot, CancellationToken.None);
 
         Assert.Null(outcome.Error);
         var textA = await DocumentTextAsync(outcome.Modified!, "A.cs");
@@ -115,7 +119,7 @@ public sealed class CSharpMoveTypeCoreTests
         const string a = "namespace Ns1\n{\n    public class Outer\n    {\n        public class Foo { }\n    }\n}";
         var (_, solution) = CreateWorkspace(("A.cs", a));
 
-        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "C.cs", "Ns2", CancellationToken.None);
+        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "C.cs", "Ns2", TestRoot, CancellationToken.None);
 
         Assert.NotNull(outcome.Error);
         Assert.Contains("nested", outcome.Error);
@@ -127,7 +131,7 @@ public sealed class CSharpMoveTypeCoreTests
         const string a = "namespace Ns1\n{\n    public partial class Foo\n    {\n    }\n}";
         var (_, solution) = CreateWorkspace(("A.cs", a));
 
-        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "C.cs", "Ns2", CancellationToken.None);
+        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "C.cs", "Ns2", TestRoot, CancellationToken.None);
 
         Assert.NotNull(outcome.Error);
         Assert.Contains("partial", outcome.Error);
@@ -141,7 +145,7 @@ public sealed class CSharpMoveTypeCoreTests
         var (_, solution) = CreateWorkspace(("A.cs", a), ("D.cs", d));
 
         // Два Foo — disambiguation по файлу, потом коллизия в целевом namespace.
-        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", "A.cs", "C.cs", "Ns2", CancellationToken.None);
+        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", "A.cs", "C.cs", "Ns2", TestRoot, CancellationToken.None);
 
         Assert.NotNull(outcome.Error);
         Assert.Contains("Move rejected", outcome.Error);
@@ -153,7 +157,7 @@ public sealed class CSharpMoveTypeCoreTests
         const string a = "namespace Ns1\n{\n    public class Foo\n    {\n    }\n}";
         var (_, solution) = CreateWorkspace(("A.cs", a));
 
-        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "A.cs", "Ns1", CancellationToken.None);
+        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "Foo", null, "A.cs", "Ns1", TestRoot, CancellationToken.None);
 
         Assert.NotNull(outcome.Error);
         Assert.Contains("nothing to do", outcome.Error);
@@ -165,7 +169,7 @@ public sealed class CSharpMoveTypeCoreTests
         const string a = "namespace Ns1\n{\n    public class Foo\n    {\n    }\n}";
         var (_, solution) = CreateWorkspace(("A.cs", a));
 
-        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "NoSuchType", null, "C.cs", "Ns2", CancellationToken.None);
+        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, "NoSuchType", null, "C.cs", "Ns2", TestRoot, CancellationToken.None);
 
         Assert.NotNull(outcome.Error);
         Assert.Contains("not found", outcome.Error);

@@ -11,7 +11,10 @@ namespace QwenPlayground.Core.Tests;
 /// </summary>
 public sealed class CSharpReferenceReportToolTests
 {
-    private static ToolContext TestContext() => new(Path.GetTempPath());
+    // Тул резолвит C#-проект из рабочей папки: home-корень → домашний солюшен
+    // (преднастройка). Песочница без трека — честная ошибка.
+    private static ToolContext TestContext() =>
+        new(QwenPlayground.Core.SelfBuild.SelfBuildPaths.WorkspaceRoot);
 
     [Fact]
     public async Task Members_ReportShowsStructureAndKnownMember()

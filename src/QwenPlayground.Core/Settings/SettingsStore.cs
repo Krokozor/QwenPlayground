@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using QwenPlayground.Core.Mail;
 using QwenPlayground.Core.Mcp;
 using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Templates;
@@ -276,4 +277,14 @@ public sealed class AppSettings
     /// Каждый сервер expose'ит свои тулы, которые становятся доступны агенту.
     /// </summary>
     public List<McpServerConfig> McpServers { get; set; } = new();
+
+    // ── Почта (IMAP/SMTP) ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Настройки почты — вложенная группа (план, раздел 14): config/mail.json слит в
+    /// settings.json. MailSettings — POCO; шим MailSettings.Get()/Update() читает/пишет
+    /// этот объект, mail-подсистема не меняется. Секреты внутри ([SettingSecret])
+    /// маскируются в get_settings и регистрируются в SecretRedactor автоматически.
+    /// </summary>
+    public MailSettings Mail { get; set; } = new();
 }

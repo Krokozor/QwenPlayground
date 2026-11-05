@@ -13,6 +13,7 @@ public static class StartupTrace
 
     public static void Log(string message)
     {
+        message = Security.SecretRedactor.Redact(message);
         try
         {
             var line = $"[{(DateTime.Now - ProcessStart).TotalSeconds:F2}s {DateTime.Now:HH:mm:ss.fff}] [T{Environment.CurrentManagedThreadId}] {message}";

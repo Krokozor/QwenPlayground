@@ -15,10 +15,11 @@ namespace QwenPlayground.Core.Tools.Builtins;
     "Change an application setting from inside the running process. " +
     "The in-memory settings model (AppSettings) is the source of truth for the live process, " +
     "so this mutates it and persists to settings.json atomically — writing the file alone would have no effect. " +
-    "Use get_settings to list valid names and current values.")]
+    "Use get_settings to list valid names and current values. " +
+    "Nested setting groups use dotted paths, e.g. Mail.Password. Secret properties ([SettingSecret]) are accepted but never echoed.")]
 public sealed class SetSettingTool : AgentTool
 {
-    [ToolParameter("AppSettings property name to change, e.g. MaxTokens, Endpoint, ReasoningEffort, Temperature. See get_settings for the full list.", Required = true)]
+    [ToolParameter("AppSettings property name to change, e.g. MaxTokens, Endpoint, ReasoningEffort, Temperature, or a dotted nested path like Mail.Password. See get_settings for the full list.", Required = true)]
     public string Name { get; set; } = string.Empty;
 
     [ToolParameter("New value as a string: a number, true/false, an enum name (XHigh/Medium/Low), or text. For complex types (lists, objects) pass a JSON string.", Required = true)]
@@ -26,34 +27,96 @@ public sealed class SetSettingTool : AgentTool
 
     public override Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
-        var settings = AppSettings.Get();
-        var prop = typeof(AppSettings).GetProperty(Name.Trim(), BindingFlags.Public | BindingFlags.Instance);
-        if (prop is null || !prop.CanWrite)
+        var name = Name.Trim();
+        var (path, error) = ResolvePath(name);
+        if (error is not null)
         {
-            return Task.FromResult($"set_setting: property '{Name}' not found or not writable on AppSettings. Use get_settings to list valid names.");
+            return Task.FromResult($"set_setting: {error}. Use get_settings to list valid names (nested groups use dotted paths, e.g. Mail.Password).");
         }
+
+        var prop = path[^1];
+        // План, раздел 13: секреты ([SettingSecret]) не эхоим ни в ответе, ни в ошибке.
+        var isSecret = SettingDisplay.IsSecret(prop);
 
         try
         {
             var converted = ConvertValue(prop.PropertyType, Value.Trim());
 
-            // Validate MCP server configs before applying
-            if (Name.Trim().Equals("McpServers", StringComparison.OrdinalIgnoreCase) && converted is not null)
+            // Validate MCP server configs before applying (только корневой путь).
+            if (path.Length == 1 && name.Equals("McpServers", StringComparison.OrdinalIgnoreCase) && converted is not null)
             {
                 var validationError = ValidateMcpServers(converted);
                 if (validationError is not null)
                     return Task.FromResult(validationError);
             }
 
-            var old = prop.GetValue(settings);
-            prop.SetValue(settings, converted);
-            AppSettings.Save();
-            return Task.FromResult($"set_setting: {Name} = {old} → {converted}. Persisted to settings.json.");
+            var old = GetPathValue(AppSettings.Get(), path);
+            AppSettings.Update(s => SetPathValue(s, path, converted));
+            return Task.FromResult(SettingDisplay.ChangeMessage(name, isSecret, old, converted));
         }
         catch (Exception ex)
         {
-            return Task.FromResult($"set_setting: failed to set '{Name}' to '{Value}': {ex.Message}");
+            var shownValue = isSecret ? "<redacted>" : Value;
+            return Task.FromResult($"set_setting: failed to set '{name}' to '{shownValue}': {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Разбирает имя настройки в путь свойств: "MaxTokens" → [MaxTokens],
+    /// "Mail.Password" → [Mail, Password] (план, раздел 14: вложенные группы).
+    /// </summary>
+    private static (PropertyInfo[] Path, string? Error) ResolvePath(string name)
+    {
+        var parts = name.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+        {
+            return (Array.Empty<PropertyInfo>(), "empty setting name");
+        }
+        var type = typeof(AppSettings);
+        var path = new List<PropertyInfo>(parts.Length);
+        foreach (var part in parts)
+        {
+            var property = type.GetProperty(part, BindingFlags.Public | BindingFlags.Instance);
+            if (property is null || !property.CanRead)
+            {
+                return (Array.Empty<PropertyInfo>(), $"property '{part}' not found on {type.Name}");
+            }
+            path.Add(property);
+            type = property.PropertyType;
+        }
+        if (!path[^1].CanWrite)
+        {
+            return (Array.Empty<PropertyInfo>(), $"property '{parts[^1]}' is not writable");
+        }
+        return (path.ToArray(), null);
+    }
+
+    private static object? GetPathValue(object root, PropertyInfo[] path)
+    {
+        object? current = root;
+        foreach (var property in path)
+        {
+            current = current is null ? null : property.GetValue(current);
+            if (current is null)
+            {
+                return null;
+            }
+        }
+        return current;
+    }
+
+    private static void SetPathValue(object root, PropertyInfo[] path, object? value)
+    {
+        object? current = root;
+        for (var i = 0; i < path.Length - 1; i++)
+        {
+            current = path[i].GetValue(current);
+            if (current is null)
+            {
+                throw new InvalidOperationException($"setting path segment '{path[i].Name}' is null");
+            }
+        }
+        path[^1].SetValue(current, value);
     }
 
     private static object? ConvertValue(Type targetType, string value)

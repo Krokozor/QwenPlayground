@@ -146,6 +146,17 @@
                 <TextBlock Text="{Binding SessionList.SessionRootError}" Foreground="#FF5555" FontSize="11"
                            VerticalAlignment="Center" Margin="0,0,12,0"
                            Visibility="{Binding SessionList.HasSessionRootError, Converter={StaticResource BoolToVis}}" />
+                <!-- C#-проект сессии (трекинг C#-тулов, 2026-11-04): что смотрят Roslyn-тулы
+                     для рабочей папки — home-преднастройка или пометка (тот же store, что и
+                     csharp_track). «…» — пикер проекта, «✕» — оттрекинг. -->
+                <TextBlock Text="C#:" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBlock Text="{Binding SessionList.CSharpTarget}" VerticalAlignment="Center" Margin="0,0,4,0"
+                           MaxWidth="170" TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding SessionList.CSharpTarget}" />
+                <Button Content="…" Command="{Binding SessionList.BrowseCSharpProjectCommand}" Padding="8,0" Margin="0,0,4,0"
+                        ToolTip="Выбрать C#-проект (slnx/sln/csproj) для отслеживания рабочей папки" />
+                <Button Content="&#215;" Command="{Binding SessionList.ClearCSharpProjectCommand}" Padding="8,0" Margin="0,0,12,0"
+                        ToolTip="Оттрекировать C#-проект (вернуться к преднастройке)" />
             </StackPanel>
             <!-- Полки (группы инструментов): тот же механизм, что и у тулов агента
                  activate/deactivate_shelf. Отметка — немедленная активация, снятие — staged

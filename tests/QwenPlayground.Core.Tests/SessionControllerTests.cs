@@ -298,6 +298,79 @@ public sealed class SessionControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task RenameCurrent_MovesWholeDirectory_AndPreservesState()
+    {
+        AppSettings.Get().ProjectRoot = _root;
+        _controller.EnsureMain();
+        _controller.StartNew();
+        var oldId = _controller.CurrentId;
+        _controller.ApplyProfileKeys("sampler", "prompt", "state");
+        _controller.SetCurrentSlot(2);
+        _controller.SetRoot(_root);
+        _log.Add(ChatMessage.User("hello"));
+        _controller.SaveCurrent();
+        var oldDir = _controller.DirectoryFor(oldId);
+        Directory.CreateDirectory(Path.Combine(oldDir, "artifacts", "msg_1"));
+        File.WriteAllText(Path.Combine(oldDir, "artifacts", "msg_1", "output.txt"), "artifact");
+        File.WriteAllText(Path.Combine(oldDir, "pigeon.json"),
+            """{"Endpoint":"http://127.0.0.1:8199","Token":"secret-token","Alias":"alias","Channel":"general","Status":"working"}""");
+        var newId = Guid.NewGuid().ToString("N");
+
+        var renamed = await _controller.RenameCurrentAsync(newId);
+
+        Assert.Equal(newId, renamed);
+        Assert.Equal(newId, _controller.CurrentId);
+        Assert.Equal(newId, AppSettings.Get().LastSessionId);
+        Assert.False(Directory.Exists(oldDir));
+        var data = new SessionStore(_root).Load(newId)!;
+        Assert.Equal(newId, data.Id);
+        Assert.Equal("sampler", data.SamplerKey);
+        Assert.Equal("prompt", data.PromptKey);
+        Assert.Equal("state", data.StateBlockKey);
+        Assert.Equal(2, data.SlotId);
+        Assert.Equal(_root, data.Root);
+        Assert.Equal(_log.NextMessageId, data.NextMessageId);
+        Assert.Equal(_log[0].Id, data.Messages[0].Id);
+        Assert.Equal("hello", data.Messages[0].Content);
+        Assert.True(File.Exists(Path.Combine(_controller.DirectoryFor(newId), "artifacts", "msg_1", "output.txt")));
+        var pigeon = File.ReadAllText(Path.Combine(_controller.DirectoryFor(newId), "pigeon.json"));
+        Assert.Contains("\"Token\": \"\"", pigeon);
+        Assert.Contains("http://127.0.0.1:8199", pigeon);
+        Assert.Contains("general", pigeon);
+        Assert.Contains("working", pigeon);
+        Assert.DoesNotContain(new SessionStore(_root).List(), info => info.Id == oldId);
+    }
+
+    [Fact]
+    public async Task RenameCurrent_ExistingTarget_KeepsBothSessionsUntouched()
+    {
+        _controller.EnsureMain();
+        _controller.StartNew();
+        var sourceId = _controller.CurrentId;
+        _log.Add(ChatMessage.User("source"));
+        _controller.SaveCurrent();
+        _controller.StartNew();
+        var targetId = _controller.CurrentId;
+        _log.Add(ChatMessage.User("target"));
+        _controller.SaveCurrent();
+        _controller.Load(sourceId);
+
+        await Assert.ThrowsAsync<IOException>(() => _controller.RenameCurrentAsync(targetId));
+
+        Assert.Equal(sourceId, _controller.CurrentId);
+        Assert.Equal("source", new SessionStore(_root).Load(sourceId)!.Messages[0].Content);
+        Assert.Equal("target", new SessionStore(_root).Load(targetId)!.Messages[^1].Content);
+    }
+
+    [Fact]
+    public async Task RenameCurrent_Main_IsRejected()
+    {
+        _controller.EnsureMain();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _controller.RenameCurrentAsync());
+    }
+
+    [Fact]
     public void SavePinned_WritesPinnedSession_WithoutTouchingCurrent()
     {
         _controller.EnsureMain();

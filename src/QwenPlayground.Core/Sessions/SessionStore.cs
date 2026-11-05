@@ -188,7 +188,8 @@ public sealed class SessionStore
     }
 
     /// <summary>Сериализация SessionData в том же формате, что и файлы сессий (нужно бэкапам).</summary>
-    public static string Serialize(SessionData data) => JsonSerializer.Serialize(data, Options);
+    public static string Serialize(SessionData data) =>
+        Security.SecretRedactor.Redact(JsonSerializer.Serialize(data, Options));
 
     public SessionData? Load(string id)
     {
@@ -229,6 +230,52 @@ public sealed class SessionStore
         }
         data.NextMessageId = Math.Max(data.NextMessageId, maxId + 1);
         return data;
+    }
+
+    /// <summary>Переименовать папку сессии и обновить её id в chat.json и index.json.</summary>
+    public void Rename(string oldId, string newId)
+    {
+        var source = SessionFolder(oldId);
+        var target = SessionFolder(newId);
+        if (!Directory.Exists(source))
+        {
+            throw new DirectoryNotFoundException($"session not found: {oldId}");
+        }
+        if (Directory.Exists(target) || File.Exists(LegacyFilePath(newId)) || _index.ContainsKey(newId))
+        {
+            throw new IOException($"session id already exists: {newId}");
+        }
+
+        var previous = _index.GetValueOrDefault(oldId);
+        var oldAnchor = Path.Combine(_directory, $"{oldId}-kv.bin");
+        var newAnchor = Path.Combine(_directory, $"{newId}-kv.bin");
+        Directory.Move(source, target);
+        try
+        {
+            if (File.Exists(oldAnchor))
+            {
+                File.Move(oldAnchor, newAnchor);
+            }
+            var data = Load(newId) ?? throw new InvalidDataException($"session chat is missing after rename: {newId}");
+            data.Id = newId;
+            AtomicFile.WriteAllText(ChatFilePath(newId), Serialize(data));
+            _index.Remove(oldId);
+            _index[newId] = new SessionInfo(newId, data.Title, data.UpdatedAt);
+            PersistIndex();
+        }
+        catch
+        {
+            Directory.Move(target, source);
+            if (File.Exists(newAnchor))
+            {
+                File.Move(newAnchor, oldAnchor);
+            }
+            if (previous is not null)
+            {
+                _index[oldId] = previous;
+            }
+            throw;
+        }
     }
 
     public void Delete(string id)

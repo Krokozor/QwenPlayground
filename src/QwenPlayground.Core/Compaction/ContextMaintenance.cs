@@ -100,12 +100,12 @@ public sealed class ContextMaintenance
         {
             // Точный размер следующего промпта уже посчитан гвардой — передаём:
             // граница компакции строится на серверных счётчиках (см. MessageTokenWeights).
-            await RunAsync(fromAgentLoop: true, nextPromptTokens: estimated);
+            await RunAsync(fromAgentLoop: true, nextPromptTokens: estimated, cancellationToken);
         }
     }
 
     /// <summary>Ручная компакция из UI.</summary>
-    public async Task CompactFromUiAsync() => await RunAsync(fromAgentLoop: false, nextPromptTokens: null);
+    public async Task CompactFromUiAsync() => await RunAsync(fromAgentLoop: false, nextPromptTokens: null, CancellationToken.None);
 
     /// <summary>
     /// Принудительная компакция: сервер сказал 400 «промпт не влезает» (ContextOverflowException)
@@ -116,10 +116,11 @@ public sealed class ContextMaintenance
     public Task ForceCompactAsync(CancellationToken cancellationToken)
     {
         DiagnosticsLog.Log("compaction: FORCED (server 400 context overflow)");
-        return RunAsync(fromAgentLoop: true, nextPromptTokens: null);
+        return RunAsync(fromAgentLoop: true, nextPromptTokens: null, cancellationToken, throwOnFailure: true);
     }
 
-    private async Task RunAsync(bool fromAgentLoop, int? nextPromptTokens)
+    private async Task RunAsync(bool fromAgentLoop, int? nextPromptTokens,
+        CancellationToken cancellationToken, bool throwOnFailure = false)
     {
         DiagnosticsLog.Log($"compaction: begin (fromAgentLoop={fromAgentLoop}, messages={_conversation.Count})");
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -141,7 +142,11 @@ public sealed class ContextMaintenance
             // Сервер недоступен — не блокируем ручное сжатие, граница по chars/4.
             try
             {
-                nextPromptTokens = await _countNextTokens(CancellationToken.None);
+                nextPromptTokens = await _countNextTokens(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception exception)
             {
@@ -181,12 +186,20 @@ public sealed class ContextMaintenance
             // Обе ветки — конвейер слоёв L1/L2/L3 (per-session, sessions/<id>/layers.json).
             // main — полный режим (валидации → факты в memories/ + diary); не-main — lite (ядро
             // ротации, без валидаций: горизонт задач короче, лёгкие потери допустимы).
-            await CompactLayersAsync(boundary, isMain: _currentSessionId() == MainAgent.SessionId);
+            await CompactLayersAsync(boundary, isMain: _currentSessionId() == MainAgent.SessionId, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception exception)
         {
             _ui.SetStatus($"ошибка сжатия: {exception.Message}");
             DiagnosticsLog.Log($"compaction: FAILED ({sw.ElapsedMilliseconds}ms): {exception.Message}");
+            if (throwOnFailure)
+            {
+                throw;
+            }
         }
         finally
         {
@@ -210,7 +223,7 @@ public sealed class ContextMaintenance
     /// + diary); не-main — lite (без валидаций/фактов/diary: горизонт задач короче, лёгкие потери
     /// допустимы). Слои инжектятся в системный промпт сессии (см. MainViewModel.ResolveSystemPrompt).
     /// </summary>
-    private async Task CompactLayersAsync(int boundary, bool isMain)
+    private async Task CompactLayersAsync(int boundary, bool isMain, CancellationToken cancellationToken)
     {
         _surfacer.Clear(); // всплывшие воспоминания выпадают из контекста на суммаризации
         var segmentStart = _conversation.Count > 0 && _conversation[0].Role == ChatRole.System ? 1 : 0;
@@ -219,7 +232,7 @@ public sealed class ContextMaintenance
 
         var store = StoreFor(_currentSessionId());
         var result = await MemoryLayerPipeline.RunAsync(store.Load(), transcript, CompleteForPipelineAsync,
-            onStage: BeginStage, validate: isMain);
+            onStage: BeginStage, cancellationToken, validate: isMain);
 
         // Без критичных шагов ротация потеряла бы содержимое — компакция прерывается (бэкап уже снят).
         if (!result.MergeSucceeded || !result.SegmentSucceeded)

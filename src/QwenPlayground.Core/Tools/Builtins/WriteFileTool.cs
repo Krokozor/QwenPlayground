@@ -19,6 +19,6 @@ public sealed class WriteFileTool : AgentTool
         // он уйдёт и в Roslyn-воркспейс, и в rebuild_self.
         AtomicFile.WriteAllText(fullPath, Content);
         var result = $"wrote {Content.Length} chars to {context.ToRelative(fullPath)}";
-        return await EditDiagnostics.AppendRoslynErrorsAsync(fullPath, result, cancellationToken);
+        return await EditDiagnostics.AppendRoslynErrorsAsync(context, fullPath, result, cancellationToken);
     }
 }

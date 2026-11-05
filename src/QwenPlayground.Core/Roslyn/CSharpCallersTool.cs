@@ -13,15 +13,15 @@ namespace QwenPlayground.Core.Roslyn;
 /// кто именно его зовёт, по одному имени — нельзя (одноимённых методов бывает много).
 /// </summary>
 [Tool("csharp_callers",
-    "Find all callers of a C# method (call hierarchy) by method name in the QwenPlayground solution, " +
-    "grouped by the declaration they call. Group header: the called declaration (kind, signature, " +
-    "file:12-45 and the comment above it); each line: the calling symbol with its file:line, " +
-    "its own comment and '(indirect)' for indirect callers. Use for impact analysis before refactoring.",
+    "Find all callers of a C# method (call hierarchy) by method name in the tracked C# project " +
+    "(the QwenPlayground solution when the working folder is the harness root; otherwise the " +
+    "project set via csharp_track), grouped by the declaration they call. Group header: the " +
+    "called declaration (kind, signature, file:12-45 and the comment above it); each line: the " +
+    "calling symbol with its file:line (relative to the working folder), its own comment and " +
+    "'(indirect)' for indirect callers. Use for impact analysis before refactoring.",
     ToolGroup.CSharp)]
 public sealed class CSharpCallersTool : AgentTool
 {
-    private static readonly RoslynService Service = RoslynService.Shared;
-
     private const int MaxCallers = 50;
     private const int MaxMethods = 20;
 
@@ -30,7 +30,12 @@ public sealed class CSharpCallersTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
-        var solution = await Service.GetSolutionAsync(cancellationToken);
+        if (CSharpProjects.Resolve(context.ProjectRoot, out var error) is not { } csharp)
+        {
+            return error!;
+        }
+        var solution = await csharp.Service.GetSolutionAsync(cancellationToken);
+        var root = context.ProjectRoot;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var groups = new List<string>();
         var total = 0;
@@ -53,7 +58,7 @@ public sealed class CSharpCallersTool : AgentTool
                 }
                 // Метод находится столько раз, сколько проектов ссылается на его проект —
                 // без дедупа по месту декларации группа (и её вызывающие) повторяется.
-                var element = await LocationFormatter.ElementAsync(method, cancellationToken);
+                var element = await LocationFormatter.ElementAsync(method, root, cancellationToken);
                 if (element.File is null || !seen.Add(element.Reference))
                 {
                     continue;
@@ -62,10 +67,10 @@ public sealed class CSharpCallersTool : AgentTool
                 var callers = await SymbolFinder.FindCallersAsync(method, solution, cancellationToken);
                 foreach (var caller in callers)
                 {
-                    var where = LocationFormatter.Usage(caller.Locations.FirstOrDefault(l => l.IsInSource))
+                    var where = LocationFormatter.Usage(caller.Locations.FirstOrDefault(l => l.IsInSource), root)
                                 ?? "(no source location)";
                     var suffix = caller.IsDirect ? string.Empty : " (indirect)";
-                    var doc = await LocationFormatter.DocAsync(caller.CallingSymbol, cancellationToken);
+                    var doc = await LocationFormatter.DocAsync(caller.CallingSymbol, root, cancellationToken);
                     lines.Add(LocationFormatter.WithDoc(
                         $"  {caller.CallingSymbol.ToDisplayString()} — {where}{suffix}", doc));
                     total++;

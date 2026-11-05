@@ -83,6 +83,40 @@ public sealed class SessionStoreTests : IDisposable
     }
 
     [Fact]
+    public void Save_RedactsRegisteredSecrets_FromWholeTranscript()
+    {
+        var secret = "session-secret-" + Guid.NewGuid().ToString("N");
+        Security.SecretRedactor.Register(secret);
+        var call = new ToolCall
+        {
+            Name = "mail_auth",
+            Arguments = System.Text.Json.Nodes.JsonNode.Parse("""{"client_secret":"placeholder"}""")!,
+        };
+        call.Arguments["client_secret"] = secret;
+        var messages = new[]
+        {
+            ChatMessage.User("hello"),
+            new ChatMessage
+            {
+                Role = ChatRole.Assistant,
+                Content = "answer",
+                Reasoning = $"thinking about {secret}",
+                ToolCalls = new[] { call },
+                Generation = new GenerationInfo { Prompt = "", RawOutput = $"raw {secret}" },
+            },
+        };
+
+        _store.Save("secret", messages);
+        var json = File.ReadAllText(Path.Combine(_directory, "secret", "chat.json"));
+        var loaded = _store.Load("secret")!;
+
+        Assert.DoesNotContain(secret, json, StringComparison.Ordinal);
+        Assert.Equal("thinking about <redacted>", loaded.Messages[1].Reasoning);
+        Assert.Equal("raw <redacted>", loaded.Messages[1].Generation!.RawOutput);
+        Assert.Equal("<redacted>", loaded.Messages[1].ToolCalls![0].Arguments["client_secret"]!.GetValue<string>());
+    }
+
+    [Fact]
     public void Load_LegacyFileWithoutVersion_ReadsWithZero()
     {
         // Файл до введения версионирования: поля нет → 0 (сигнал для будущих миграций).

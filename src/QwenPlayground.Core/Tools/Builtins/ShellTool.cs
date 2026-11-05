@@ -57,9 +57,10 @@ public sealed class ShellTool : AgentTool
         };
 
         using var process = new Process { StartInfo = startInfo };
-        var output = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) output.AppendLine(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) output.AppendLine(e.Data); };
+        var stdout = new StringBuilder();
+        var stderr = new StringBuilder();
+        process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
+        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderr.AppendLine(e.Data); };
 
         process.Start();
         process.BeginOutputReadLine();
@@ -82,7 +83,7 @@ public sealed class ShellTool : AgentTool
             throw;
         }
 
-        var text = output.ToString();
+        var text = stdout.ToString() + stderr.ToString();
         // Полный вывод уходит в AgentLoop, где автокаппинг (CapToolOutput) при >8 КБ сохраняет
         // его в attachments/ сообщения и оставляет превью. Здесь не каппим: иначе полный
         // вывод теряется до того, как автокаппинг успеет его сохранить.

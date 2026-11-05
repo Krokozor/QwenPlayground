@@ -96,7 +96,8 @@ public sealed class MemoryStore
     {
         // Единая точка записи (Add и Update сходятся сюда) — один ассерт закрывает обе.
         UiThreadPolicy.Assert($"MemoryStore.Save({item.Id[..8]})");
-        AtomicFile.WriteAllText(Path.Combine(_directory, item.Id + ".json"), JsonSerializer.Serialize(item, JsonOptions));
+        AtomicFile.WriteAllText(Path.Combine(_directory, item.Id + ".json"),
+            Security.SecretRedactor.Redact(JsonSerializer.Serialize(item, JsonOptions)));
         RebuildIndex();
     }
 
@@ -158,6 +159,6 @@ public sealed class MemoryStore
             var mark = item.HasSemanticLayers ? category : "без слоёв";
             lines.Add($"- [{item.Id}] ({mark}) {emoji}{title}");
         }
-        AtomicFile.WriteAllText(IndexFile, string.Join('\n', lines) + '\n');
+        AtomicFile.WriteAllText(IndexFile, Security.SecretRedactor.Redact(string.Join('\n', lines) + '\n'));
     }
 }

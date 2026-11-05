@@ -242,6 +242,57 @@ public sealed class SessionController
         SessionChanged?.Invoke();
     }
 
+    /// <summary>Переименовать текущую non-main сессию и пересоздать её Pigeon identity.</summary>
+    public async Task<string> RenameCurrentAsync(string? newId = null)
+    {
+        if (CurrentId == MainAgent.SessionId)
+        {
+            throw new InvalidOperationException("main session cannot be renamed");
+        }
+        if (!Guid.TryParse(newId ?? Guid.NewGuid().ToString("N"), out var guid))
+        {
+            throw new ArgumentException("new session id must be a GUID", nameof(newId));
+        }
+        var normalized = guid.ToString("N");
+        if (normalized == CurrentId)
+        {
+            return normalized;
+        }
+
+        SaveCurrent();
+        var oldDir = DirectoryFor(CurrentId);
+        var connection = QwenPlayground.Core.Pigeon.PigeonSession.LoadConnection(oldDir);
+        var reconnect = QwenPlayground.Core.Pigeon.PigeonSession.For(oldDir)?.Connected == true && connection.HasValue;
+        QwenPlayground.Core.Pigeon.PigeonSession.Disconnect(oldDir);
+        try
+        {
+            _sessions.RenameCurrent(normalized);
+        }
+        catch
+        {
+            if (reconnect)
+            {
+                await QwenPlayground.Core.Pigeon.PigeonSession.ConnectAsync(
+                    oldDir, connection!.Value.Endpoint, connection.Value.Channel);
+            }
+            throw;
+        }
+
+        var newDir = DirectoryFor(normalized);
+        QwenPlayground.Core.Pigeon.PigeonSession.ResetToken(newDir);
+        SessionChanged?.Invoke();
+        if (reconnect)
+        {
+            var error = await QwenPlayground.Core.Pigeon.PigeonSession.ConnectAsync(
+                newDir, connection!.Value.Endpoint, connection.Value.Channel);
+            if (error is not null)
+            {
+                DiagnosticsLog.Log($"session rename: pigeon reconnect failed: {error}");
+            }
+        }
+        return normalized;
+    }
+
     /// <summary>
     /// Удалить сессию из хранилища. true — удалена ТЕКУЩАЯ: CurrentId уже переехал на
     /// свежую пустую сессию, лог очищен, ключи профилей сброшены (новая сессия не

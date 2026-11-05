@@ -1,0 +1,131 @@
+<UserControl x:Class="QwenPlayground.App.Views.MailSettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:QwenPlayground.App.Views">
+    <!--
+    Секция настроек почты — отдельный UserControl (паттерн McpSettingsView: code-behind
+    работает с MailSettings напрямую, не через ViewModel). Настройки — AppSettings.Mail
+    (settings.json, план раздел 14); секреты маскируются в get_settings ([SettingSecret]).
+    Поля: тумблер → IMAP/SMTP → wake-политика → OAuth.
+    -->
+    <Expander Header="Почта (IMAP/SMTP, settings.json → Mail)" IsExpanded="False" Margin="0,0,0,4">
+        <StackPanel Margin="0,4,0,2">
+
+            <!-- Мастер-тумблер -->
+            <Grid Style="{StaticResource FieldGrid}" Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="190" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="почта"
+                           ToolTip="Мастер-переключатель. Вкл + refresh token (или пароль) = мониторинг входящих, state-строка, тулы mail_*." />
+                <CheckBox x:Name="EnabledCheck" Grid.Row="0" Grid.Column="1" Margin="0,3"
+                          VerticalAlignment="Center"
+                          ToolTip="Вкл — мониторинг входящих (poll), state-строка «mail», тулы полки mail. Требует refresh token (OAuth2) или пароль." />
+                <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Margin="0,4,0,0"
+                           Foreground="{StaticResource DimBrush}" FontSize="11" TextWrapping="Wrap"
+                           Text="Выкл — почта не используется. Вкл — нужен refresh token (OAuth2, тул mail_auth) или пароль (не-Google провайдеры)." />
+            </Grid>
+
+            <!-- IMAP/SMTP -->
+            <Grid Style="{StaticResource FieldGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="190" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="IMAP host"
+                           ToolTip="Хост IMAP-сервера (Gmail: imap.gmail.com)." />
+                <TextBox x:Name="ImapHostBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource TextField}" />
+                <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="IMAP port"
+                           ToolTip="Порт IMAP (Gmail: 993, SSL)." />
+                <TextBox x:Name="ImapPortBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                         local:NumField.Min="1" local:NumField.IsInteger="True" />
+                <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="SMTP host"
+                           ToolTip="Хост SMTP-сервера (Gmail: smtp.gmail.com)." />
+                <TextBox x:Name="SmtpHostBox" Grid.Row="2" Grid.Column="1" Style="{StaticResource TextField}" />
+                <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="SMTP port"
+                           ToolTip="Порт SMTP (Gmail: 465, SSL)." />
+                <TextBox x:Name="SmtpPortBox" Grid.Row="3" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                         local:NumField.Min="1" local:NumField.IsInteger="True" />
+                <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="poll interval, сек"
+                           ToolTip="Как часто проверять непрочитанные (минимум 10). Дефолт 60." />
+                <TextBox x:Name="PollIntervalBox" Grid.Row="4" Grid.Column="1" Style="{StaticResource NumFieldStyle}"
+                         local:NumField.Min="10" local:NumField.IsInteger="True" />
+            </Grid>
+
+            <!-- Wake-политика -->
+            <Expander Header="Политика пробуждения (wake)" IsExpanded="False" Margin="0,6,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="wake policy"
+                               ToolTip="Что будит агента: all (все письма), folders (только из указанных папок), senders (только от указанных отправителей)." />
+                    <ComboBox x:Name="WakePolicyCombo" Grid.Row="0" Grid.Column="1" Margin="0,3"
+                              Width="200" HorizontalAlignment="Left" VerticalAlignment="Center"
+                              ToolTip="Политика пробуждения от входящих писем." />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="wake senders"
+                               ToolTip="Белый список отправителей (email, через запятую). Действует при policy=senders." />
+                    <TextBox x:Name="WakeSendersBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource TextField}"
+                             ToolTip="Email-адреса через запятую. При policy=senders будят только эти отправители." />
+                    <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Margin="0,4,0,0"
+                               Foreground="{StaticResource DimBrush}" FontSize="11" TextWrapping="Wrap"
+                               Text="all — будят все письма; senders — только из белого списка; folders — только из указанных папок (фаза 2: пока только INBOX). Один раз на батч, не спамит." />
+                </Grid>
+            </Expander>
+
+            <!-- OAuth2 -->
+            <Expander Header="OAuth2 (Google)" IsExpanded="False" Margin="0,6,0,4">
+                <Grid Style="{StaticResource FieldGrid}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="client id"
+                               ToolTip="OAuth client id из Google Cloud Console (desktop app)." />
+                    <TextBox x:Name="OAuthClientIdBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource TextField}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="client secret"
+                               ToolTip="OAuth client secret из Google Cloud Console." />
+                    <PasswordBox x:Name="OAuthClientSecretBox" Grid.Row="1" Grid.Column="1" Width="320"
+                                 HorizontalAlignment="Left" Margin="0,3" VerticalAlignment="Center"
+                                 ToolTip="OAuth client secret. Показывается звёздочками; пустое поле = не менять." />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="email"
+                               ToolTip="Email аккаунта (заполняется при OAuth-авторизации, mail_auth)." />
+                    <TextBox x:Name="EmailBox" Grid.Row="2" Grid.Column="1" Style="{StaticResource TextField}" IsReadOnly="True" />
+                    <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Margin="0,4,0,0"
+                               Foreground="{StaticResource DimBrush}" FontSize="11" TextWrapping="Wrap"
+                               Text="Refresh token — через тул mail_auth: откроется системный браузер, Google вернётся на локальный callback (loopback + PKCE). Код копировать не нужно." />
+                </Grid>
+            </Expander>
+
+            <!-- Кнопка сохранения -->
+            <Button x:Name="SaveButton" Content="Сохранить" Margin="0,8,0,0" Padding="16,4"
+                    HorizontalAlignment="Left" Click="SaveButton_Click"
+                    ToolTip="Сохранить настройки почты в settings.json (секция Mail)" />
+
+        </StackPanel>
+    </Expander>
+</UserControl>

@@ -95,6 +95,24 @@ public sealed class QwenOutputParserTests
     }
 
     [Fact]
+    public void Parse_ClosedMalformedToolCall_KeepsAllContentAndNoCalls()
+    {
+        const string raw = """
+            done thinking</think>Before.
+            <tool_call>not a function</tool_call>
+            After.
+            """;
+
+        var message = QwenOutputParser.ParseAssistant(raw);
+
+        Assert.Null(message.ToolCalls);
+        Assert.Equal("done thinking", message.Reasoning);
+        Assert.Contains("Before.", message.Content);
+        Assert.Contains("not a function", message.Content);
+        Assert.Contains("After.", message.Content);
+    }
+
+    [Fact]
     public void Parse_StripsImEndToken()
     {
         var message = QwenOutputParser.ParseAssistant("thinking\n</think>\n\nAnswer.<|im_end|>");

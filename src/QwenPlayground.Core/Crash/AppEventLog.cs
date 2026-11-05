@@ -22,6 +22,7 @@ public static class AppEventLog
     /// <summary>Записать строку в events-лог. Никогда не бросает.</summary>
     public static void Log(string message)
     {
+        message = Security.SecretRedactor.Redact(message);
         try
         {
             var now = DateTime.Now;

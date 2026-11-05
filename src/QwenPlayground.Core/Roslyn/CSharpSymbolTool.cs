@@ -5,14 +5,14 @@ using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.Core.Roslyn;
 
-[Tool("csharp_symbol", "Find C# symbol declarations by name in the QwenPlayground solution. " +
-    "Returns kind, signature and file:line — for a multi-line declaration the whole line range " +
-    "(file:12-45) plus the first line of the comment above it, so you know what the element is " +
-    "and where it ends.", ToolGroup.CSharp)]
+[Tool("csharp_symbol", "Find C# symbol declarations by name in the tracked C# project " +
+    "(the QwenPlayground solution when the working folder is the harness root; otherwise the " +
+    "project set via csharp_track). Returns kind, signature and file:line — for a multi-line " +
+    "declaration the whole line range (file:12-45) plus the first line of the comment above it, " +
+    "so you know what the element is and where it ends. Paths are relative to the working folder.",
+    ToolGroup.CSharp)]
 public sealed class CSharpSymbolTool : AgentTool
 {
-    private static readonly RoslynService Service = RoslynService.Shared;
-
     private const int MaxResults = 50;
 
     [ToolParameter("Symbol name to find, e.g. QwenChatTemplate or Render", Required = true)]
@@ -20,7 +20,12 @@ public sealed class CSharpSymbolTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
-        var solution = await Service.GetSolutionAsync(cancellationToken);
+        if (CSharpProjects.Resolve(context.ProjectRoot, out var error) is not { } csharp)
+        {
+            return error!;
+        }
+        var solution = await csharp.Service.GetSolutionAsync(cancellationToken);
+        var root = context.ProjectRoot;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var results = new List<string>();
 
@@ -36,7 +41,7 @@ public sealed class CSharpSymbolTool : AgentTool
                 {
                     continue;
                 }
-                var element = await LocationFormatter.ElementAsync(symbol, cancellationToken);
+                var element = await LocationFormatter.ElementAsync(symbol, root, cancellationToken);
                 if (!seen.Add(element.Reference))
                 {
                     continue;

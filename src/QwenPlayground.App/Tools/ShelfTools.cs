@@ -16,18 +16,19 @@ namespace QwenPlayground.App.Tools;
     "desktop (mouse, keyboard, screenshots, window management), " +
     "mcp (external MCP tool servers: Blender, HuggingFace, and others — see MCP Servers table), " +
     "intuition (logprob probes of your own model: multiple-choice gut check, ordinal 0-9 rating, emoji vibe), " +
-    "pigeon (messenger for Qwens — pigeon_connect <address> joins this chat to a pigeon server channel). " +
+    "pigeon (messenger for Qwens — pigeon_connect <address> joins this chat to a pigeon server channel), " +
+    "mail (IMAP/SMTP: read, send, reply, move messages and download attachments). " +
     "Activate when you need the group's capability. Deactivate with deactivate_shelf when done.")]
 public sealed class ActivateShelfTool : AgentTool
 {
-    [ToolParameter("Group to activate: 'browser', 'csharp', 'desktop', 'mcp', 'intuition', or 'pigeon'", Required = true)]
+    [ToolParameter("Group to activate: 'browser', 'csharp', 'desktop', 'mcp', 'intuition', 'pigeon', or 'mail'", Required = true)]
     public string Group { get; set; } = string.Empty;
 
     public override Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
         if (!TryParseGroup(Group, out var group))
         {
-            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp, desktop, mcp, intuition, pigeon.");
+            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp, desktop, mcp, intuition, pigeon, mail.");
         }
         if (context.SessionDir is null)
         {
@@ -36,6 +37,7 @@ public sealed class ActivateShelfTool : AgentTool
         // Единая логика с UI-меню (ShelfState.Activate): немедленная активация,
         // пере-активация отменяет отложенную деактивацию.
         var result = new ShelfState(context.SessionDir).Activate(group);
+        ShelfAnnounce.Push(ShelfAnnounce.Agent, result, group);
         return result switch
         {
             ShelfResult.AlreadyActive => Task.FromResult(
@@ -83,18 +85,18 @@ public sealed class ActivateShelfTool : AgentTool
     "next natural system-prompt change (compaction/session switch), not immediately — this avoids an extra " +
     "KV-cache rebuild. Until then the group's tools remain available. Re-activating the group cancels the " +
     "scheduled deactivation. Use when you no longer need the group's capability. " +
-    "Groups: browser, csharp, desktop, mcp, intuition, pigeon. " +
+    "Groups: browser, csharp, desktop, mcp, intuition, pigeon, mail. " +
     "Note: deactivating the pigeon shelf does NOT disconnect you — use pigeon_disconnect for that.")]
 public sealed class DeactivateShelfTool : AgentTool
 {
-    [ToolParameter("Group to deactivate: 'browser', 'csharp', 'desktop', 'mcp', 'intuition', or 'pigeon'", Required = true)]
+    [ToolParameter("Group to deactivate: 'browser', 'csharp', 'desktop', 'mcp', 'intuition', 'pigeon', or 'mail'", Required = true)]
     public string Group { get; set; } = string.Empty;
 
     public override Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
         if (!ActivateShelfTool.TryParseGroup(Group, out var group))
         {
-            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp, desktop, mcp, intuition, pigeon.");
+            return Task.FromResult($"Error: unknown group '{Group}'. Available: browser, csharp, desktop, mcp, intuition, pigeon, mail.");
         }
         if (context.SessionDir is null)
         {
@@ -107,6 +109,7 @@ public sealed class DeactivateShelfTool : AgentTool
         // группы по-прежнему доступны.
         var state = new ShelfState(context.SessionDir);
         var result = state.Deactivate(group);
+        ShelfAnnounce.Push(ShelfAnnounce.Agent, result, group);
         if (result == ShelfResult.NotActive)
         {
             return Task.FromResult($"Group '{Group}' is not active.");

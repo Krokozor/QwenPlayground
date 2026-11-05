@@ -65,12 +65,12 @@ public static class QwenOutputParser
             {
                 break;
             }
-            if (contentEnd < 0)
-            {
-                contentEnd = open;
-            }
             if (TryParseFunction(text[innerStart..close], out var call))
             {
+                if (contentEnd < 0)
+                {
+                    contentEnd = open;
+                }
                 toolCalls.Add(call);
             }
             searchFrom = close + QwenSpecialTokens.ToolCallEnd.Length;

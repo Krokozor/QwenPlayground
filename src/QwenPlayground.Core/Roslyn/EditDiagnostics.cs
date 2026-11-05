@@ -1,19 +1,23 @@
 using Microsoft.CodeAnalysis;
+using QwenPlayground.Core.Tools;
 
 namespace QwenPlayground.Core.Roslyn;
 
 /// <summary>
 /// Валидация после правки: после каждого изменения .cs файла собирает ошибки
-/// компиляции по ВСЕМ проектам солюшена, а не только по отредактированному файлу.
-/// Так ломка в других файлах (например, смена сигнатуры метода, которую используют
-/// вызывающие стороны) видна сразу в результате edit_file, а не после rebuild_self.
-/// Общий workspace уже тёплый, поэтому полная проверка дёшева по сравнению со сборкой.
+/// компиляции по ВСЕМ проектам трекаемого C#-проекта (резолвится из рабочей папки
+/// сессии — CSharpProjects), а не только по отредактированному файлу. Так ломка в
+/// других файлах (например, смена сигнатуры метода, которую используют вызывающие
+/// стороны) видна сразу в результате edit_file, а не после rebuild_self. Общий
+/// workspace уже тёплый, поэтому полная проверка дёшева по сравнению со сборкой.
+/// Файл вне трекаемого проекта (чужая песочница и т.п.) — диагностика не прикладывается:
+/// честно, без fallback на домашний проект.
 /// </summary>
 public static class EditDiagnostics
 {
     private const int MaxErrors = 50;
 
-    public static async Task<string> AppendRoslynErrorsAsync(string fullPath, string toolResult, CancellationToken cancellationToken)
+    public static async Task<string> AppendRoslynErrorsAsync(ToolContext context, string fullPath, string toolResult, CancellationToken cancellationToken)
     {
         if (!fullPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
         {
@@ -21,7 +25,15 @@ public static class EditDiagnostics
         }
         try
         {
-            var solution = await RoslynService.Shared.GetSolutionAsync(cancellationToken);
+            if (CSharpProjects.Resolve(context.ProjectRoot, out _) is not { } csharp)
+            {
+                return toolResult; // нет трекаемого проекта — диагностика недоступна
+            }
+            var solution = await csharp.Service.GetSolutionAsync(cancellationToken);
+            if (RoslynService.FindDocument(solution, fullPath) is null)
+            {
+                return toolResult; // файл не в трекаемом проекте
+            }
             var errors = new List<string>();
             foreach (var project in solution.Projects)
             {
@@ -38,7 +50,7 @@ public static class EditDiagnostics
                     }
                     var position = diagnostic.Location.GetLineSpan();
                     var path = position.Path is not null
-                        ? Path.GetRelativePath(SelfBuild.SelfBuildPaths.WorkspaceRoot, position.Path)
+                        ? LocationFormatter.Relative(position.Path, context.ProjectRoot)
                         : "?";
                     errors.Add($"{diagnostic.Id} {path}:{position.StartLinePosition.Line + 1}: {diagnostic.GetMessage()}");
                     if (errors.Count >= MaxErrors)

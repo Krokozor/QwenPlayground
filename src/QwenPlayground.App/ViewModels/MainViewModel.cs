@@ -258,6 +258,16 @@ public partial class MainViewModel : ObservableObject, IChatHost {
                     _ = AutoConnectPigeonAsync(pigeonDir, pigeonEndpoint);
             }
         }
+        // Почта: авто-старт монитора, если настроена (refresh token или пароль + Enabled).
+        // Poll-цикл на UI-контексте (инвариант: агентный код на UI-потоке).
+        if (QwenPlayground.Core.Mail.MailSettings.Configured)
+        {
+            QwenPlayground.Core.Mail.MailMonitor.TryStart();
+            RebuildEventLog.App("mail: monitor started");
+        }
+        // Базовый снимок для runtime-синка (план, раздел 15): дальнейшие изменения
+        // почты через set_setting/UI сверяются с этим снимком (MailRuntimeSync.Sync).
+        Tools.MailRuntimeSync.Initialize();
         TurnsPanel = new TurnPanel(_main.Background.Turns);
 
         // Субагенты (spawn_subagent): исполнитель спавна живёт в UI (окно + ход),
@@ -406,6 +416,9 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         // идентичности уходят в оффлайн сразу, а не через 45-с heartbeat-таймаут сервера.
         _main.Lifecycle.Register(new DelegateAppService("pigeon",
             shutdown: () => QwenPlayground.Core.Pigeon.PigeonSession.DisconnectAll()));
+        // Почта: выход приложения — остановка монитора (poll-цикл + IMAP-соединение).
+        _main.Lifecycle.Register(new DelegateAppService("mail",
+            shutdown: () => QwenPlayground.Core.Mail.MailMonitor.Stop()));
         // Настройки, изменённые агентом изнутри (инструмент set_setting): живой экземпляр уже
         // обновлён и записан, остаётся перерисовать биндинг. Событие может прийти из
         // agent-потока → маришализуем на Dispatcher (см. OnSettingsChangedExternally).
@@ -642,6 +655,9 @@ public partial class MainViewModel : ObservableObject, IChatHost {
         Settings.RefreshAll();
         Chat.NotifyReasoningEffortChanged();
         Chat.RefreshPromptPreview();
+        // Runtime-синк почты (план, раздел 15): set_setting стал писателем почтовых
+        // настроек — сверяем монитор/кэши-соединения со снимком (UI-поток, идемпотентно).
+        Tools.MailRuntimeSync.Sync();
     }
 
     /// <summary>

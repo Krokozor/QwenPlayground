@@ -29,7 +29,7 @@ public sealed class DiaryStore
         {
             return;
         }
-        var text = episode.Trim();
+        var text = Security.SecretRedactor.Redact(episode.Trim());
         if (text.Length > MaxEntryLength)
         {
             text = text[..MaxEntryLength] + "\n... (обрезано)";

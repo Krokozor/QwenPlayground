@@ -20,26 +20,26 @@ namespace QwenPlayground.Core.Roslyn;
 /// (все из исходного файла), квалификаторы OldNs.Type переписываются текстом.
 /// </summary>
 [Tool("csharp_move_type",
-    "Move a C# top-level type to another file and/or namespace. The type declaration is " +
-    "extracted from its current file, written to the target file (inside the target " +
-    "namespace), all usings from the source file are carried over, references are updated " +
-    "(qualified 'OldNs.Type' rewritten to 'NewNs.Type'; a 'using' is added to files that " +
-    "refer to the type unqualified). Before saving, the result is compiled — if the move " +
-    "breaks anything (e.g. a same-named type in the target namespace), it is rejected and " +
-    "nothing is changed. Limitations: top-level types only (not nested), not partial " +
-    "classes (move all parts together), cosmetic formatting is not preserved (run an " +
-    "formatter afterwards if it matters).", ToolGroup.CSharp)]
+    "Move a C# top-level type to another file and/or namespace in the tracked C# project " +
+    "(the QwenPlayground solution when the working folder is the harness root; otherwise the " +
+    "project set via csharp_track). The type declaration is extracted from its current file, " +
+    "written to the target file (inside the target namespace), all usings from the source file " +
+    "are carried over, references are updated (qualified 'OldNs.Type' rewritten to 'NewNs.Type'; " +
+    "a 'using' is added to files that refer to the type unqualified). Paths are relative to the " +
+    "working folder. Before saving, the result is compiled — if the move breaks anything (e.g. " +
+    "a same-named type in the target namespace), it is rejected and nothing is changed. " +
+    "Limitations: top-level types only (not nested), not partial classes (move all parts " +
+    "together), cosmetic formatting is not preserved (run an formatter afterwards if it matters).",
+    ToolGroup.CSharp)]
 public sealed class CSharpMoveTypeTool : AgentTool
 {
-    private static readonly RoslynService Service = RoslynService.Shared;
-
     [ToolParameter("Type name to move", Required = true)]
     public string Name { get; set; } = string.Empty;
 
-    [ToolParameter("File of the declaration (relative to workspace root), disambiguates same-named types", Required = false)]
+    [ToolParameter("File of the declaration (relative to the working folder), disambiguates same-named types", Required = false)]
     public string? File { get; set; }
 
-    [ToolParameter("Target file path (relative to workspace root)", Required = true)]
+    [ToolParameter("Target file path (relative to the working folder)", Required = true)]
     public string NewFile { get; set; } = string.Empty;
 
     [ToolParameter("Target namespace (omit to keep the current one)", Required = false)]
@@ -47,8 +47,13 @@ public sealed class CSharpMoveTypeTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
-        var solution = await Service.GetSolutionAsync(cancellationToken);
-        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, Name, File, NewFile, NewNamespace, cancellationToken);
+        if (CSharpProjects.Resolve(context.ProjectRoot, out var error) is not { } csharp)
+        {
+            return error!;
+        }
+        var solution = await csharp.Service.GetSolutionAsync(cancellationToken);
+        var root = context.ProjectRoot;
+        var outcome = await CSharpMoveTypeCore.ApplyAsync(solution, Name, File, NewFile, NewNamespace, root, cancellationToken);
         if (outcome.Error is not null)
         {
             return outcome.Error;
@@ -69,7 +74,7 @@ public sealed class CSharpMoveTypeTool : AgentTool
             System.IO.File.WriteAllText(path, text);
         }
         // 2. Живой workspace.
-        await Service.ApplyChangesAsync(outcome.Modified!, cancellationToken);
+        await csharp.Service.ApplyChangesAsync(outcome.Modified!, cancellationToken);
 
         var builder = new StringBuilder();
         builder.AppendLine($"moved '{Name}' ({outcome.OldNamespace ?? "<global>"}) → {outcome.NewNamespace ?? "<global>"} / {outcome.NewFile}");
@@ -103,8 +108,12 @@ internal static class CSharpMoveTypeCore
         public string? NewFile { get; init; }
     }
 
+    /// <summary>
+    /// root — корень, от которого резолвятся относительные file/newFile и форматируются
+    /// пути в отчёте (рабочая папка сессии; in-memory-тесты — любая папка).
+    /// </summary>
     public static async Task<Outcome> ApplyAsync(
-        Solution solution, string typeName, string? file, string newFile, string? newNamespace, CancellationToken ct)
+        Solution solution, string typeName, string? file, string newFile, string? newNamespace, string root, CancellationToken ct)
     {
         // 1. Декларация (дедуп по месту — как в rename).
         var declarations = await FindDeclarationsAsync(solution, typeName, ct);
@@ -114,7 +123,7 @@ internal static class CSharpMoveTypeCore
         }
         if (file is not null)
         {
-            var match = declarations.FirstOrDefault(d => MatchesLocation(d, file));
+            var match = declarations.FirstOrDefault(d => MatchesLocation(d, file, root));
             if (match is null)
             {
                 return new Outcome { Error = $"type '{typeName}' not found in {file}" };
@@ -126,7 +135,7 @@ internal static class CSharpMoveTypeCore
             var candidates = declarations
                 .Select(d => (
                     Description: d.ToDisplayString(),
-                    Path: FormatLocation(d.Locations.FirstOrDefault(l => l.IsInSource))))
+                    Path: FormatLocation(d.Locations.FirstOrDefault(l => l.IsInSource), root)))
                 .ToList();
             return new Outcome
             {
@@ -195,8 +204,8 @@ internal static class CSharpMoveTypeCore
         var targetNamespace = string.IsNullOrWhiteSpace(newNamespace) ? oldNamespace : newNamespace;
 
         // 3. Цели: новый файл / тот же файл.
-        var oldKey = DocKey(oldDocument);
-        var isNewFile = !SameKey(oldKey, newFile);
+        var oldKey = DocKey(oldDocument, root);
+        var isNewFile = !SameKey(oldKey, newFile, root);
         if (!isNewFile && targetNamespace == oldNamespace)
         {
             return new Outcome { Error = "nothing to do: same file and same namespace" };
@@ -205,7 +214,7 @@ internal static class CSharpMoveTypeCore
         {
             var existing = documentsByTree.Values
                 .Select(solution.GetDocument)
-                .FirstOrDefault(d => d is not null && SameKey(DocKey(d), newFile));
+                .FirstOrDefault(d => d is not null && SameKey(DocKey(d, root), newFile, root));
             if (existing is not null)
             {
                 return new Outcome { Error = $"target file already exists in the solution: {newFile}" };
@@ -258,7 +267,7 @@ internal static class CSharpMoveTypeCore
         if (isNewFile)
         {
             var newDocumentId = DocumentId.CreateNewId(oldDocument.Project.Id, newFile);
-            fileWrites[ResolvePath(newFile)] = newFileText;
+            fileWrites[ResolvePath(newFile, root)] = newFileText;
         }
 
         // Старый файл: удалённый тип + (если есть использования) using/квалификаторы.
@@ -287,7 +296,7 @@ internal static class CSharpMoveTypeCore
                 continue;
             }
             var document = solution.GetDocument(documentId)!;
-            var path = DocKey(document);
+            var path = DocKey(document, root);
             var text = (await document.GetTextAsync(ct)).ToString();
             var updated = UpdateReferences(text, oldNamespace, targetNamespace, typeName);
             fileWrites[path] = updated;
@@ -312,11 +321,11 @@ internal static class CSharpMoveTypeCore
                 continue;
             }
             var document = modified.GetDocument(documentId)!;
-            modified = modified.WithDocumentText(documentId, SourceText.From(fileWrites[DocKey(document)]));
+            modified = modified.WithDocumentText(documentId, SourceText.From(fileWrites[DocKey(document, root)]));
         }
 
         // 9. Коллизии/пробелы ловит компилятор: дифф ошибок до/после.
-        var newErrors = await DiffErrorsAsync(solution, modified, affectedProjects, ct);
+        var newErrors = await DiffErrorsAsync(solution, modified, affectedProjects, root, ct);
         if (newErrors.Count > 0)
         {
             return new Outcome
@@ -465,7 +474,7 @@ internal static class CSharpMoveTypeCore
         return declarations;
     }
 
-    private static bool MatchesLocation(ISymbol symbol, string file)
+    private static bool MatchesLocation(ISymbol symbol, string file, string root)
     {
         var declaration = symbol.Locations.FirstOrDefault(l => l.IsInSource);
         if (declaration is null)
@@ -475,59 +484,51 @@ internal static class CSharpMoveTypeCore
         var span = declaration.GetLineSpan();
         var expected = Path.IsPathRooted(file)
             ? file
-            : Path.Combine(SelfBuildPaths.WorkspaceRoot, file);
+            : Path.Combine(root, file);
         // Живой солюшен: полный путь. In-memory: имя/путь документа.
         return string.Equals(span.Path, expected, StringComparison.OrdinalIgnoreCase)
             || string.Equals(span.Path, file, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string FormatLocation(Location? location)
+    private static string FormatLocation(Location? location, string root)
     {
         if (location is null || !location.IsInSource)
         {
             return "—";
         }
         var span = location.GetLineSpan();
-        return $"{FormatPathRaw(span.Path)}:{span.StartLinePosition.Line + 1}";
+        return $"{FormatPathRaw(span.Path, root)}:{span.StartLinePosition.Line + 1}";
     }
 
     /// <summary>
-    /// Ключ документа: полный путь; для in-memory (тесты) — имя документа.
+    /// Ключ документа: полный путь (относительный резолвится по root); для in-memory
+    /// (тесты) — имя документа.
     /// </summary>
-    private static string DocKey(Document document)
+    private static string DocKey(Document document, string root)
     {
-        return string.IsNullOrEmpty(document.FilePath) ? document.Name : ResolvePath(document.FilePath);
+        return string.IsNullOrEmpty(document.FilePath) ? document.Name : ResolvePath(document.FilePath, root);
     }
 
-    private static bool SameKey(string docKey, string file)
+    private static bool SameKey(string docKey, string file, string root)
     {
-        return string.Equals(docKey, ResolvePath(file), StringComparison.OrdinalIgnoreCase)
+        return string.Equals(docKey, ResolvePath(file, root), StringComparison.OrdinalIgnoreCase)
             || string.Equals(docKey, file, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string ResolvePath(string path)
+    private static string ResolvePath(string path, string root)
     {
-        return Path.IsPathRooted(path) ? path : Path.Combine(SelfBuildPaths.WorkspaceRoot, path);
+        return Path.IsPathRooted(path) ? path : Path.Combine(root, path);
     }
 
-    private static string FormatPathRaw(string? path)
+    private static string FormatPathRaw(string? path, string root)
     {
-        if (string.IsNullOrEmpty(path))
-        {
-            return "<in-memory>";
-        }
-        try
-        {
-            return Path.GetRelativePath(SelfBuildPaths.WorkspaceRoot, path).Replace('\\', '/');
-        }
-        catch
-        {
-            return path;
-        }
+        return string.IsNullOrEmpty(path)
+            ? "<in-memory>"
+            : LocationFormatter.Relative(path, root).Replace('\\', '/');
     }
 
     private static async Task<List<string>> DiffErrorsAsync(
-        Solution before, Solution after, HashSet<ProjectId> projects, CancellationToken ct)
+        Solution before, Solution after, HashSet<ProjectId> projects, string root, CancellationToken ct)
     {
         var beforeErrors = new HashSet<string>();
         var afterErrors = new List<string>();
@@ -545,7 +546,7 @@ internal static class CSharpMoveTypeCore
                 {
                     if (diagnostic.Severity == DiagnosticSeverity.Error)
                     {
-                        beforeErrors.Add(FormatDiagnostic(diagnostic));
+                        beforeErrors.Add(FormatDiagnostic(diagnostic, root));
                     }
                 }
             }
@@ -561,7 +562,7 @@ internal static class CSharpMoveTypeCore
                 {
                     if (diagnostic.Severity == DiagnosticSeverity.Error)
                     {
-                        afterErrors.Add(FormatDiagnostic(diagnostic));
+                        afterErrors.Add(FormatDiagnostic(diagnostic, root));
                     }
                 }
             }
@@ -569,10 +570,10 @@ internal static class CSharpMoveTypeCore
         return afterErrors.Where(e => !beforeErrors.Contains(e)).Distinct().ToList();
     }
 
-    private static string FormatDiagnostic(Diagnostic diagnostic)
+    private static string FormatDiagnostic(Diagnostic diagnostic, string root)
     {
         var location = diagnostic.Location.GetLineSpan();
-        var path = string.IsNullOrEmpty(location.Path) ? "?" : FormatPathRaw(location.Path);
+        var path = string.IsNullOrEmpty(location.Path) ? "?" : FormatPathRaw(location.Path, root);
         return $"{diagnostic.Id}: {diagnostic.GetMessage()} ({path}:{location.StartLinePosition.Line + 1})";
     }
 }

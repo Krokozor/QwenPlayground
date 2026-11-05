@@ -145,6 +145,9 @@ public sealed class SystemPromptAssembler
         // Вставляется ПЕРЕД слоями: системный промпт течёт в чат как
         // «кто я → какие инструменты → старая история → чуть новейшая → последняя → чат».
         var mcpRows = BuildMcpServerRows();
+        // Строка полки csharp — статичная (описание системы): живой трек выводится
+        // в <state>-блок, а не в промпт (решение 2026-11-05: тулы не должны
+        // инвалидировать KV-кеш через системный промпт).
         var index = ToolGroupIndex.Render(EffectiveShelves(), _toolRegistry, mcpRows);
         var beforeLayers = Combine(Combine(core, note), index.Length > 0 ? index : null);
         var final = Combine(beforeLayers, layersBlock.Length > 0 ? layersBlock : null);

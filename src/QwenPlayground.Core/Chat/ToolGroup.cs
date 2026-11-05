@@ -41,5 +41,11 @@ public enum ToolGroup
     /// Pigeon — мессенджер для Qwen'ов (docs/MESSANGER.md): канал чата на pigeon-сервере.
     /// Редко используемая способность — на полке; авто-активируется при подключении.
     /// </summary>
-    Pigeon = 6
+    Pigeon = 6,
+
+    /// <summary>
+    /// Почта (IMAP/SMTP): входящие в state-блоке, тулы для чтения/отправки/архивации.
+    /// Настройки — AppSettings.Mail (MailSettings, settings.json); OAuth2 для Google.
+    /// </summary>
+    Mail = 7
 }

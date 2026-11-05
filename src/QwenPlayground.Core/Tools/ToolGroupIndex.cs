@@ -13,6 +13,10 @@ namespace QwenPlayground.Core.Tools;
 /// Имена тулов активной группы — из рефлексии [Tool](name, desc, group) через ToolRegistry
 /// (не хардкод). Блок меняется при активации/деактивации — но это та же смена промпта, что и
 /// сами тулзы (KV-кеш и так пересобирается, см. [shelf-cache] в MainViewModel).
+/// ВАЖНО (решение 2026-11-05): строки — СТАТИЧЕСКИЙ контент (описание системы), а не живое
+/// состояние сессии: любое изменение, пересобирающее промпт работой тулов (например,
+/// csharp_track меняющий «текущий трек»), инвалидирует KV-кеш. Живое состояние (текущий
+/// C#-трек) выводится в <state>-блок (полка активна, периодически / при изменении).
 /// </summary>
 public static class ToolGroupIndex
 {
@@ -55,6 +59,14 @@ public static class ToolGroupIndex
             "the connection (the shelf auto-activates once connected); pigeon_disconnect stops it. The " +
             "connection state is visible in the shelf table even when this shelf is inactive. Activate to " +
             "connect to a pigeon server or work in your channel.",
+
+        [ToolGroup.CSharp] =
+            "Roslyn code tools for the C# project this chat tracks: find symbols/references/callers, go to " +
+            "definition, outline/class map, diagnostics, unused usings, batch reference reports, safe " +
+            "rename/move of types. Tracking is per-chat: csharp_track / csharp_untrack set/clear it (stored " +
+            "in the session, survives restarts); the default is the QwenPlayground solution (harness). While " +
+            "this shelf is active the current target is shown in the <state> block. Activate when the task " +
+            "involves C# code analysis or refactoring.",
     };
 
     /// <summary>
@@ -90,6 +102,7 @@ public static class ToolGroupIndex
             "| group | status | description |",
             "|---|---|---|"
         };
+
         foreach (var g in groups)
         {
             var name = g.ToString().ToLowerInvariant();

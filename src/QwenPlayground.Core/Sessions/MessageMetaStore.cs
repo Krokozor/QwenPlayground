@@ -105,7 +105,7 @@ public sealed class MessageMetaStore
         var dir = Path.Combine(ArtifactsDir(msgId), "attachments");
         Directory.CreateDirectory(dir);
         var dest = Path.Combine(dir, fileName);
-        File.WriteAllText(dest, content);
+        File.WriteAllText(dest, Security.SecretRedactor.Redact(content));
         return dest;
     }
 }

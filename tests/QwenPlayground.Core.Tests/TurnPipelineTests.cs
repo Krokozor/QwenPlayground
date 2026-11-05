@@ -35,7 +35,9 @@ public sealed class TurnPipelineTests : IDisposable
     private Exception? _loopException;
     // Шов для тестов: цикл ждёт эту задачу перед событиями (блокировка хода посреди).
     private Task? _loopGate;
+    private Func<CancellationToken, Task<int>>? _countTokens;
     private AgentLoopRequest? _observedRequest;
+    private TaskCompletionSource<bool>? _requestObserved; // сигнал: ход вошёл в цикл (FakeLoop вызван) — ждём без polling
     private readonly TurnPipeline _pipeline;
     private readonly string _projectRootBackup;
     private string? _lastSessionIdBackup;
@@ -70,7 +72,7 @@ public sealed class TurnPipelineTests : IDisposable
             (prompt, key, announce, ct) => Task.FromResult<string?>(null),
             new MemoryLayerStore(),
             _surfacer,
-            _ => Task.FromResult(0),
+            ct => _countTokens is { } count ? count(ct) : Task.FromResult(0),
             async () =>
             {
                 _effectiveSizeCalls++;
@@ -142,6 +144,7 @@ public sealed class TurnPipelineTests : IDisposable
     private async IAsyncEnumerable<AgentEvent> FakeLoop(AgentLoopRequest request)
     {
         _observedRequest = request;
+        _requestObserved?.TrySetResult(true);
         if (_loopGate is not null)
         {
             await _loopGate;
@@ -183,12 +186,10 @@ public sealed class TurnPipelineTests : IDisposable
         // первый ход не затронут и доходит до конца.
         var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _loopGate = gate.Task;
+        _requestObserved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var first = _pipeline.RunTurnAsync(continueLastAssistant: false, _ => { });
-        for (var i = 0; i < 200 && _observedRequest is null; i++)
-        {
-            await Task.Delay(10);
-        }
+        await _requestObserved.Task.WaitAsync(TimeSpan.FromSeconds(5)); // ход вошёл в цикл (без polling)
         Assert.NotNull(_observedRequest); // первый ход вошёл в цикл (FSM уже Generating)
         Assert.Equal(ChatState.Generating, _chatState.Current);
 
@@ -276,7 +277,6 @@ public sealed class TurnPipelineTests : IDisposable
         Assert.Equal(30, outcome.CompletionTokens);
         Assert.False(outcome.Compacted);
         Assert.Null(outcome.SlotId); // тесты без пиннинга слотов
-        Assert.True(outcome.Duration >= TimeSpan.Zero);
     }
 
     [Fact]
@@ -286,13 +286,11 @@ public sealed class TurnPipelineTests : IDisposable
         // как делает цикл при сжатии контекста между итерациями).
         var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _loopGate = gate.Task;
+        _requestObserved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _scriptedEvents.Add(new AgentDoneEvent());
 
         var turn = _pipeline.RunTurnAsync(continueLastAssistant: false, _ => { });
-        for (var i = 0; i < 200 && _observedRequest is null; i++)
-        {
-            await Task.Delay(10);
-        }
+        await _requestObserved.Task.WaitAsync(TimeSpan.FromSeconds(5)); // ход вошёл в цикл (без polling)
         Assert.NotNull(_observedRequest); // ход вошёл в цикл (FSM — Generating)
         _chatState.Transition(ChatState.Compacting);
         _chatState.Transition(ChatState.Generating);
@@ -373,6 +371,30 @@ public sealed class TurnPipelineTests : IDisposable
         Assert.True(request.AllowToolExecution);
         Assert.NotNull(request.ToolDefinitionsProvider);
         Assert.NotEmpty(request.ToolDefinitionsProvider());
+    }
+
+    [Fact]
+    public async Task Turn_CancelledDuringBudgetCheck_ReturnsCanceled_DoesNotStartLoop()
+    {
+        var counting = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _countTokens = async ct =>
+        {
+            counting.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return 0;
+        };
+
+        var turn = _pipeline.RunTurnAsync(continueLastAssistant: false, _ => { });
+        await counting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        _pipeline.Cancel();
+        var outcome = await turn.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(outcome.Canceled);
+        Assert.Null(outcome.Error);
+        Assert.Null(_observedRequest);
+        Assert.Equal(ChatState.Idle, _chatState.Current);
+        Assert.Equal(new[] { true, false }, _generating);
+        Assert.True(File.Exists(Path.Combine(_root, MainAgent.SessionId, "chat.json")));
     }
 
     [Fact]

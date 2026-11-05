@@ -59,6 +59,10 @@ public sealed class TurnViewViewModel {
             turn.Raw.Append(continued.ToRawOutput());
         }
         var outcome = await _runtime.Turns.RunTurnAsync(continueLastAssistant, e => DispatchEvent(turn, e));
+        if (turn.PendingTool is not null && (outcome.Canceled || outcome.Error is not null)) {
+            turn.PendingTool.Content = outcome.Canceled ? "отменено" : $"ошибка: {outcome.Error!.Message}";
+            turn.PendingTool = null;
+        }
         if (outcome.Busy) {
             // FSM занят — ход не стартовал (двойной клик «отправить», wake во время хода).
             // Показывать нечего: активный ход уже в виде; событий не было, пузырей не создавать.

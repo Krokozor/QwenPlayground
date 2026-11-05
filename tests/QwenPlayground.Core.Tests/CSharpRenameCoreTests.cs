@@ -13,6 +13,10 @@ namespace QwenPlayground.Core.Tests;
 /// </summary>
 public sealed class CSharpRenameCoreTests
 {
+    // In-memory-документы не имеют реальных путей: root — любая папка,
+    // используется только для форматирования путей в отчёте ядра.
+    private static readonly string TestRoot = Path.GetTempPath();
+
     private const string SourceA =
         "public class Foo\n{\n    public int Bar { get; set; }\n}";
 
@@ -70,7 +74,7 @@ public sealed class CSharpRenameCoreTests
     {
         var (_, solution) = CreateWorkspace(SourceA, SourceB);
 
-        var outcome = await CSharpRenameCore.ApplyAsync(solution, "Bar", "Baz", null, null, CancellationToken.None);
+        var outcome = await CSharpRenameCore.ApplyAsync(solution, "Bar", "Baz", null, null, TestRoot, CancellationToken.None);
 
         Assert.Null(outcome.Error);
         Assert.Equal(2, outcome.TotalLocations); // декларация (A) + использование (B)
@@ -89,7 +93,7 @@ public sealed class CSharpRenameCoreTests
             "public class Foo\n{\n    public int Bar { get; set; }\n    public int Baz { get; set; }\n}";
         var (_, solution) = CreateWorkspace(withCollision, SourceB);
 
-        var outcome = await CSharpRenameCore.ApplyAsync(solution, "Bar", "Baz", null, null, CancellationToken.None);
+        var outcome = await CSharpRenameCore.ApplyAsync(solution, "Bar", "Baz", null, null, TestRoot, CancellationToken.None);
 
         Assert.NotNull(outcome.Error);
         Assert.Contains("collides", outcome.Error);
@@ -102,7 +106,7 @@ public sealed class CSharpRenameCoreTests
     {
         var (_, solution) = CreateWorkspace(SourceA, SourceB);
 
-        var outcome = await CSharpRenameCore.ApplyAsync(solution, "Bar", "class", null, null, CancellationToken.None);
+        var outcome = await CSharpRenameCore.ApplyAsync(solution, "Bar", "class", null, null, TestRoot, CancellationToken.None);
 
         Assert.NotNull(outcome.Error);
         Assert.Contains("keyword", outcome.Error);
@@ -116,7 +120,7 @@ public sealed class CSharpRenameCoreTests
         const string mInB = "public class Other\n{\n    public int M() { return 2; }\n}";
         var (_, solution) = CreateWorkspace(mInA, mInB);
 
-        var outcome = await CSharpRenameCore.ApplyAsync(solution, "M", "N", null, null, CancellationToken.None);
+        var outcome = await CSharpRenameCore.ApplyAsync(solution, "M", "N", null, null, TestRoot, CancellationToken.None);
 
         Assert.NotNull(outcome.Error);
         Assert.Contains("Ambiguous", outcome.Error);
@@ -132,7 +136,7 @@ public sealed class CSharpRenameCoreTests
         const string mInB = "public class Other\n{\n    public int M() { return 2; }\n}";
         var (_, solution) = CreateWorkspace(mInA, mInB);
 
-        var outcome = await CSharpRenameCore.ApplyAsync(solution, "M", "N", "A.cs", null, CancellationToken.None);
+        var outcome = await CSharpRenameCore.ApplyAsync(solution, "M", "N", "A.cs", null, TestRoot, CancellationToken.None);
 
         Assert.Null(outcome.Error);
         var textA = await DocumentTextAsync(outcome.Modified!, "A.cs");
@@ -150,7 +154,7 @@ public sealed class CSharpRenameCoreTests
             "using Ns;\npublic class Consumer\n{\n    public Foo Make() { return new Foo(); }\n}";
         var (_, solution) = CreateWorkspace(typeA, typeB);
 
-        var outcome = await CSharpRenameCore.ApplyAsync(solution, "Foo", "Baz", null, null, CancellationToken.None);
+        var outcome = await CSharpRenameCore.ApplyAsync(solution, "Foo", "Baz", null, null, TestRoot, CancellationToken.None);
 
         Assert.Null(outcome.Error);
         var textB = await DocumentTextAsync(outcome.Modified!, "B.cs");
@@ -163,7 +167,7 @@ public sealed class CSharpRenameCoreTests
     {
         var (_, solution) = CreateWorkspace(SourceA, SourceB);
 
-        var outcome = await CSharpRenameCore.ApplyAsync(solution, "NoSuchSymbol", "X", null, null, CancellationToken.None);
+        var outcome = await CSharpRenameCore.ApplyAsync(solution, "NoSuchSymbol", "X", null, null, TestRoot, CancellationToken.None);
 
         Assert.NotNull(outcome.Error);
         Assert.Contains("not found", outcome.Error);

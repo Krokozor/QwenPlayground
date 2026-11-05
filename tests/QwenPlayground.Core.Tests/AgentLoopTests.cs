@@ -23,6 +23,7 @@ public sealed class AgentLoopTests : IDisposable
 {
     private readonly ChatLog _log = new();
     private readonly List<AgentEvent> _events = new();
+    private TaskCompletionSource<bool>? _firstEvent; // сигнал: первое событие появилось (ждём без polling)
     private readonly List<(string Name, JsonObject Args)> _executedTools = new();
     private readonly AgentLoop _loop;
     private readonly bool _trafficLogEnabledBackup;
@@ -176,12 +177,17 @@ public sealed class AgentLoopTests : IDisposable
             SanityCheckInterval = 0,
             ReasoningEffort = ReasoningEffort.Medium,
             Generation = new GenerationOptions(),
+            SessionRoot = Path.GetTempPath,
             CancellationToken = cancellationToken
         };
         request = modify?.Invoke(request) ?? request;
         await foreach (var e in _loop.RunAsync(request))
         {
             _events.Add(e);
+            if (_events.Count == 1)
+            {
+                _firstEvent?.TrySetResult(true);
+            }
         }
         return source;
     }
@@ -284,6 +290,7 @@ public sealed class AgentLoopTests : IDisposable
     {
         // Детерминированность: фейк зависает на втором чанке (GateSecondChunk),
         // отмена гарантированно приходит ПОСРЕДИ стрима, а не после его завершения.
+        _firstEvent = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var cts = new CancellationTokenSource();
         var run = RunLoopAsync(
             cancellationToken: cts.Token,
@@ -293,12 +300,10 @@ public sealed class AgentLoopTests : IDisposable
                 (FinalResponse("долгая мысль", "долгий ответ"), new TokenUsage(10, 1))
             });
 
-        // Дождаться первого чанка (цикл вошёл в стрим) ИЛИ падения run (страховка от
-        // вечного спина: если цикл умер до первого события, ждём его исключения, а не событий).
-        while (_events.Count == 0 && !run.IsCompleted)
-        {
-            await Task.Delay(5);
-        }
+        // Дождаться первого чанка (цикл вошёл в стрим) ИЛИ завершения run (страховка от раннего
+        // падения: если цикл умер до первого события, WhenAny вернёт run, и ассерт ниже покажет
+        // его исключение). Без polling.
+        await Task.WhenAny(_firstEvent.Task, run).WaitAsync(TimeSpan.FromSeconds(5));
         cts.Cancel();
 
         // ThrowsAny: из Task.Delay(∞, ct) прилетает TaskCanceledException (наследник OCE).

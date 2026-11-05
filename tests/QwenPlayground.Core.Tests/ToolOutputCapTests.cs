@@ -20,6 +20,19 @@ public sealed class ToolOutputCapTests : IDisposable
     private ToolContext Context() => new(_dir);
 
     [Fact]
+    public async Task Shell_StdoutAndStderr_AreBothReturned()
+    {
+        Directory.CreateDirectory(_dir);
+
+        var result = await new ShellTool { Command = "echo out & echo err 1>&2", TimeoutSeconds = 10 }
+            .ExecuteAsync(Context(), CancellationToken.None);
+
+        Assert.Contains("exit code: 0", result);
+        Assert.Contains("out", result);
+        Assert.Contains("err", result);
+    }
+
+    [Fact]
     public async Task Grep_TruncatesAtMatchLimit()
     {
         Directory.CreateDirectory(_dir);
@@ -150,6 +163,19 @@ public sealed class ToolOutputCapTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadFile_OffsetBeyondEnd_ReturnsMessageInsteadOfLastLine()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllLines(Path.Combine(_dir, "short.txt"), ["first", "second"]);
+
+        var result = await new ReadFileTool { Path = "short.txt", Offset = 100, Limit = 3 }
+            .ExecuteAsync(Context(), CancellationToken.None);
+
+        Assert.Contains("offset 100 is beyond the end of file (2 lines)", result);
+        Assert.DoesNotContain("2: second", result);
+    }
+
+    [Fact]
     public async Task ReadFile_TrimsLongLine_WithTailMarker()
     {
         Directory.CreateDirectory(_dir);
@@ -160,6 +186,21 @@ public sealed class ToolOutputCapTests : IDisposable
         Assert.Contains("[+", result);
         Assert.Contains(" chars]", result);
         Assert.True(result.Length < 1000, $"длинная строка должна обрезаться, длина={result.Length}");
+    }
+
+    [Fact]
+    public async Task ReadFile_LineBeyondTotalCap_StillReturnsTrimmedPreview()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllLines(Path.Combine(_dir, "minified.txt"), [new string('x', 40_000)]);
+
+        var result = await new ReadFileTool { Path = "minified.txt", Offset = 1, Limit = 1 }
+            .ExecuteAsync(Context(), CancellationToken.None);
+
+        Assert.Contains("1: " + new string('x', 400), result);
+        Assert.Contains("[+39600 chars]", result);
+        Assert.DoesNotContain("output cap reached", result);
+        Assert.True(result.Length < 1000, $"должно быть короткое превью, длина={result.Length}");
     }
 
     [Fact]

@@ -2,6 +2,8 @@ using System.Text.Json;
 using QwenPlayground.Core.SelfBuild;
 using QwenPlayground.Core.Settings;
 using QwenPlayground.Core.Templates;
+using QwenPlayground.Core.Tools;
+using QwenPlayground.Core.Tools.Builtins;
 
 namespace QwenPlayground.Core.Tests;
 
@@ -74,6 +76,33 @@ public sealed class SettingsStoreTests
             {
                 File.Delete(path);
             }
+        }
+    }
+
+    [Fact]
+    public async Task SetSetting_FiresChanged()
+    {
+        var original = AppSettings.Get().MaxIterations;
+        var changed = 0;
+        void Handler(AppSettings _) => changed++;
+        SettingsStore<AppSettings>.Changed += Handler;
+        try
+        {
+            var result = await new SetSettingTool
+            {
+                Name = nameof(AppSettings.MaxIterations),
+                Value = (original + 1).ToString()
+            }.ExecuteAsync(new ToolContext(SelfBuildPaths.WorkspaceRoot), CancellationToken.None);
+
+            Assert.Equal(1, changed);
+            Assert.Equal(original + 1, AppSettings.Get().MaxIterations);
+            Assert.Contains("Persisted", result);
+        }
+        finally
+        {
+            AppSettings.Get().MaxIterations = original;
+            AppSettings.Save();
+            SettingsStore<AppSettings>.Changed -= Handler;
         }
     }
 }

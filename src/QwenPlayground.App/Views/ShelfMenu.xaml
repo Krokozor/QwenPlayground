@@ -72,5 +72,16 @@
                 </StackPanel>
             </MenuItem.Header>
         </MenuItem>
+        <MenuItem IsCheckable="True" IsChecked="{Binding MailShelf.IsOn, Mode=OneWay}"
+                  Command="{Binding ToggleShelfCommand}" CommandParameter="Mail"
+                  ToolTip="{Binding MailShelf.Description}">
+            <MenuItem.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Mail" />
+                    <TextBlock Text="{Binding MailShelf.StatusText}" Margin="8,0,0,0" FontSize="11"
+                               Foreground="{Binding MailShelf.StatusBrush}" />
+                </StackPanel>
+            </MenuItem.Header>
+        </MenuItem>
     </StackPanel>
 </UserControl>

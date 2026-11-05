@@ -55,6 +55,16 @@ public sealed class ToolRegistryTests
     }
 
     [Fact]
+    public void MailAuth_DoesNotAdvertiseClientSecret()
+    {
+        var definition = Assert.Single(NewRegistry().Definitions, d => d.Name == "mail_auth");
+        var parameters = definition.Parameters.ToJsonString();
+
+        Assert.Contains("client_id", parameters);
+        Assert.DoesNotContain("client_secret", parameters);
+    }
+
+    [Fact]
     public async Task Execute_UnknownTool_SaysUnknownNotProfileDenial()
     {
         var registry = new ToolRegistry(typeof(AgentTool).Assembly);

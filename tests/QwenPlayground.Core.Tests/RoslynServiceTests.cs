@@ -5,11 +5,15 @@ namespace QwenPlayground.Core.Tests;
 
 public sealed class RoslynServiceTests
 {
+    // Тулы резолвят C#-проект из рабочей папки: home-корень → домашний солюшен
+    // (преднастройка). Песочница (GetTempPath) без трека честной ошибкой.
+    private static readonly string HomeRoot = QwenPlayground.Core.SelfBuild.SelfBuildPaths.WorkspaceRoot;
+
     [Fact]
     public async Task Diagnostics_ReturnsCollection()
     {
         var tool = new CSharpDiagnosticsTool();
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.False(result.StartsWith("Error"), result);
     }
@@ -18,7 +22,7 @@ public sealed class RoslynServiceTests
     public async Task Symbol_FindsKnownType()
     {
         var tool = new CSharpSymbolTool { Name = "QwenChatTemplate" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.Contains("QwenChatTemplate", result);
         Assert.Contains("QwenChatTemplate.cs", result.Replace('\\', '/'));
@@ -28,7 +32,7 @@ public sealed class RoslynServiceTests
     public async Task Outline_ListsTypesAndMembers()
     {
         var tool = new CSharpOutlineTool { Path = @"src\QwenPlayground.Core\Chat\ChatMessage.cs" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.Contains("class ChatMessage", result);
         Assert.Contains("property", result);
@@ -38,7 +42,7 @@ public sealed class RoslynServiceTests
     public async Task ClassMap_FindsTypeAndMembers()
     {
         var tool = new CSharpClassMapTool { Name = "QwenChatTemplate" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.Contains("class QwenChatTemplate", result);
         Assert.Contains("QwenChatTemplate.cs", result.Replace('\\', '/'));
@@ -49,7 +53,7 @@ public sealed class RoslynServiceTests
     public async Task References_FindsUsagesOfKnownType()
     {
         var tool = new CSharpReferencesTool { Name = "QwenChatTemplate" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.Contains("QwenChatTemplate", result);
         Assert.Contains(".cs", result);
@@ -59,7 +63,7 @@ public sealed class RoslynServiceTests
     public async Task Callers_FindsCallersOfKnownMethod()
     {
         var tool = new CSharpCallersTool { Name = "GetSolutionAsync" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.Contains("GetSolutionAsync", result);
     }
@@ -72,7 +76,7 @@ public sealed class RoslynServiceTests
         var line = source.Split('\n').Select((text, i) => (text, i)).First(t => t.text.Contains("class QwenChatTemplate")).i + 1;
 
         var tool = new CSharpDefinitionTool { Path = relativePath, Line = line, Name = "QwenChatTemplate" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.False(result.StartsWith("Error"), result);
         Assert.Contains("QwenChatTemplate", result);
@@ -90,7 +94,7 @@ public sealed class RoslynServiceTests
     public async Task Symbol_MultiLineDeclaration_ShowsRangeAndDoc()
     {
         var tool = new CSharpSymbolTool { Name = "ApplyChangesAsync" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.Contains("RoslynService.cs", result);
         Assert.True(HasLineRange(result), $"ожидается диапазон строк, получено: {result}");
@@ -103,7 +107,7 @@ public sealed class RoslynServiceTests
         // Символ находится по разу из каждого проекта, ссылающегося на его проект:
         // без дедупа по месту декларации выдача из семи одинаковых строк.
         var tool = new CSharpSymbolTool { Name = "GetSolutionAsync" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         var lines = result.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         Assert.Single(lines);
@@ -119,7 +123,7 @@ public sealed class RoslynServiceTests
             .First(t => t.text.Contains("public static string? Usage(")).i + 1;
 
         var tool = new CSharpDefinitionTool { Path = relativePath, Line = line, Name = "Usage" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.True(HasLineRange(result), $"ожидается диапазон строк, получено: {result}");
         Assert.Contains("//", result);
@@ -129,7 +133,7 @@ public sealed class RoslynServiceTests
     public async Task Outline_ShowsRangesAndDocs()
     {
         var tool = new CSharpOutlineTool { Path = @"src\QwenPlayground.Core\Roslyn\LocationFormatter.cs" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.True(HasLineRange(result), $"ожидаются диапазоны строк, получено: {result}");
         Assert.Contains("//", result);
@@ -139,7 +143,7 @@ public sealed class RoslynServiceTests
     public async Task ClassMap_SameTypeFromManyProjects_PrintedOnce()
     {
         var tool = new CSharpClassMapTool { Name = "ShelfState" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.Equal(1, Occurrences(result, "class ShelfState "));
         Assert.True(HasLineRange(result), $"ожидается диапазон строк, получено: {result}");
@@ -149,7 +153,7 @@ public sealed class RoslynServiceTests
     public async Task References_GroupedByDeclarationWithRange()
     {
         var tool = new CSharpReferencesTool { Name = "ApplyChangesAsync" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.Contains("reference(s) to 'ApplyChangesAsync'", result);
         Assert.True(HasLineRange(result), $"ожидается диапазон строк декларации, получено: {result}");
@@ -161,7 +165,7 @@ public sealed class RoslynServiceTests
     public async Task Callers_GroupedByDeclaration()
     {
         var tool = new CSharpCallersTool { Name = "GetSolutionAsync" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.Contains("caller(s) of 'GetSolutionAsync' in 1 declaration(s)", result);
         Assert.True(HasLineRange(result), $"ожидается диапазон строк декларации, получено: {result}");
@@ -171,7 +175,7 @@ public sealed class RoslynServiceTests
     public async Task ReferenceReport_RowsCarryDeclarationAndDoc()
     {
         var tool = new CSharpReferenceReportTool { Type = "ShelfState" };
-        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(Path.GetTempPath()), CancellationToken.None);
+        var result = await tool.ExecuteAsync(new QwenPlayground.Core.Tools.ToolContext(HomeRoot), CancellationToken.None);
 
         Assert.Contains("declaration", result);
         Assert.Contains("//", result); // описание из комментария над членом

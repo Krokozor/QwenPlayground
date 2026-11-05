@@ -66,7 +66,18 @@ public sealed class ReadFileTool : AgentTool
         }
 
         var lines = File.ReadAllLines(fullPath);
-        var offset = Math.Clamp(Offset ?? 1, 1, Math.Max(lines.Length, 1));
+        if (lines.Length == 0)
+        {
+            return Task.FromResult($"{context.ToRelative(fullPath)} — empty file (0 lines)");
+        }
+        var requestedOffset = Offset ?? 1;
+        if (requestedOffset > lines.Length)
+        {
+            return Task.FromResult(
+                $"{context.ToRelative(fullPath)} — offset {requestedOffset} is beyond the end of file " +
+                $"({lines.Length} lines); nothing to read.");
+        }
+        var offset = Math.Max(requestedOffset, 1);
         var limit = Math.Max(Limit ?? DefaultLimit, 1);
         var end = Math.Min(offset + limit - 1, lines.Length);
 
@@ -78,22 +89,16 @@ public sealed class ReadFileTool : AgentTool
         for (var i = offset - 1; i < end; i++)
         {
             var line = lines[i];
-            if (builder.Length + line.Length > MaxOutputChars && builder.Length > 0)
+            var rendered = line.Length > MaxLineChars
+                ? line[..MaxLineChars] + "… [+" + (line.Length - MaxLineChars) + " chars]"
+                : line;
+            if (i > offset - 1 && builder.Length + rendered.Length > MaxOutputChars)
             {
                 truncated = true;
                 nextOffset = i + 1; // 1-based номер строки, с которой продолжать чтение
                 break;
             }
-            builder.Append(i + 1).Append(": ");
-            if (line.Length > MaxLineChars)
-            {
-                builder.Append(line[..MaxLineChars]).Append("… [+").Append(line.Length - MaxLineChars).Append(" chars]");
-            }
-            else
-            {
-                builder.Append(line);
-            }
-            builder.Append('\n');
+            builder.Append(i + 1).Append(": ").Append(rendered).Append('\n');
         }
         if (truncated)
         {

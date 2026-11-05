@@ -139,6 +139,23 @@ public sealed class ChatSessions
         PersistCurrentId();
     }
 
+    /// <summary>Переименовать текущую non-main сессию, сохранив всё содержимое её папки.</summary>
+    public void RenameCurrent(string newId)
+    {
+        if (CurrentId == MainAgent.SessionId)
+        {
+            throw new InvalidOperationException("main session cannot be renamed");
+        }
+        if (CurrentId == newId)
+        {
+            return;
+        }
+        _store.Rename(CurrentId, newId);
+        CurrentId = newId;
+        PersistCurrentId();
+        RefreshList();
+    }
+
     /// <summary>
     /// Удалить сессию из хранилища. true — удалена ТЕКУЩАЯ: CurrentId уже переехал на
     /// свежую пустую сессию, владелец должен очистить чат.

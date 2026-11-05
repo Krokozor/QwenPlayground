@@ -41,7 +41,7 @@ public sealed class ToolManagerLiveTests
 
     [Theory]
     [MemberData(nameof(ToolNames))]
-    public void LatestRelease_Live_ResolvesAssetWithDigest(string toolName)
+    public async Task LatestRelease_Live_ResolvesAssetWithDigest(string toolName)
     {
         if (!NetworkAvailable())
         {
@@ -49,7 +49,7 @@ public sealed class ToolManagerLiveTests
         }
         var tool = LauncherConfig.CreateDefault().Tools[toolName];
 
-        var (release, error) = ToolManager.TryGetLatestReleaseAsync(tool).GetAwaiter().GetResult();
+        var (release, error) = await ToolManager.TryGetLatestReleaseAsync(tool);
 
         Assert.True(release is not null, $"GitHub API не ответил: {error}");
         Assert.NotEmpty(release!.Tag);
@@ -62,7 +62,7 @@ public sealed class ToolManagerLiveTests
 
     [Theory]
     [MemberData(nameof(ToolNames))]
-    public void VersionProbe_Live_ReadsVersionFromInstalledTool(string toolName)
+    public async Task VersionProbe_Live_ReadsVersionFromInstalledTool(string toolName)
     {
         if (!NetworkAvailable())
         {
@@ -74,7 +74,7 @@ public sealed class ToolManagerLiveTests
             return; // инструмент не ставили — зонд нечего проверять
         }
 
-        var version = ToolManager.GetInstalledVersionAsync(tool).GetAwaiter().GetResult();
+        var version = await ToolManager.GetInstalledVersionAsync(tool);
 
         // Раньше зонд читал только stdout: poppler печатает версию в stderr и «-version»
         // не понимает, из-за чего ячейка версии была пустой без всякой ошибки.

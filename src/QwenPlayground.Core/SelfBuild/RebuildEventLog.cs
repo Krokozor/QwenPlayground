@@ -18,6 +18,7 @@ public static class RebuildEventLog
 
     public static void Log(string source, string message)
     {
+        message = Security.SecretRedactor.Redact(message);
         try
         {
             var line = $"[{DateTime.Now:O}] [{source} {Environment.ProcessId}] {message}";

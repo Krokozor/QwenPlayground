@@ -4,9 +4,11 @@ namespace QwenPlayground.Core.Tests;
 
 /// <summary>
 /// Статичная мусорка анонсов: push/drain, кап, пустые входы, адаптер-анонсер.
-/// Класс — единственный потребитель статичного состояния мусорки, конфликтов
-/// с параллельными тестами нет (Clear в начале каждого теста — изоляция).
+/// Потребители статичного состояния мусорки (сюда и ShelfAnnounceTests) сериализованы
+/// коллекцией announcement-board: параллельный Clear/Push/Drain из разных классов гонится.
+/// Clear в начале каждого теста — изоляция внутри класса.
 /// </summary>
+[Collection("announcement-board")]
 public sealed class AnnouncementBoardTests
 {
     [Fact]

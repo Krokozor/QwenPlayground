@@ -20,26 +20,27 @@ namespace QwenPlayground.Core.Roslyn;
 /// (косметика, не компиляция) — честно в ответе.
 /// </summary>
 [Tool("csharp_rename",
-    "Rename a C# symbol across the whole solution via Roslyn (safe bulk rename — no regex). " +
+    "Rename a C# symbol across the whole tracked C# project via Roslyn (safe bulk rename — no " +
+    "regex; the QwenPlayground solution when the working folder is the harness root, otherwise " +
+    "the project set via csharp_track). " +
     "Updates every reference: call sites, declarations, using directives (for types), " +
     "qualified names. Before saving, the rename is applied in memory and the affected " +
     "projects are compiled — name collisions (e.g. renaming to an existing member or a " +
     "keyword) are rejected with the compiler errors and nothing is changed. " +
     "If several symbols share the name (overloads, same name in different types), pass " +
     "file and line of the declaration to disambiguate; otherwise candidates are listed " +
-    "and nothing is changed. XML doc crefs are not updated (cosmetic). " +
-    "After a successful rename the test gate (rebuild_self) is the final safety net.", ToolGroup.CSharp)]
+    "and nothing is changed. Paths are relative to the working folder. XML doc crefs are not " +
+    "updated (cosmetic). After a successful rename the test gate (rebuild_self) is the final " +
+    "safety net.", ToolGroup.CSharp)]
 public sealed class CSharpRenameTool : AgentTool
 {
-    private static readonly RoslynService Service = RoslynService.Shared;
-
     [ToolParameter("Current symbol name to rename", Required = true)]
     public string Name { get; set; } = string.Empty;
 
     [ToolParameter("New name", Required = true)]
     public string NewName { get; set; } = string.Empty;
 
-    [ToolParameter("File of the declaration (relative to workspace root), disambiguates same-named symbols", Required = false)]
+    [ToolParameter("File of the declaration (relative to the working folder), disambiguates same-named symbols", Required = false)]
     public string? File { get; set; }
 
     [ToolParameter("1-based line of the declaration (with File)", Required = false)]
@@ -47,8 +48,13 @@ public sealed class CSharpRenameTool : AgentTool
 
     public override async Task<string> ExecuteAsync(ToolContext context, CancellationToken cancellationToken)
     {
-        var solution = await Service.GetSolutionAsync(cancellationToken);
-        var outcome = await CSharpRenameCore.ApplyAsync(solution, Name, NewName, File, Line, cancellationToken);
+        if (CSharpProjects.Resolve(context.ProjectRoot, out var error) is not { } csharp)
+        {
+            return error!;
+        }
+        var solution = await csharp.Service.GetSolutionAsync(cancellationToken);
+        var root = context.ProjectRoot;
+        var outcome = await CSharpRenameCore.ApplyAsync(solution, Name, NewName, File, Line, root, cancellationToken);
         if (outcome.Error is not null)
         {
             return outcome.Error;
@@ -68,7 +74,7 @@ public sealed class CSharpRenameTool : AgentTool
             }
         }
         // 2. Живой workspace (следующие Roslyn-инструменты и edit-пре-чек видят новый текст).
-        await Service.ApplyChangesAsync(outcome.Modified, cancellationToken);
+        await csharp.Service.ApplyChangesAsync(outcome.Modified, cancellationToken);
 
         var builder = new StringBuilder();
         builder.AppendLine($"renamed '{Name}' → '{NewName}' ({outcome.SymbolDescription})");
@@ -100,8 +106,12 @@ internal static class CSharpRenameCore
         public string SymbolDescription { get; init; } = string.Empty;
     }
 
+    /// <summary>
+    /// root — корень, от которого форматируются пути в отчёте и резолвится относительный
+    /// file-параметр (рабочая папка сессии; in-memory-тесты — любая папка).
+    /// </summary>
     public static async Task<Outcome> ApplyAsync(
-        Solution solution, string name, string newName, string? file, int? line, CancellationToken ct)
+        Solution solution, string name, string newName, string? file, int? line, string root, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(newName))
         {
@@ -124,7 +134,7 @@ internal static class CSharpRenameCore
         }
         if (file is not null || line is not null)
         {
-            var match = declarations.FirstOrDefault(d => MatchesLocation(d, file, line));
+            var match = declarations.FirstOrDefault(d => MatchesLocation(d, file, line, root));
             if (match is null)
             {
                 return new Outcome { Error = $"declaration of '{name}' not found at {file}:{line}" };
@@ -136,7 +146,7 @@ internal static class CSharpRenameCore
             var candidates = declarations
                 .Select(d => (
                     Description: Describe(d),
-                    Path: FormatLocation(d.Locations.FirstOrDefault(l => l.IsInSource))))
+                    Path: FormatLocation(d.Locations.FirstOrDefault(l => l.IsInSource), root)))
                 .ToList();
             return new Outcome
             {
@@ -180,8 +190,8 @@ internal static class CSharpRenameCore
             }
             // Span декларации начинается с модификатора (public ...): ищем именно
             // токен имени внутри узла декларации.
-            var root = await tree.GetRootAsync(ct);
-            var node = root.FindNode(declaration.SourceSpan);
+            var syntaxRoot = await tree.GetRootAsync(ct);
+            var node = syntaxRoot.FindNode(declaration.SourceSpan);
             var namePosition = FindDeclarationNamePosition(node, name);
             if (namePosition is null)
             {
@@ -247,7 +257,7 @@ internal static class CSharpRenameCore
         }
 
         // 4. Коллизии ловит компилятор: дифф ошибок до/после по затронутым проектам.
-        var newErrors = await DiffErrorsAsync(solution, modified, affectedProjects, ct);
+        var newErrors = await DiffErrorsAsync(solution, modified, affectedProjects, root, ct);
         if (newErrors.Count > 0)
         {
             return new Outcome
@@ -259,7 +269,7 @@ internal static class CSharpRenameCore
 
         var changedFiles = byDocument
             .Select(kv => (
-                Path: FormatPath(kv.Key, solution),
+                Path: FormatPath(kv.Key, solution, root),
                 Locations: kv.Value.Count))
             .OrderBy(f => f.Path, StringComparer.Ordinal)
             .ToList();
@@ -346,7 +356,7 @@ internal static class CSharpRenameCore
         return declarations;
     }
 
-    private static bool MatchesLocation(ISymbol symbol, string? file, int? line)
+    private static bool MatchesLocation(ISymbol symbol, string? file, int? line, string root)
     {
         var declaration = symbol.Locations.FirstOrDefault(l => l.IsInSource);
         if (declaration is null)
@@ -362,7 +372,7 @@ internal static class CSharpRenameCore
         {
             var expected = Path.IsPathRooted(file)
                 ? file
-                : Path.Combine(SelfBuildPaths.WorkspaceRoot, file);
+                : Path.Combine(root, file);
             // Живой солюшен: полный путь. In-memory (тесты): относительный путь документа.
             if (!string.Equals(span.Path, expected, StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(span.Path, file, StringComparison.OrdinalIgnoreCase))
@@ -386,41 +396,31 @@ internal static class CSharpRenameCore
         };
     }
 
-    private static string FormatLocation(Location? location)
+    private static string FormatLocation(Location? location, string root)
     {
         if (location is null || !location.IsInSource)
         {
             return "—";
         }
         var span = location.GetLineSpan();
-        return $"{FormatPathRaw(span.Path)}:{span.StartLinePosition.Line + 1}";
+        return $"{FormatPathRaw(span.Path, root)}:{span.StartLinePosition.Line + 1}";
     }
 
-    private static string FormatPath(DocumentId documentId, Solution solution)
+    private static string FormatPath(DocumentId documentId, Solution solution, string root)
     {
         var path = solution.GetDocument(documentId)?.FilePath;
-        return path is null ? "<in-memory>" : FormatPathRaw(path);
+        return path is null ? "<in-memory>" : FormatPathRaw(path, root);
     }
 
-    private static string FormatPathRaw(string? path)
+    private static string FormatPathRaw(string? path, string root)
     {
-        if (path is null)
-        {
-            return "?";
-        }
-        try
-        {
-            return Path.GetRelativePath(SelfBuildPaths.WorkspaceRoot, path).Replace('\\', '/');
-        }
-        catch
-        {
-            return path;
-        }
+        // In-memory (тесты): относительный путь документа — Relative честно отдаёт его как есть.
+        return path is null ? "?" : LocationFormatter.Relative(path, root).Replace('\\', '/');
     }
 
     /// <summary>Дифф ошибок компиляции до/после rename по затронутым проектам.</summary>
     private static async Task<List<string>> DiffErrorsAsync(
-        Solution before, Solution after, HashSet<ProjectId> projects, CancellationToken ct)
+        Solution before, Solution after, HashSet<ProjectId> projects, string root, CancellationToken ct)
     {
         var beforeErrors = new HashSet<string>();
         var afterErrors = new List<string>();
@@ -438,7 +438,7 @@ internal static class CSharpRenameCore
                 {
                     if (diagnostic.Severity == DiagnosticSeverity.Error)
                     {
-                        beforeErrors.Add(FormatDiagnostic(diagnostic));
+                        beforeErrors.Add(FormatDiagnostic(diagnostic, root));
                     }
                 }
             }
@@ -454,7 +454,7 @@ internal static class CSharpRenameCore
                 {
                     if (diagnostic.Severity == DiagnosticSeverity.Error)
                     {
-                        afterErrors.Add(FormatDiagnostic(diagnostic));
+                        afterErrors.Add(FormatDiagnostic(diagnostic, root));
                     }
                 }
             }
@@ -462,10 +462,10 @@ internal static class CSharpRenameCore
         return afterErrors.Where(e => !beforeErrors.Contains(e)).Distinct().ToList();
     }
 
-    private static string FormatDiagnostic(Diagnostic diagnostic)
+    private static string FormatDiagnostic(Diagnostic diagnostic, string root)
     {
         var location = diagnostic.Location.GetLineSpan();
-        var path = location.Path is null ? "?" : FormatPathRaw(location.Path);
+        var path = location.Path is null ? "?" : FormatPathRaw(location.Path, root);
         return $"{diagnostic.Id}: {diagnostic.GetMessage()} ({path}:{location.StartLinePosition.Line + 1})";
     }
 }

@@ -127,6 +127,7 @@ public static class CrashLogCore
     /// <summary>Записать в дневной файл и «последний крах». Никогда не бросает.</summary>
     public static void Write(string logsDir, string channel, string entry)
     {
+        entry = Security.SecretRedactor.Redact(entry);
         try
         {
             Directory.CreateDirectory(logsDir);

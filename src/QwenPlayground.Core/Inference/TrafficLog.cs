@@ -30,6 +30,8 @@ public static class TrafficLog
         {
             return;
         }
+        prompt = Security.SecretRedactor.Redact(prompt);
+        output = Security.SecretRedactor.Redact(output);
         try
         {
             // Один срез времени на запись: иначе на полуночи имя файла и метка внутри разъезжались.
