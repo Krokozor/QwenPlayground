@@ -76,11 +76,33 @@ public sealed partial class SessionListViewModel : ObservableObject {
     [ObservableProperty]
     private string _cSharpTarget = string.Empty;
 
-    private void SyncCSharpTarget()
+    /// <summary>
+    /// Поле C# и меню ← текущий трек чата (csharp.json). Вызывается при смене сессии,
+    /// смене root'а, после track/untrack и при открытии меню (свежесть).
+    /// </summary>
+    public void SyncCSharpTarget()
     {
         var sessionDir = _sessions.DirectoryFor(_sessions.CurrentId);
         CSharpTarget = QwenPlayground.Core.Roslyn.CSharpProjects.DescribeTarget(_sessions.Root, sessionDir);
         CSharpTargetError = null;
+
+        // Меню: активный трек (с отметкой) первым, затем история (без текущего).
+        var items = new List<CSharpMenuItem>();
+        var track = QwenPlayground.Core.Roslyn.CSharpSessionTrack.Load(sessionDir);
+        if (track is not null)
+        {
+            items.Add(new CSharpMenuItem(track.ProjectFile,
+                System.IO.Path.GetFileName(track.ProjectFile), true));
+            foreach (var recent in track.Recent)
+            {
+                if (string.Equals(recent, track.ProjectFile, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                items.Add(new CSharpMenuItem(recent, System.IO.Path.GetFileName(recent), false));
+            }
+        }
+        CSharpMenuItems = new System.Collections.ObjectModel.ObservableCollection<CSharpMenuItem>(items);
     }
 
     [ObservableProperty]
@@ -90,6 +112,17 @@ public sealed partial class SessionListViewModel : ObservableObject {
     public bool HasCSharpTargetError => !string.IsNullOrEmpty(CSharpTargetError);
 
     partial void OnCSharpTargetErrorChanged(string? value) => OnPropertyChanged(nameof(HasCSharpTargetError));
+
+    // C#-меню трека (2026-11-05): история проектов чата (csharp.json, recent) + активный
+    // трек. Одна активная запись (radio-семантика): модель — один трек на чат (один
+    // Roslyn-воркспейс).
+    public sealed record CSharpMenuItem(string Path, string DisplayName, bool IsCurrent);
+
+    [ObservableProperty]
+    private System.Collections.ObjectModel.ObservableCollection<CSharpMenuItem> _cSharpMenuItems = new();
+
+    /// <summary>Хук закрытия Popup-меню (задаёт код-бихайнд ChatView при открытии).</summary>
+    public Action? CloseCSharpMenu { get; set; }
 
     /// <summary>
     /// Кнопка «×» (удаление сессии) видна только для не-main сессий: main удалить нельзя,
@@ -318,11 +351,32 @@ public sealed partial class SessionListViewModel : ObservableObject {
             return;
         }
         var sessionDir = _sessions.DirectoryFor(_sessions.CurrentId);
-        QwenPlayground.Core.Roslyn.CSharpSessionTrack.Save(sessionDir, full,
+        QwenPlayground.Core.Roslyn.CSharpSessionTrack.TrackProject(sessionDir, full,
             QwenPlayground.Core.Roslyn.CSharpSessionTrack.ParseProjects(full));
         CSharpTargetError = null;
         SyncCSharpTarget();
         _status("C#-проект: " + full);
+    }
+
+    /// <summary>Меню: клик по записи истории — оттрекировать этот проект (файл должен существовать).</summary>
+    [RelayCommand]
+    private void TrackCSharpMenuItem(CSharpMenuItem? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+        if (!System.IO.File.Exists(item.Path))
+        {
+            CSharpTargetError = "файл не найден: " + item.Path;
+            return;
+        }
+        var sessionDir = _sessions.DirectoryFor(_sessions.CurrentId);
+        QwenPlayground.Core.Roslyn.CSharpSessionTrack.TrackProject(sessionDir, item.Path,
+            QwenPlayground.Core.Roslyn.CSharpSessionTrack.ParseProjects(item.Path));
+        SyncCSharpTarget();
+        _status("C#-проект: " + item.Path);
+        CloseCSharpMenu?.Invoke();
     }
 
     /// <summary>
@@ -343,10 +397,11 @@ public sealed partial class SessionListViewModel : ObservableObject {
         };
         if (dialog.ShowDialog() != true)
             return;
-        QwenPlayground.Core.Roslyn.CSharpSessionTrack.Save(sessionDir, dialog.FileName,
+        QwenPlayground.Core.Roslyn.CSharpSessionTrack.TrackProject(sessionDir, dialog.FileName,
             QwenPlayground.Core.Roslyn.CSharpSessionTrack.ParseProjects(dialog.FileName));
         SyncCSharpTarget();
         _status("C#-проект: " + dialog.FileName);
+        CloseCSharpMenu?.Invoke();
     }
 
     /// <summary>«✕»: оттрекинг C#-проекта этого чата (та же семантика, что и csharp_untrack).</summary>
@@ -364,6 +419,7 @@ public sealed partial class SessionListViewModel : ObservableObject {
         QwenPlayground.Core.Roslyn.RoslynService.ForgetProjectFile(track.ProjectFile);
         SyncCSharpTarget();
         _status("C#-трек снят: " + track.ProjectFile);
+        CloseCSharpMenu?.Invoke();
     }
 
     /// <summary>

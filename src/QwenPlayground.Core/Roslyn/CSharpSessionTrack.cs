@@ -13,7 +13,7 @@ public static class CSharpSessionTrack
 {
     public const string FileName = "csharp.json";
 
-    public sealed record Track(string ProjectFile, string[] Projects);
+    public sealed record Track(string ProjectFile, string[] Projects, string[] Recent);
 
     public static string FilePath(string sessionDir) => Path.Combine(sessionDir, FileName);
 
@@ -42,7 +42,19 @@ public static class CSharpSessionTrack
                 }
             }
 
-            return new Track(file, projects.ToArray());
+            // История треков чата (recent): для быстрого переключения в UI-меню.
+            var recent = new List<string>();
+            if (doc.RootElement.TryGetProperty("recent", out var r)
+                && r.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var el in r.EnumerateArray())
+                {
+                    var s = el.GetString();
+                    if (!string.IsNullOrWhiteSpace(s)) recent.Add(s);
+                }
+            }
+
+            return new Track(file, projects.ToArray(), recent.ToArray());
         }
         catch
         {
@@ -51,17 +63,56 @@ public static class CSharpSessionTrack
     }
 
     /// <summary>Атомарное сохранение (temp + replace), как у остальных файлов сессии.</summary>
-    public static void Save(string sessionDir, string projectFile, string[] projects)
+    public static void Save(string sessionDir, string projectFile, string[] projects, string[]? recent = null)
     {
         var path = FilePath(sessionDir);
         Directory.CreateDirectory(sessionDir);
-        var payload = new { projectFile, projects = projects ?? Array.Empty<string>() };
+        var payload = new
+        {
+            projectFile,
+            projects = projects ?? Array.Empty<string>(),
+            recent = recent ?? Array.Empty<string>()
+        };
         var json = System.Text.Json.JsonSerializer.Serialize(payload,
             new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         var temp = path + ".tmp";
         File.WriteAllText(temp, json);
         if (File.Exists(path)) File.Replace(temp, path, null);
         else File.Move(temp, path);
+    }
+
+    /// <summary>
+    /// Оттрекать проект + добавить его в историю чата (recent, дедупликация, кап 10).
+    /// Единая точка записи трека: csharp_track, UI-пикер, UI-меню.
+    /// </summary>
+    public static void TrackProject(string sessionDir, string projectFile, string[] projects)
+    {
+        var old = Load(sessionDir);
+        Save(sessionDir, projectFile, projects, PushRecent(old?.Recent, projectFile));
+    }
+
+    /// <summary>Файл в начало истории (дедупликация, регистр не важен — пути Windows), максимум <paramref name="max"/> записей.</summary>
+    public static string[] PushRecent(string[]? recent, string projectFile, int max = 10)
+    {
+        var list = new List<string>();
+        foreach (var item in recent ?? Array.Empty<string>())
+        {
+            if (!list.Contains(item, StringComparer.OrdinalIgnoreCase))
+            {
+                list.Add(item);
+            }
+        }
+        // Убираем существующую запись (case-insensitive: List.Remove — чувствителен к регистру).
+        for (var i = list.Count - 1; i >= 0; i--)
+        {
+            if (string.Equals(list[i], projectFile, StringComparison.OrdinalIgnoreCase))
+            {
+                list.RemoveAt(i);
+                break;
+            }
+        }
+        list.Insert(0, projectFile);
+        return list.Take(max).ToArray();
     }
 
     /// <summary>Снять трек (сброс к дефолту: home-преднастройка для home-root'а).</summary>

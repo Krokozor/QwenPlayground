@@ -83,6 +83,28 @@ public sealed class CSharpTrackingTests
         }
     }
 
+    [Fact]
+    public void SessionTrack_PushRecent_DedupAndCap()
+    {
+        var recent = new[] { "b.sln", "a.sln" };
+        Assert.Equal(new[] { "c.sln", "b.sln", "a.sln" }, CSharpSessionTrack.PushRecent(recent, "c.sln"));
+
+        // Дедупликация: существующий файл уходит в начало (регистр не важен —
+        // дубля нет; регистр вставленного пути — как его передал вызывающий).
+        Assert.Equal(new[] { "a.sln", "b.sln" }, CSharpSessionTrack.PushRecent(recent, "a.sln"));
+        Assert.Equal(new[] { "A.SLN", "b.sln" }, CSharpSessionTrack.PushRecent(recent, "A.SLN"));
+
+        // Кап 10 записей.
+        var many = new string[12];
+        for (var i = 0; i < 12; i++)
+        {
+            many[i] = "p" + i + ".sln";
+        }
+        var capped = CSharpSessionTrack.PushRecent(many, "new.sln");
+        Assert.Equal(10, capped.Length);
+        Assert.Equal("new.sln", capped[0]);
+    }
+
     // ─────────────────────────── CSharpProjects (резолвер) ───────────────────────────
 
     [Fact]

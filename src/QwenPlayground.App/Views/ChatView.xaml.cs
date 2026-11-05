@@ -206,6 +206,34 @@ public partial class ChatView : UserControl
         }
     }
 
+    private bool _csharpMenuOpen;
+
+    /// <summary>
+    /// Кнопка «…» (C#-трек): открыть/закрыть меню трека чата (Popup, паттерн ShelfMenu).
+    /// Перед открытием — свежий синк (агент мог оттрекать проект, пока меню было закрыто).
+    /// </summary>
+    private void CSharpMenuButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is ChatViewModel chat && chat.SessionList is { } list)
+        {
+            list.CloseCSharpMenu = () => CSharpPopup.IsOpen = false;
+            list.SyncCSharpTarget();
+        }
+        if (CSharpPopup is null)
+        {
+            return;
+        }
+        if (_csharpMenuOpen)
+        {
+            _csharpMenuOpen = false; // Popup уже закрылся на press
+            return;
+        }
+        _csharpMenuOpen = true;
+        CSharpPopup.IsOpen = true;
+    }
+
+    private void CSharpPopup_Closed(object sender, System.EventArgs e) => _csharpMenuOpen = false;
+
     /// <summary>Ctrl+V: если в буфере картинка — вкладываем её (текстовую вставку не трогаем).</summary>
     private void OnInputPreviewKeyDown(object sender, KeyEventArgs e)
     {

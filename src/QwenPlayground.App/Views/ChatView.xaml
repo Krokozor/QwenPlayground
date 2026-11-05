@@ -157,10 +157,20 @@
                 <TextBlock Text="{Binding SessionList.CSharpTargetError}" Foreground="#FF5555" FontSize="11"
                            VerticalAlignment="Center" Margin="0,0,4,0"
                            Visibility="{Binding SessionList.HasCSharpTargetError, Converter={StaticResource BoolToVis}}" />
-                <Button Content="…" Command="{Binding SessionList.BrowseCSharpProjectCommand}" Padding="8,0" Margin="0,0,4,0"
-                        ToolTip="Выбрать C#-проект (slnx/sln/csproj) для отслеживания рабочей папки" />
+                <Button x:Name="CSharpMenuButton" Content="…" Padding="8,0" Margin="0,0,4,0" Click="CSharpMenuButton_Click"
+                        ToolTip="C#-проект этого чата: меню (история треков, +Добавить, Сбросить)" />
+                <!-- Меню C#-трека (паттерн ShelfMenu): история (csharp.json, recent) + активный
+                     трек + «Добавить…»/«Сбросить». DataContext наследует от тулбара. -->
+                <Popup x:Name="CSharpPopup" PlacementTarget="{Binding ElementName=CSharpMenuButton}"
+                       Placement="Bottom" VerticalOffset="2" StaysOpen="False"
+                       AllowsTransparency="True" PopupAnimation="Fade" Closed="CSharpPopup_Closed">
+                    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1" CornerRadius="4" Padding="3" Margin="8">
+                        <views:CSharpMenu />
+                    </Border>
+                </Popup>
                 <Button Content="&#215;" Command="{Binding SessionList.ClearCSharpProjectCommand}" Padding="8,0" Margin="0,0,12,0"
-                        ToolTip="Оттрекировать C#-проект (вернуться к преднастройке)" />
+                        ToolTip="Оттрекировать C#-проект (сброс к дефолту: QwenPlayground solution для папки харнесса)" />
             </StackPanel>
             <!-- Полки (группы инструментов): тот же механизм, что и у тулов агента
                  activate/deactivate_shelf. Отметка — немедленная активация, снятие — staged

@@ -1,0 +1,34 @@
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="QwenPlayground.App.Views.CSharpMenu"
+             Background="Transparent">
+    <!-- Меню C#-трека чата (фаза 2, 2026-11-05): история проектов (csharp.json, recent)
+         + активный трек (отметка) + «Добавить…» (пикер) + «Сбросить» (к дефолту).
+         Одна активная запись (radio-семантика): модель — один трек на чат (один
+         Roslyn-воркспейс). DataContext — MainViewModel (наследуется из Popup),
+         состояние и команды — SessionList. -->
+    <StackPanel>
+        <ItemsControl ItemsSource="{Binding SessionList.CSharpMenuItems}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <MenuItem IsCheckable="True" IsChecked="{Binding IsCurrent, Mode=OneWay}"
+                              Command="{Binding DataContext.SessionList.TrackCSharpMenuItemCommand,
+                                       RelativeSource={RelativeSource AncestorType=UserControl}}"
+                              CommandParameter="{Binding}"
+                              ToolTip="{Binding Path}">
+                        <MenuItem.Header>
+                            <TextBlock Text="{Binding DisplayName}" MaxWidth="340" TextTrimming="CharacterEllipsis" />
+                        </MenuItem.Header>
+                    </MenuItem>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <Separator />
+        <MenuItem Command="{Binding SessionList.AddCSharpProjectCommand}">
+            <MenuItem.Header><TextBlock Text="+ Добавить…" /></MenuItem.Header>
+        </MenuItem>
+        <MenuItem Command="{Binding SessionList.ClearCSharpProjectCommand}">
+            <MenuItem.Header><TextBlock Text="&#215; Сбросить (к дефолту)" /></MenuItem.Header>
+        </MenuItem>
+    </StackPanel>
+</UserControl>

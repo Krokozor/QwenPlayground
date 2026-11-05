@@ -52,8 +52,9 @@ public sealed class CSharpTrackTool : AgentTool
             var projectList = solution.Projects.ToArray();
 
             // Сохраняем только после успешной загрузки (fail-fast): список проектов —
-            // из тёплого воркспейса (свеже, чем парсинг файла).
-            CSharpSessionTrack.Save(context.SessionDir, file!,
+            // из тёплого воркспейса (свеже, чем парсинг файла); файл уходит в историю
+            // чата (recent) для быстрого переключения в UI-меню.
+            CSharpSessionTrack.TrackProject(context.SessionDir, file!,
                 projectList.Select(p => p.Name).ToArray());
 
             var projects = string.Join(", ", projectList.Select(p => p.Name));
