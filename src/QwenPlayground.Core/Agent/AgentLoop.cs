@@ -85,6 +85,15 @@ public sealed class AgentLoop
 
         var bound = maxIterations > 0 ? maxIterations : int.MaxValue;
         DiagnosticsLog.Log($"AgentLoop: begin (maxIterations={maxIterations}, endpoint={endpoint})");
+        // Loop-guard (дизайн владельца, 2026-11-05, луп-инцидент 2026-11-05): хеш-дедупликация
+        // тул-вызовов в пределах хода. Ловит не только «N одинаковых подряд», а чередующиеся
+        // секции [1][2][3][д2][д3]. При коллизии: не выполняем, в контекст не попадает
+        // грязный вывод (однострочный маркер вместо него — каждый tool_call в
+        // assistant-сообщении требует tool-сообщение для шаблона), и на следующей
+        // итерации — nag в state-блоке (один раз).
+        var executedCallHashes = new HashSet<string>();
+        var loopGuardCuts = 0;
+        var loopGuardNagPending = false;
         for (var iteration = 0; iteration < bound; iteration++)
         {
             DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1} begin");
@@ -131,6 +140,15 @@ public sealed class AgentLoop
             {
                 stateBlock = StateBlock.WithNag(stateBlock,
                     $"{iterationsSinceSanity} iterations without a self-check. Call sanity_check: what are you doing, is there progress, should you change strategy?");
+            }
+            // Loop-guard nag: итерация после резки дубликатов — один раз (семантика nag;
+            // перезаписывает sanity-nag за итерацию — он важнее).
+            if (loopGuardNagPending)
+            {
+                loopGuardNagPending = false;
+                stateBlock = StateBlock.WithNag(stateBlock,
+                    $"loop-guard: {loopGuardCuts} duplicate tool call(s) were cut this turn (identical name+args already executed). " +
+                    "You are losing stability — tighten up and think more carefully: change strategy or ask, do not repeat the same calls.");
             }
             iterationsSinceSanity++;
             // Копия для рендера (ChatLog здесь читается, не мутируется); инъекция системы — как раньше.
@@ -311,6 +329,22 @@ public sealed class AgentLoop
             foreach (var call in toolCalls)
             {
                 var arguments = call.Arguments as JsonObject ?? new JsonObject();
+                // Loop-guard: хеш распарсенного вызова (имя + аргументы). Первое
+                // вхождение в ходе — выполняется; последующие дубликаты режутся.
+                var callHash = LoopGuard.Hash(call.Name, arguments);
+                if (!executedCallHashes.Add(callHash))
+                {
+                    loopGuardCuts++;
+                    loopGuardNagPending = true;
+                    DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: loop-guard cut duplicate tool call '{call.Name}' (cuts={loopGuardCuts})");
+                    yield return new ToolCallStartedEvent(call.Name, arguments);
+                    var cutMessage = ChatMessage.Tool(
+                        $"[loop-guard] duplicate call of '{call.Name}' within this turn (identical name+args already executed) — not executed. " +
+                        "See the state block: change strategy or ask, do not repeat the same call.");
+                    conversation.Add(cutMessage);
+                    yield return new ToolCallFinishedEvent(call.Name, cutMessage.Content, cutMessage);
+                    continue;
+                }
                 DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: tool call '{call.Name}' begin");
                 var toolStart = System.Diagnostics.Stopwatch.StartNew();
                 yield return new ToolCallStartedEvent(call.Name, arguments);
