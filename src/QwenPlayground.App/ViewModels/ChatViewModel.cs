@@ -427,9 +427,10 @@ public partial class ChatViewModel : ObservableObject {
             }
         }
 
-        // Анонсируем немультимодальные вложения в конце сообщения (путь — относительно workspace).
+        // Анонсируем немультимодальные вложения в конце сообщения (путь — абсолютный:
+        // маркер переживает set_session_root, см. StagedTextArtifact.AttachmentTag).
         if (announcedPaths.Count > 0) {
-            var tags = string.Join("\n", announcedPaths.Select(p => $"<attachment path=\"{ToWorkspaceRelative(p)}\">"));
+            var tags = string.Join("\n", announcedPaths.Select(p => $"<attachment path=\"{p}\">"));
             userMessage.Content = (userMessage.Content + "\n" + tags).Trim();
         }
 
@@ -488,7 +489,7 @@ public partial class ChatViewModel : ObservableObject {
             }
         }
         if (announcedPaths.Count > 0) {
-            var tags = string.Join("\n", announcedPaths.Select(p => $"<attachment path=\"{ToWorkspaceRelative(p)}\">"));
+            var tags = string.Join("\n", announcedPaths.Select(p => $"<attachment path=\"{p}\">"));
             userMessage.Content = (userMessage.Content + "\n" + tags).Trim();
         }
         // UI-рендер: явно добавляем MessageViewModel в Messages (как в SendNowAsync).
@@ -499,14 +500,6 @@ public partial class ChatViewModel : ObservableObject {
         Messages.Add(userView);
         StatusText = "Сообщение из очереди вставлено в разговор";
         return userMessage;
-    }
-
-    /// <summary>Путь относительно корня workspace (для read_file и тега &lt;attachment&gt;).</summary>
-    private static string ToWorkspaceRelative(string path) {
-        var wsRoot = SelfBuildPaths.WorkspaceRoot;
-        return path.StartsWith(wsRoot, StringComparison.OrdinalIgnoreCase)
-            ? path[wsRoot.Length..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            : path;
     }
 
     private bool CanSend() {

@@ -51,13 +51,14 @@ internal sealed class StagedTextArtifact : IDisposable
         return full;
     }
 
+    /// <summary>
+    /// Маркер вложения в tool-выводе. Путь — абсолютный: маркер перистируется в сообщении
+    /// и должен резолвиться независимо от рабочей папки сессии (set_session_root не ломает
+    /// старые сообщения). ResolvePath принимает абсолютные пути как есть.
+    /// </summary>
     public static string AttachmentTag(string fullPath)
     {
-        var workspace = SelfBuildPaths.WorkspaceRoot;
-        var relative = fullPath.StartsWith(workspace, StringComparison.OrdinalIgnoreCase)
-            ? fullPath[workspace.Length..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            : fullPath;
-        return $"<attachment path=\"{relative}\">";
+        return $"<attachment path=\"{fullPath}\">";
     }
 
     public void KeepForFinalize() => _keepForFinalize = true;

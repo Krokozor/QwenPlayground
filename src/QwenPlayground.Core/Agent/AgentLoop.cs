@@ -85,15 +85,31 @@ public sealed class AgentLoop
 
         var bound = maxIterations > 0 ? maxIterations : int.MaxValue;
         DiagnosticsLog.Log($"AgentLoop: begin (maxIterations={maxIterations}, endpoint={endpoint})");
-        // Loop-guard (дизайн владельца, 2026-11-05, луп-инцидент 2026-11-05): хеш-дедупликация
-        // тул-вызовов в пределах хода. Ловит не только «N одинаковых подряд», а чередующиеся
-        // секции [1][2][3][д2][д3]. При коллизии: не выполняем, в контекст не попадает
-        // грязный вывод (однострочный маркер вместо него — каждый tool_call в
-        // assistant-сообщении требует tool-сообщение для шаблона), и на следующей
-        // итерации — nag в state-блоке (один раз).
-        var executedCallHashes = new HashSet<string>();
+        // Loop-guard (дизайн владельца, v2 2026-11-06): хеш-дедупликация тул-вызовов.
+        // Дубликаты вырезаются из assistant-сообщения ДО попадания в разговор
+        // (ApplyLoopGuard → LoopGuard.RemoveDuplicates) — в контекст они не попадают
+        // вовсе: нет маркеров, нет грязного вывода, нет tool-сообщений (каждый
+        // оставшийся вызов имеет ровно один ответ — шаблон well-formed). Область:
+        // внутри сообщения + весь ход (seen-набор per-turn). Вырезано что-то —
+        // nag в state-блоке на следующей итерации (один раз).
+        var seenCallHashes = new HashSet<string>();
         var loopGuardCuts = 0;
         var loopGuardNagPending = false;
+        // v2: вырезает дубликаты из списка вызовов сообщения; вырезано что-то —
+        // счётчик + nag на следующей итерации.
+        void ApplyLoopGuard(ref IReadOnlyList<ToolCall>? calls, int iterationNumber)
+        {
+            var filtered = LoopGuard.RemoveDuplicates(calls, seenCallHashes);
+            if (ReferenceEquals(filtered, calls))
+            {
+                return;
+            }
+            var removed = (calls?.Count ?? 0) - (filtered?.Count ?? 0);
+            loopGuardCuts += removed;
+            loopGuardNagPending = true;
+            DiagnosticsLog.Log($"AgentLoop: iteration {iterationNumber + 1}: loop-guard removed {removed} duplicate tool call(s) from assistant message (turn total={loopGuardCuts})");
+            calls = filtered;
+        }
         for (var iteration = 0; iteration < bound; iteration++)
         {
             DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1} begin");
@@ -141,14 +157,15 @@ public sealed class AgentLoop
                 stateBlock = StateBlock.WithNag(stateBlock,
                     $"{iterationsSinceSanity} iterations without a self-check. Call sanity_check: what are you doing, is there progress, should you change strategy?");
             }
-            // Loop-guard nag: итерация после резки дубликатов — один раз (семантика nag;
+            // Loop-guard nag: итерация после вырезания дубликатов — один раз (семантика nag;
             // перезаписывает sanity-nag за итерацию — он важнее).
             if (loopGuardNagPending)
             {
                 loopGuardNagPending = false;
                 stateBlock = StateBlock.WithNag(stateBlock,
-                    $"loop-guard: {loopGuardCuts} duplicate tool call(s) were cut this turn (identical name+args already executed). " +
-                    "You are losing stability — tighten up and think more carefully: change strategy or ask, do not repeat the same calls.");
+                    $"loop-guard: {loopGuardCuts} duplicate tool call(s) removed this turn (identical name+args). " +
+                    "They did not enter the context and were not executed. You are losing stability — " +
+                    "tighten up and think more carefully: change strategy or ask, do not repeat the same calls.");
             }
             iterationsSinceSanity++;
             // Копия для рендера (ChatLog здесь читается, не мутируется); инъекция системы — как раньше.
@@ -236,13 +253,21 @@ public sealed class AgentLoop
                 var reparsed = QwenOutputParser.ParseAssistant(raw.ToString());
                 continued.Reasoning = reparsed.Reasoning;
                 continued.Content = reparsed.Content;
-                continued.ToolCalls = reparsed.ToolCalls;
+                // Loop-guard v2: дубликаты вырезаем из репарсенного списка (сообщение
+                // уже в разговоре — обновление in place, тот же объект).
+                var reparsedCalls = reparsed.ToolCalls;
+                ApplyLoopGuard(ref reparsedCalls, iteration);
+                continued.ToolCalls = reparsedCalls;
                 continued.ThinkingClosed = reparsed.ThinkingClosed;
             }
             else
             {
                 // ChatLog.Add присваивает стабильный ID сразу: финализация инструментов и
                 // рендеры следующей итерации видят его без отложенной нумерации.
+                // Loop-guard v2: дубликаты вырезаем ДО добавления в разговор.
+                var messageCalls = message.ToolCalls;
+                ApplyLoopGuard(ref messageCalls, iteration);
+                message.ToolCalls = messageCalls;
                 conversation.Add(message);
             }
             // Токены промпта: ТОЛЬКО фактические значения сервера. Сначала usage ответа
@@ -329,22 +354,8 @@ public sealed class AgentLoop
             foreach (var call in toolCalls)
             {
                 var arguments = call.Arguments as JsonObject ?? new JsonObject();
-                // Loop-guard: хеш распарсенного вызова (имя + аргументы). Первое
-                // вхождение в ходе — выполняется; последующие дубликаты режутся.
-                var callHash = LoopGuard.Hash(call.Name, arguments);
-                if (!executedCallHashes.Add(callHash))
-                {
-                    loopGuardCuts++;
-                    loopGuardNagPending = true;
-                    DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: loop-guard cut duplicate tool call '{call.Name}' (cuts={loopGuardCuts})");
-                    yield return new ToolCallStartedEvent(call.Name, arguments);
-                    var cutMessage = ChatMessage.Tool(
-                        $"[loop-guard] duplicate call of '{call.Name}' within this turn (identical name+args already executed) — not executed. " +
-                        "See the state block: change strategy or ask, do not repeat the same call.");
-                    conversation.Add(cutMessage);
-                    yield return new ToolCallFinishedEvent(call.Name, cutMessage.Content, cutMessage);
-                    continue;
-                }
+                // Loop-guard v2: дубликаты уже вырезаны из сообщения до его попадания в
+                // разговор (ApplyLoopGuard) — здесь остаются только уникальные вызовы.
                 DiagnosticsLog.Log($"AgentLoop: iteration {iteration + 1}: tool call '{call.Name}' begin");
                 var toolStart = System.Diagnostics.Stopwatch.StartNew();
                 yield return new ToolCallStartedEvent(call.Name, arguments);
@@ -414,12 +425,10 @@ public sealed class AgentLoop
         try
         {
             var store = new MessageMetaStore(sessionDir);
+            // Абсолютный путь: маркер перистируется в сообщении и должен резолвиться
+            // независимо от рабочей папки сессии (set_session_root не ломает старые
+            // сообщения). ResolvePath принимает абсолютные пути как есть.
             var full = store.AddTextArtifact(toolMessage.Id, "output.txt", text);
-            // Путь относительно корня workspace (read_file ожидает такой).
-            var wsRoot = SelfBuildPaths.WorkspaceRoot;
-            var rel = full.StartsWith(wsRoot, StringComparison.OrdinalIgnoreCase)
-                ? full[wsRoot.Length..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                : full;
             const int preview = 2 * 1024;
             var cut = Math.Min(preview, text.Length);
             var lastNewline = text.LastIndexOf('\n', cut);
@@ -430,8 +439,8 @@ public sealed class AgentLoop
             var lines = text.Split('\n').Length;
             toolMessage.Content = text[..cut]
                 + $"\n\n[Output truncated — full ({text.Length / 1024}KB, {lines} lines) attached.]"
-                + $"\n<attachment path=\"{rel}\">";
-            DiagnosticsLog.Log($"AgentLoop: tool output capped (msg {toolMessage.Id}, {text.Length} chars → {rel})");
+                + $"\n<attachment path=\"{full}\">";
+            DiagnosticsLog.Log($"AgentLoop: tool output capped (msg {toolMessage.Id}, {text.Length} chars → {full})");
         }
         catch (Exception exception)
         {
