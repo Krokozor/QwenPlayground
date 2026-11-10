@@ -30,6 +30,17 @@ public static class QwenOutputParser
         }
         else
         {
+            // Низкие кванты: модель путает закрывающий тег state-префилла с think-close и
+            // выдаёт tool_call без think-close. Если вывод оканчивается tool_call-end,
+            // мысль явно была (всё до первого tool_call): вставляем think-close перед
+            // первым tool_call и перепарсиваем исправленный текст.
+            var firstCall = text.IndexOf(QwenSpecialTokens.ToolCallStart, StringComparison.Ordinal);
+            if (firstCall >= 0
+                && text.EndsWith(QwenSpecialTokens.ToolCallEnd, StringComparison.Ordinal))
+            {
+                text = text[..firstCall] + QwenSpecialTokens.ThinkEnd + "\n\n" + text[firstCall..];
+                return ParseAssistant(text);
+            }
             reasoning = text.Trim();
             text = string.Empty;
         }

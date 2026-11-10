@@ -42,6 +42,30 @@ public sealed class QwenOutputParserTests
     }
 
     [Fact]
+    public void Parse_MissingCloseThink_TrailingToolCall_IsRepaired()
+    {
+        // Low quants: the model never closed the think block (confused the state-prefill
+        // close tag with the close-think token) but the output ends with a tool call —
+        // the heuristic inserts the close-think token before the first tool call, so the
+        // call is extracted and thinking is marked closed. Tokens from QwenSpecialTokens.
+        var raw = "let me check the file"
+            + QwenSpecialTokens.ToolCallStart + "\n"
+            + QwenSpecialTokens.FunctionStart("read_file") + "\n"
+            + QwenSpecialTokens.ParameterStart("path") + "\n/tmp/a.txt\n"
+            + QwenSpecialTokens.ParameterEnd + "\n"
+            + QwenSpecialTokens.FunctionEnd + "\n"
+            + QwenSpecialTokens.ToolCallEnd;
+
+        var message = QwenOutputParser.ParseAssistant(raw);
+
+        Assert.True(message.ThinkingClosed);
+        Assert.Equal("let me check the file", message.Reasoning);
+        var call = Assert.Single(message.ToolCalls!);
+        Assert.Equal("read_file", call.Name);
+        Assert.Equal("/tmp/a.txt", call.Arguments["path"]!.GetValue<string>());
+    }
+
+    [Fact]
     public void Parse_ContentWithMultipleToolCalls()
     {
         const string raw = """
