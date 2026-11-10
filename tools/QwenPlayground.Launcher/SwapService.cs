@@ -379,7 +379,7 @@ public static class SwapService
             if (elapsed / 10 > lastProgress)
             {
                 lastProgress = elapsed / 10;
-                Log($"handshake: +{elapsed}s, no marker (app pid {app?.Id}: {(app.HasExited ? "dead" : "alive")})");
+                Log($"handshake: +{elapsed}s, no marker (app pid {app?.Id}: {(app is null || app.HasExited ? "dead" : "alive")})");
             }
             Thread.Sleep(500);
         }

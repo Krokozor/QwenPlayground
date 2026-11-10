@@ -317,12 +317,14 @@ public partial class MainWindow : Window
 
     private async Task RefreshPigeonStatusAsync()
     {
+        var instances = PigeonService.RefreshInstances(ToolRoot);
         if (!PigeonService.IsBuilt(ToolRoot))
         {
             Dispatcher.Invoke(() =>
             {
                 PigeonStatusText.Text = "сервер не собран — «Собрать» (источник: tools/pigeon)";
                 PigeonStartButton.IsEnabled = false;
+                BuildPigeonInstancesPanel(instances);
             });
             return;
         }
@@ -336,8 +338,75 @@ public partial class MainWindow : Window
                 : $"собран, остановлен (порт {port})";
             PigeonStartButton.Content = running ? "Остановить" : "Запустить";
             PigeonStartButton.IsEnabled = true;
+            BuildPigeonInstancesPanel(instances);
         });
     }
+
+    private void BuildPigeonInstancesPanel(IReadOnlyList<PigeonInstance> instances)
+    {
+        PigeonInstancesPanel.Children.Clear();
+        if (instances.Count == 0)
+        {
+            PigeonInstancesPanel.Children.Add(new TextBlock
+            {
+                Text = "отслеживаемых процессов нет",
+                FontSize = 10,
+                Foreground = (Brush)FindResource("DimBrush"),
+            });
+            return;
+        }
+        foreach (var instance in instances)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            row.Children.Add(new TextBlock
+            {
+                Text = $"{instance.WorkspaceRoot} · PID {instance.Pid} · :{instance.Port}",
+                FontSize = 10,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 310,
+            });
+            row.Children.Add(MakePigeonInstanceButton("Остановить", () => PigeonService.Stop(instance.Pid)));
+            row.Children.Add(MakePigeonInstanceButton("Лог", () => OpenPigeonFile(Path.Combine(instance.DataDir, "pigeon.log"))));
+            row.Children.Add(MakePigeonInstanceButton("UI", () => OpenPigeonUrl($"http://127.0.0.1:{instance.Port}")));
+            PigeonInstancesPanel.Children.Add(row);
+        }
+    }
+
+    private Button MakePigeonInstanceButton(string text, Action action)
+    {
+        var button = new Button
+        {
+            Content = text,
+            Margin = new Thickness(6, 0, 0, 0),
+            Padding = new Thickness(6, 1, 6, 1),
+            FontSize = 10,
+        };
+        button.Click += async (_, _) =>
+        {
+            button.IsEnabled = false;
+            try
+            {
+                action();
+            }
+            finally
+            {
+                await RefreshPigeonStatusAsync();
+            }
+        };
+        return button;
+    }
+
+    private static void OpenPigeonFile(string path)
+    {
+        if (File.Exists(path))
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+        }
+    }
+
+    private static void OpenPigeonUrl(string url) =>
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
 
     private async void PigeonBuild_Click(object sender, RoutedEventArgs e)
     {
@@ -369,7 +438,7 @@ public partial class MainWindow : Window
             var port = PigeonService.GetPort(ToolRoot);
             if (await PigeonService.IsRunningAsync(port))
             {
-                PigeonService.Stop();
+                PigeonService.Stop(ToolRoot);
                 StatusText.Text = "Pigeon: сервер остановлен";
             }
             else

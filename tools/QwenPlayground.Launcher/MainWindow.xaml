@@ -106,6 +106,7 @@
                             </StackPanel>
                             <TextBlock x:Name="PigeonStatusText" Margin="0,6,0,0" FontSize="11"
                                        Foreground="{StaticResource DimBrush}" Text="…" TextWrapping="Wrap" />
+                            <StackPanel x:Name="PigeonInstancesPanel" Margin="0,6,0,0" />
                         </StackPanel>
                     </Border>
 

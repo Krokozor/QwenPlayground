@@ -13,6 +13,13 @@ using Pigeon.Server;
 var dataDir = args.Length > 0
     ? Path.GetFullPath(args[0])
     : Path.Combine(AppContext.BaseDirectory, "data");
+Directory.CreateDirectory(dataDir);
+using var instanceLock = AcquireInstanceLock(dataDir);
+if (instanceLock is null)
+{
+    Console.Error.WriteLine($"pigeon: another server already owns this data directory: {dataDir}");
+    return;
+}
 var config = ServerConfig.Load(dataDir);
 var store = new Store(dataDir, config.HotThreshold);
 
@@ -500,6 +507,22 @@ Console.WriteLine($"pigeon: listening on http://{config.Bind}:{config.Port} (dat
 Console.WriteLine($"pigeon: owner token: {config.OwnerToken}");
 Console.WriteLine($"pigeon: MCP at http://{config.Bind}:{config.Port}/mcp (auto-join: {(config.McpAutoJoin ? "on" : "off")})");
 app.Run();
+
+static FileStream? AcquireInstanceLock(string dataDir)
+{
+    try
+    {
+        return new FileStream(
+            Path.Combine(dataDir, "pigeon.server.lock"),
+            FileMode.OpenOrCreate,
+            FileAccess.ReadWrite,
+            FileShare.None);
+    }
+    catch (IOException)
+    {
+        return null;
+    }
+}
 
 // ── Request payloads (web-shape) ────────────────────────────────────────────────────
 
