@@ -27,8 +27,12 @@ namespace QwenPlayground.App.Browser;
 ///    This ONLY provides an HwndSource for CreateCoreWebView2ControllerAsync.
 ///    Actual rendering is in the off-screen controller window, NOT this 1px strip.
 /// 
-/// 4. The "Браузер" tab (BrowserView) is a DEBUG panel (screenshots + nav controls).
-///    It does NOT contain the browser — it calls BrowserService.ScreenshotAsync().
+/// 4. The "Браузер" tab (BrowserView): by default a DEBUG panel (screenshots + nav controls).
+///    In INTERACTIVE MODE the SAME controller is re-parented into a real child HWND
+///    (BrowserHwndHost) inside the tab — the owner drives the browser directly
+///    (clicks, typing, navigation). While interactive, the agent's mutating tools are
+///    blocked (InteractiveGuard); read-only tools keep working. Leaving the tab
+///    auto-exits interactive mode (the browser goes back off-screen).
 /// 
 /// 5. Cursor overlay (yellow circle) uses VIRTUAL viewport coords (0-1280, 0-800).
 ///    It does NOT track the user's real mouse. Position is set by our JS, not by input.
@@ -46,6 +50,11 @@ public static class BrowserService
     private static CoreWebView2Controller? _controller;
     private static Task<CoreWebView2>? _initTask;
     private static readonly object _lock = new();
+
+    // Интерактивный режим: владелец ведёт браузер из вкладки «Браузер».
+    private static bool _interactive;
+    private static IntPtr _homeParentHwnd = IntPtr.Zero; // HWND главного окна — «дом» браузера
+    private static System.Drawing.Rectangle _interactiveBounds = new(0, 0, 1280, 800); // размер вкладки при встраивании
     private static readonly string UserDataFolder =
         Path.Combine(Path.GetTempPath(), "QwenPlayground_WebView2");
 
@@ -67,6 +76,9 @@ public static class BrowserService
     {
         get { lock (_lock) return _core is not null; }
     }
+
+    /// <summary>Сработал при смене URL текущей страницы (любая навигация — агентская или владельца). Для тулбара вкладки «Браузер».</summary>
+    public static event Action<string>? UrlChanged;
 
     public static async Task<string> GetDiagnosticsAsync()
     {
@@ -131,6 +143,7 @@ public static class BrowserService
             if (_controller is null)
             {
                 _controller = await _env.CreateCoreWebView2ControllerAsync(hwnd);
+                _homeParentHwnd = hwnd; // «домашний» parent: сюда браузер возвращается после интерактивного режима
             }
 
             // 4. Position the controller OFF-SCREEN.
@@ -159,6 +172,9 @@ public static class BrowserService
                     _controller = null;
                 }
             };
+
+            // Живой URL в тулбаре вкладки «Браузер» (навигация агента или владельца).
+            core.SourceChanged += (_, _) => UrlChanged?.Invoke(core.Source);
 
             lock (_lock) { _core = core; }
 
@@ -196,9 +212,100 @@ public static class BrowserService
         }
     }
 
+    // ─── Interactive mode: владелец ведёт браузер из вкладки «Браузер» ───
+
+    public static bool IsInteractive
+    {
+        get { lock (_lock) return _interactive; }
+    }
+
+    /// <summary>
+    /// Встроить агентский браузер в окно владельца: перепарентить контроллер в дочернее
+    /// HWND вкладки «Браузер» (BrowserHwndHost) и растянуть на её размер (физические пиксели).
+    /// Дальше владелец кликает/печатает/навигирует сам; мутирующие тулы агента блокируются
+    /// (InteractiveGuard), read-only продолжают работать.
+    /// </summary>
+    public static async Task EnterInteractiveModeAsync(IntPtr parentHwnd, int physicalWidth, int physicalHeight)
+    {
+        if (parentHwnd == IntPtr.Zero)
+            throw new InvalidOperationException("Host window not created yet (HwndHost.Handle == 0).");
+        await GetCoreAsync(); // при необходимости инициализировать (и разбудить из suspend)
+        var dispatcher = System.Windows.Application.Current?.Dispatcher
+            ?? throw new InvalidOperationException("No UI dispatcher — cannot re-parent the controller.");
+        await dispatcher.InvokeAsync(() =>
+        {
+            var c = _controller;
+            if (c is null) throw new InvalidOperationException("Controller not available (fast-path init).");
+            if (_homeParentHwnd == IntPtr.Zero) _homeParentHwnd = c.ParentWindow;
+            c.ParentWindow = parentHwnd;
+            _interactiveBounds = new System.Drawing.Rectangle(0, 0, physicalWidth, physicalHeight);
+            c.Bounds = _interactiveBounds;
+            c.IsVisible = true;
+            lock (_lock) _interactive = true;
+            TouchActivity();
+        });
+    }
+
+    /// <summary>Растянуть встроенный браузер (вкладку ресайзнули). Вызывать с UI-потока.</summary>
+    public static void UpdateInteractiveBounds(int physicalWidth, int physicalHeight)
+    {
+        if (!_interactive || _controller is not { } c) return;
+        _interactiveBounds = new System.Drawing.Rectangle(0, 0, physicalWidth, physicalHeight);
+        if (c.Bounds.Width == physicalWidth && c.Bounds.Height == physicalHeight) return;
+        c.Bounds = _interactiveBounds;
+    }
+
+    /// <summary>
+    /// Вернуть браузер «домой»: off-screen (-5000,-5000), 1280x800, parent — главное окно.
+    /// Безопасно с любого потока (включая shutdown приложения).
+    /// </summary>
+    public static void ExitInteractiveMode()
+    {
+        void DoExit()
+        {
+            var c = _controller;
+            if (c is not null)
+            {
+                if (_homeParentHwnd != IntPtr.Zero) c.ParentWindow = _homeParentHwnd;
+                c.Bounds = new System.Drawing.Rectangle(-5000, -5000, 1280, 800);
+            }
+            lock (_lock) _interactive = false;
+        }
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
+            DoExit();
+        else if (dispatcher.CheckAccess())
+            DoExit();
+        else
+            dispatcher.Invoke(DoExit);
+    }
+
+    /// <summary>
+    /// Гвардия мутирующих операций агента, пока владелец ведёт браузер.
+    /// Read-only тулы (screenshot, extract, find без MatchIndex, console, network, download,
+    /// scroll position) не затрагиваются — агент продолжает наблюдать.
+    /// </summary>
+    private static string? InteractiveGuard() => _interactive
+        ? "BLOCKED — the browser is in INTERACTIVE MODE: the owner is driving it right now in the 'Браузер' tab. " +
+          "Mutating operations are disabled until the owner returns the browser (button '↩ Вернуть агенту'). " +
+          "You can still observe with read-only tools: browser_screenshot, browser_extract, browser_find (without MatchIndex), " +
+          "browser_console, browser_network. Do not retry mutating tools — just wait until the owner releases the browser."
+        : null;
+
     // ─── Navigation ───────────────────────────────────────────
 
-    public static async Task<string> NavigateAsync(string url, CancellationToken ct = default)
+    public static Task<string> NavigateAsync(string url, CancellationToken ct = default)
+    {
+        if (InteractiveGuard() is { } blocked) return Task.FromResult(blocked);
+        return NavigateCoreAsync(url, ct);
+    }
+
+    /// <summary>Навигация владельца (тулбар вкладки «Браузер») — сознательно НЕ проходит
+    /// интерактивную гвардию: пока владелец ведёт браузер, его собственные кнопки должны работать.</summary>
+    public static Task<string> OwnerNavigateAsync(string url, CancellationToken ct = default)
+        => NavigateCoreAsync(url, ct);
+
+    private static async Task<string> NavigateCoreAsync(string url, CancellationToken ct = default)
     {
         var core = await GetCoreAsync();
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -242,7 +349,17 @@ public static class BrowserService
     /// back/forward/reload дают короткий задержку-стабилизацию (NavigationCompleted
     /// на них не подписываемся — 500-800мс достаточно для SPA-роутинга).
     /// </summary>
-    public static async Task<string> NavigateActionAsync(string action, string url, CancellationToken ct = default)
+    public static Task<string> NavigateActionAsync(string action, string url, CancellationToken ct = default)
+    {
+        if (InteractiveGuard() is { } blocked) return Task.FromResult(blocked);
+        return NavigateActionCoreAsync(action, url, ct);
+    }
+
+    /// <summary>back/forward/reload владельца (тулбар вкладки «Браузер») — не проходит интерактивную гвардию.</summary>
+    public static Task<string> OwnerNavigateActionAsync(string action, string url, CancellationToken ct = default)
+        => NavigateActionCoreAsync(action, url, ct);
+
+    private static async Task<string> NavigateActionCoreAsync(string action, string url, CancellationToken ct = default)
     {
         var core = await GetCoreAsync();
         switch (action.Trim().ToLowerInvariant())
@@ -301,6 +418,11 @@ public static class BrowserService
         var core = await GetCoreAsync();
         if (_controller is null) throw new InvalidOperationException("Controller not available.");
 
+        // Интерактивный режим: браузер встроен во вкладку владельца — resize-трюк вырвал бы
+        // окно из-под пользователя. Fallback: снимаем текущий вьюпорт.
+        if (_interactive)
+            return await ScreenshotAsync();
+
         // 1. Get the full page height
         var heightResult = await core.ExecuteScriptAsync(
             "Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0)");
@@ -324,8 +446,9 @@ public static class BrowserService
         using var fs = File.Create(path);
         stream.CopyTo(fs);
 
-        // 5. Restore original viewport
-        _controller.Bounds = originalBounds;
+        // 5. Restore original viewport (если владелец вошёл в интерактивный режим прямо
+        //    во время съёмки — вернуть размер вкладки, а не off-screen-прямоугольник)
+        _controller.Bounds = _interactive ? _interactiveBounds : originalBounds;
 
         return path;
     }
@@ -358,6 +481,7 @@ public static class BrowserService
 
     public static async Task<string> ClickAsync(string selector)
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         var core = await GetCoreAsync();
         var urlBefore = core.Source;
 
@@ -393,6 +517,7 @@ public static class BrowserService
     /// button: left/right (ПКМ), clicks: 1-3 (двойной клик).</summary>
     public static async Task<string> ClickAtAsync(int x, int y, bool trusted = false, string button = "left", int clicks = 1)
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         if (trusted)
             return await CdpClickAsync(x, y, button, clicks);
         var core = await GetCoreAsync();
@@ -427,6 +552,7 @@ public static class BrowserService
     /// mode='type' — посимвольно с keydown/input/keyup (React-контролируемые инпуты, debounce-поиск).</summary>
     public static async Task<string> TypeAsync(string selector, string text, string mode = "set")
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         var core = await GetCoreAsync();
         var js = mode.Equals("type", StringComparison.OrdinalIgnoreCase)
             ? BuildTypeCharsJs(selector, text)
@@ -438,6 +564,7 @@ public static class BrowserService
 
     public static async Task<string> SelectAsync(string selector, string value)
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         var core = await GetCoreAsync();
         var js = BuildSelectJs(selector, value);
         var result = await core.ExecuteScriptAsync(js);
@@ -446,6 +573,7 @@ public static class BrowserService
 
     public static async Task<string> ScrollAsync(int deltaY)
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         var core = await GetCoreAsync();
         await core.ExecuteScriptAsync($"window.scrollBy(0, {deltaY}); 'OK'");
         return $"Scrolled by {deltaY}px (now at {await GetScrollPositionAsync()})";
@@ -462,6 +590,7 @@ public static class BrowserService
     /// для реальных :hover-меню, которые не открываются от синтетического mouseover.</summary>
     public static async Task<string> HoverAsync(string selector, bool trusted = false)
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         var core = await GetCoreAsync();
         if (trusted)
         {
@@ -511,6 +640,7 @@ public static class BrowserService
 
     public static async Task<string> EvaluateAsync(string script)
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         var core = await GetCoreAsync();
         var result = await core.ExecuteScriptAsync(script);
         return Unquote(result);
@@ -548,6 +678,7 @@ public static class BrowserService
     /// </summary>
     public static async Task<string> FetchAsync(string url, int timeoutMs = 30_000)
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         var core = await GetCoreAsync();
         await core.ExecuteScriptAsync(
             "(function() {" +
@@ -590,6 +721,8 @@ public static class BrowserService
     /// </summary>
     public static async Task<(string Text, bool Jumped)> FindAsync(string query, bool caseSensitive, int matchIndex)
     {
+        // Jump-режим скроллит страницу — конфликтует с владельцем, который ведёт браузер.
+        if (matchIndex >= 0 && InteractiveGuard() is { } blocked) return (blocked, false);
         var core = await GetCoreAsync();
         var js = BuildFindJs(query, caseSensitive, matchIndex);
         var raw = await core.ExecuteScriptAsync(js);
@@ -661,6 +794,7 @@ public static class BrowserService
     /// modifiers: "ctrl+shift+alt+meta" — для Ctrl+C, Ctrl+A и т.п.</summary>
     public static async Task<string> KeyAsync(string key, string? selector = null, bool trusted = false, string modifiers = "")
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         var core = await GetCoreAsync();
         if (trusted)
         {
@@ -701,6 +835,7 @@ public static class BrowserService
     /// <summary>Move the cursor overlay to specific coordinates. Returns current element info at that point.</summary>
     public static async Task<string> CursorMoveAsync(int x, int y)
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         var core = await GetCoreAsync();
         var js = "(function() {" +
             "var c = document.getElementById('__agent_cursor');" +
@@ -748,6 +883,7 @@ public static class BrowserService
     /// </summary>
     public static async Task<string> CdpClickAsync(int x, int y, string button = "left", int clicks = 1)
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         var b = button.ToLowerInvariant() == "right" ? "right" : "left";
         var cc = Math.Clamp(clicks, 1, 3);
         for (var i = 1; i <= cc; i++)
@@ -770,6 +906,7 @@ public static class BrowserService
     /// </summary>
     public static async Task<string> CdpKeyAsync(string key, string modifiers = "")
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         var keyDesc = key.ToLowerInvariant() switch
         {
             "enter" => "Enter",
@@ -979,6 +1116,7 @@ public static class BrowserService
     /// </summary>
     public static async Task<string> UploadAsync(string selector, string filePath)
     {
+        if (InteractiveGuard() is { } blocked) return blocked;
         try
         {
             return await UploadCoreAsync(selector, filePath);
@@ -1054,7 +1192,8 @@ public static class BrowserService
             // с suspend-вызовом идем через Dispatcher. Снаружи читаем только
             // статические поля (ссылка/DateTime — атомарно), WebView2 не трогаем.
             var core = _core;
-            if (core is null || (DateTime.Now - _lastActivity).TotalMinutes < 2) return;
+            // Владелец ведёт браузер — не suspendить у него из-под носа.
+            if (core is null || _interactive || (DateTime.Now - _lastActivity).TotalMinutes < 2) return;
             var dispatcher = System.Windows.Application.Current?.Dispatcher;
             if (dispatcher is null || dispatcher.HasShutdownStarted) return;
             _ = dispatcher.InvokeAsync(async () =>
