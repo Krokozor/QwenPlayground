@@ -159,12 +159,26 @@ public sealed class ToolRegistryTests : IDisposable
     }
 
     [Fact]
-    public async Task PathEscape_IsBlocked()
+    public async Task RelativePathEscape_IsBlocked()
     {
+        // Относительный путь не должен выходить из рабочей папки (..): честная ошибка
+        // подсказывает использовать абсолютный путь.
         var result = await _registry.ExecuteAsync("read_file",
             new JsonObject { ["path"] = "../../outside.txt" }, _context);
 
-        Assert.Contains("escapes allowed roots", result);
+        Assert.Contains("relative path escapes the working folder", result);
+    }
+
+    [Fact]
+    public async Task AbsolutePath_OutsideWorkingFolder_IsAllowed()
+    {
+        // Абсолютный путь за пределами рабочей папки разрешён (песочницы нет): отказа по
+        // пути не будет — либо успех, либо «file not found», но НЕ «escapes».
+        var abs = Path.Combine(Path.GetTempPath(), "qpw_abs_outside_" + Guid.NewGuid().ToString("N") + ".txt");
+        var result = await _registry.ExecuteAsync("read_file",
+            new JsonObject { ["path"] = abs }, _context);
+
+        Assert.DoesNotContain("escapes", result);
     }
 
     [Fact]

@@ -107,25 +107,28 @@ public sealed class ToolContext
             .ToList();
     }
 
+    /// <summary>
+    /// Разрешает путь инструмента. Абсолютный (rooted) путь — как есть, куда угодно:
+    /// песочницы нет (set_session_root / rebuild_self / shell и так дают полный доступ),
+    /// а рабочая папка — это синтаксис коротких путей («скоуп внимания»), не граница.
+    /// Относительный путь разрешается от рабочей папки и не должен из неё выходить (..);
+    /// для выхода за её пределы нужен абсолютный путь (честная ошибка это подскажет).
+    /// </summary>
     public string ResolvePath(string path)
     {
-        var fullPath = Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(ProjectRoot, path));
-        if (IsWithinAllowedRoots(fullPath))
+        if (Path.IsPathRooted(path))
         {
-            return fullPath;
+            return Path.GetFullPath(path);
         }
-        throw new InvalidOperationException($"path escapes allowed roots: {path}");
-    }
 
-    /// <summary>Проверить, что путь внутри ProjectRoot или одного из AdditionalWorkspaces.</summary>
-    private bool IsWithinAllowedRoots(string fullPath)
-    {
-        if (IsWithin(fullPath, ProjectRoot)) return true;
-        foreach (var ws in AdditionalWorkspaces)
+        var fullPath = Path.GetFullPath(Path.Combine(ProjectRoot, path));
+        if (!IsWithin(fullPath, ProjectRoot))
         {
-            if (IsWithin(fullPath, ws)) return true;
+            throw new InvalidOperationException(
+                $"relative path escapes the working folder: {path} (resolved to {fullPath}). " +
+                "The working folder is for short paths; use an absolute path to reach files outside it.");
         }
-        return false;
+        return fullPath;
     }
 
     private static bool IsWithin(string path, string root)
