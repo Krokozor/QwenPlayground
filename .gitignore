@@ -60,6 +60,7 @@ ffmpeg/
 
 # Working docs (model bug reports + audit), not part of the code
 /BugreportsAndAudits/
+/Bugs/
 
 # One-off diagnostic script
 /tests/port_probe.ps1
@@ -67,8 +68,18 @@ ffmpeg/
 # Agent secrets (credentials issued by the owner, visible to all chats but never committed)
 /secrets.md
 
+# Mail settings (OAuth client id/secret, refresh token — never committed)
+config/mail.json
+
+# Orphaned phase-1 C# config (superseded by per-chat csharp.json in the session folder)
+config/csharp_projects.json
+
 # User settings (created on first run)
 settings.json
+settings.json.bak*
+
+# Pigeon bridge temp logs (root only)
+tmp_bridge*.log
 
 # Launcher config: created on first run with defaults (machine-specific paths
 # must not be committed — a test run once polluted the tracked copy).

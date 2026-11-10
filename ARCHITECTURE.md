@@ -333,6 +333,45 @@ State-блок: `todo=...` (строки списка), `todo_src=...` (кто �
 
 `PigeonSession` (Core/Pigeon) — резидентный клиент pigeon-сервера, состояние **per-session** (`sessions/<id>/pigeon.json`); long-poll новых сообщений, mention будит heartbeat **этого** окна (Register по SessionId). Авто-подключение при старте: `PigeonEndpoint` + наличие pigeon.json. Активация полки `pigeon` при connect. Тулы (App/Tools/PigeonTools): `pigeon_connect`, `pigeon_disconnect`, `pigeon_read`, `pigeon_send`, `pigeon_who`, `pigeon_channels`, `pigeon_status`. Диалог 🕊 в тулбаре чата (`PigeonDialog`). Сервер и клиент — `tools/pigeon` (Pigeon.Server: HTTP API + веб-UI; Pigeon.Client). Спецификация — docs/MESSANGER.md. State-анонсер `PigeonStateAnnouncer` даёт строку `pigeon:` в state-блоке.
 
+## Почта (Mail) (2026-10-29)
+
+`MailService` (Core/Mail) — IMAP/SMTP-клиент на MailKit 4.x (процессный, одно соединение на
+процесс). `MailMonitor` (Core/Mail) — poll-цикл на UI-контексте (инвариант: агентный код на
+UI-потоке, как PigeonSession.PollLoopAsync): каждые N секунд (PollIntervalSeconds, мин 10)
+проверяет непрочитанные в INBOX, обновляет состояние для state-строки, будит main-окно по
+политике WakePolicy (если чат idle). Wake — один раз на батч (не спамит на каждое письмо).
+
+Настройки: `MailSettings` (Core/Mail) — `[SettingsFile("config/mail.json")]` (отдельный файл,
+секреты — в .gitignore): Enabled, ImapHost/Port, SmtpHost/Port, WakePolicy (All/Folders/Senders),
+WakeSenders, PollIntervalSeconds, OAuthClientId/Secret, RefreshToken, Email, Password.
+`MailSettings.Configured` = Enabled + (RefreshToken или Password) — единый источник правды.
+
+OAuth2 (Google): PLAIN (пароль) блокируется; путь — OAuth2 desktop flow. `mail_auth` (App/Tools)
+открывает системный браузер, принимает authorization code на loopback redirect 127.0.0.1 со
+случайным портом, проверяет state и обменивает код на refresh token с PKCE (S256). Ручное
+копирование кода не нужно. Refresh token сохраняется в config/mail.json; Enabled включается
+только после успешного обмена. Access token — из refresh token, кэш на 50 мин
+(MailService.GetAccessTokenAsync). PLAIN — для не-Google провайдеров (Password в settings).
+
+State-блок: `MailStateAnnouncer` (Core/Mail, IStateAnnouncer, метка "mail") — строка
+«inbox N unread (latest HH:MM: "subject" from …)». Регистрация — в Main.WireRuntimeCore
+(список анонсеров StateBlockBuilder), как PigeonStateAnnouncer.
+
+Wake: `MailMonitor.RegisterMain` (Main.RegisterSession) — main-окно единственный wake-приёмник
+(почта процессный ресурс, не per-session; state-строка видна всем сессиям). Side-окна не будим.
+
+Полка `mail` (ToolGroup.Mail = 7): тулы (App/Tools/MailTools.cs): mail_check (непрочитанные),
+mail_read (полное письмо + mark seen), mail_send, mail_reply, mail_move (архив/спам),
+mail_download_attachment (в sessions/<id>/artifacts/mail/). `mail_auth` (App/Tools/MailAuthTool.cs)
+— OAuth2 setup. Тулы работают через `MailHolder.GetOrConnectAsync` (ленивое подключение).
+
+Auto-start: MainViewModel ctor — если MailSettings.Configured → MailMonitor.TryStart()
+(poll-цикл на UI-контексте). Shutdown: AppLifecycle "mail" → MailMonitor.Stop().
+
+UI: MailSettingsView (App/Views) — секция в Настройках (Expander "Почта"): тумблер, IMAP/SMTP
+host/port, poll interval, wake policy + senders, OAuth client id/secret + email. Code-behind
+работает с MailSettings напрямую (паттерн McpSettingsView).
+
 ## Desktop tools (2026-10-14)
 
 `DesktopTools` (App/Desktop) — 10 инструментов: desktop_screenshot, desktop_grid_screenshot, desktop_click, desktop_move, desktop_type, desktop_key, desktop_scroll, desktop_drag, list_windows, focus_window.
